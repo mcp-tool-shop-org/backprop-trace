@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --import tsx --test test/reconcile.bad-gradient.test.ts test/reconcile.bad-gradient.cli.test.ts",
+    "test": "node --import tsx --test test/reconcile.bad-gradient.test.ts test/reconcile.bad-gradient.cli.test.ts test/format.policy.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
