@@ -1,0 +1,40 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "mazur-2-2-2",
+  "compiled_on": "2026-05-13",
+  "evidence_ledger_for": "fixtures/mazur.golden.jsonl",
+  "engine_reproduction_source": "fixtures/mazur.golden.jsonl is the committed canonical first-run output of src/engine.ts (V8/Node 22). When this file documents drift against an anchor, the canonical engine value comes from the golden, not from this published ledger.",
+  "source": {
+    "author": "Matt Mazur",
+    "title": "A Step by Step Backpropagation Example",
+    "year": 2015,
+    "url": "https://mattmazur.com/2015/03/17/a-step-by-step-backpropagation-example/"
+  },
+  "claim_type_legend": {
+    "source_published_input":         "Constant input or hyperparameter explicitly given in the source",
+    "source_published_loss":          "Loss value explicitly given in the source",
+    "source_published_forward":       "Forward-pass value explicitly given in the source",
+    "source_published_update":        "Post-update parameter value explicitly given in the source",
+    "widely_cited_downstream_anchor": "Value commonly repeated in downstream pedagogy; not given an explicit derivation in the source at this precision"
+  },
+  "reproduction_status_legend": {
+    "direct":         "Constant input; no computation required",
+    "verified":       "Engine reproduces this value within tolerance",
+    "drift_observed": "Engine produces a different value; documented in drift_note. Hard-gate value (true/false) governs whether drift fails the build or merely WARNs.",
+    "pending":        "Not yet attempted"
+  },
+  "claims": [
+    {
+      "id": "post_update_total_error",
+      "value": 0.291027924,
+      "claim_type": "widely_cited_downstream_anchor",
+      "reproduction_status": "drift_observed",
+      "hard_gate": false,
+      "provenance": "Commonly repeated in downstream pedagogy and tutorials derived from Mazur's example. Mazur's blog does not give an explicit derivation of the post-update total error at this precision in step 1 — the value appears in many secondary sources but its computational lineage is not pinned in the primary source.",
+      "engine_reproduced_value": 0.29102777369359933,
+      "drift_absolute": 1.5030640067e-7,
+      "drift_note": "Engine first-run (src/engine.ts on V8/Node 22, IEEE-754 doubles, sigmoid via 1/(1+Math.exp(-x))) produces 0.29102777369359933 after step 1. The widely-cited anchor 0.291027924 differs by ~1.5e-7 absolute. Hypothesis (from prior research): 0.291027924 reflects a different forward-recomputation pathway or different intermediate rounding from Mazur's hand-derived chain. The engine's value is the canonical first-run output and lives in fixtures/mazur.golden.jsonl; the anchor in this ledger is recorded for honesty rather than gating. v0.1 ships with hard_gate = false: drift triggers WARN in bp verify mazur (which lands next slice), never FAIL. v0.2 may resolve by sourcing 0.291027924's derivation lineage and reclassifying.",
+      "v0_1_behavior": "WARN on drift in bp verify mazur; build does not fail."
+    }
+  ]
+}

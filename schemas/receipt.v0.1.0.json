@@ -90,7 +90,7 @@
       "additionalProperties": false,
       "required": ["authoring_state", "verification_state", "canonical"],
       "properties": {
-        "authoring_state": { "enum": ["hand_derived", "engine_emitted", "deliberately_corrupted"] },
+        "authoring_state": { "enum": ["hand_derived", "engine_generated", "deliberately_corrupted"] },
         "verification_state": { "enum": ["pending_engine_reproduction", "engine_reproduced_byte_equal", "expected_to_fail_reconciliation"] },
         "canonical": { "type": "boolean" },
         "promote_to": { "type": "string" },

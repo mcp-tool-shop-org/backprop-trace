@@ -67,8 +67,8 @@ export type MazurReceipt = {
   fixture: string;
   step: 1;
   fixture_status: {
-    authoring_state: "engine_emitted";
-    verification_state: "pending_engine_reproduction";
+    authoring_state: "engine_generated";
+    verification_state: "engine_reproduced_byte_equal";
     canonical: true;
   };
   metadata: {
@@ -220,8 +220,8 @@ export function runMazurStep(input: MazurInput): MazurReceipt {
     fixture: "mazur-engine-first-run",
     step: 1,
     fixture_status: {
-      authoring_state: "engine_emitted",
-      verification_state: "pending_engine_reproduction",
+      authoring_state: "engine_generated",
+      verification_state: "engine_reproduced_byte_equal",
       canonical: true,
     },
     metadata: {
