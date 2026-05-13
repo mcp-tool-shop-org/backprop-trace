@@ -8,7 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
 
 test(
-  "bp reconcile receipt fixtures/bad/mazur.bad-gradient.jsonl exits nonzero with structured Rule 4 stderr",
+  "bp reconcile receipt fixtures/bad/mazur.bad-gradient.jsonl exits nonzero with single-target Rule 4 stderr",
   () => {
     const result = spawnSync(
       process.execPath,
@@ -41,5 +41,20 @@ test(
       "stderr must include the recomputed gradient value (prefix match for float serialization)",
     );
     assert.match(stderr, /tolerance/, "stderr must mention tolerance");
+
+    // Single-target invariant: exactly one Rule 4 section, only naming w5.
+    // Anti-circularity gate must isolate the deliberate failure from
+    // incidental precision noise on other parameters.
+    const rule4Sections = stderr.match(/^Rule 4:/gm) || [];
+    assert.strictEqual(
+      rule4Sections.length,
+      1,
+      `exactly one Rule 4 failure expected (w5 only); stderr had ${rule4Sections.length} Rule 4 sections`,
+    );
+    assert.doesNotMatch(
+      stderr,
+      /\bw6\b|\bw8\b/,
+      "no other parameters (w6, w8) should appear in failure stderr — bad fixture must isolate to w5",
+    );
   },
 );

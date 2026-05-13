@@ -12,16 +12,22 @@
     "delta_vs_tolerance_multiplier": 1000,
     "what_was_NOT_mutated": [
       "optimizer.factors[*].value (product of factors still equals the original gradient)",
-      "updates[4].update (still derived from original gradient, so it will cascade to Rule 5 failure)",
-      "updates[4].weight_after (still derived from original update, so it will cascade to Rule 6 failure under recomputation)",
-      "all other parameter updates",
-      "forward / loss / backward / parameters_before / parameters_after"
+      "updates[4].update (still derived from original gradient, so it will cascade to Rule 5 failure when Rule 5 is implemented)",
+      "updates[4].weight_after (still derived from original update, cascade to Rule 6 when implemented)",
+      "all other parameter updates' factor values",
+      "forward / loss / backward / parameters_before"
     ]
   },
+  "single_target_invariant": "Reconciliation produces exactly one Rule 4 failure, and that failure names parameter w5. No other parameter (w1, w2, w3, w4, w6, w7, w8) may appear in the failure list under the current numeric_policy.tolerance = 1e-9. If a future tolerance change or fixture edit causes other parameters to also surface, the anti-circularity gate is muddied and the tests must fail until the fixture or policy is re-aligned.",
+  "precision_normalization_history": {
+    "issue": "Initial hand-derivation of the non-mutated update records used 9-sig-fig values for gradient / update / weight_after. For w6 and w8 specifically, the IEEE-754 product of the stored factor doubles differs from the 9-sig-fig stored gradient by ~3e-9 and ~1.5e-9 — both above the 1e-9 absolute tolerance. This produced incidental Rule 4 failures on w6 and w8 alongside the deliberate w5 failure.",
+    "fix": "Replaced w6 and w8 gradient / update / weight_after fields with full-double-precision values that round-trip exactly through JSON.parse. This is acceptable because the bad fixture is a contract-test artifact, not a canonical receipt. The eventual mazur.golden.jsonl (engine-emitted) will use 9-sig-fig canonical emission under numeric_policy.byte_output.",
+    "v0_2_followup": "Tolerance policy should likely become hybrid (rtol + atol) rather than pure-absolute 1e-9. Production numerical test suites (PyTorch, numpy, JAX) all use |a-b| <= max(atol, rtol * max(|a|,|b|)). Investigation issue is the natural way to track this."
+  },
   "reconciliation_check_targeted_first": "Rule 4: update.gradient == product(optimizer.factors)",
-  "cascading_failures_expected": [
-    "Rule 5: update == learning_rate * gradient (cascade; stored update was derived from original gradient, so it is no longer consistent with the mutated stored gradient)",
-    "Rule 6: weight_after == weight_before + update (cascade only if the reconciler recomputes update from the mutated gradient; if it uses the stored update value, Rule 6 passes independently)"
+  "cascading_failures_expected_when_other_rules_land": [
+    "Rule 5: update == learning_rate * gradient (cascade from w5; stored update -0.041083520 was derived from the original gradient, so it is no longer consistent with the mutated stored gradient -0.082166041)",
+    "Rule 6: weight_after == weight_before + update (cascade from w5 if the reconciler recomputes update from the mutated gradient; if it uses the stored update value, Rule 6 passes independently)"
   ],
   "expected_verify_outcome": {
     "command": "bp reconcile receipt fixtures/bad/mazur.bad-gradient.jsonl",
@@ -31,19 +37,26 @@
       "w5",
       "Rule 4"
     ],
+    "stderr_must_NOT_contain": [
+      "w6",
+      "w8"
+    ],
     "stderr_must_report_at_least_one_of": [
       "stored gradient: -0.082166041",
-      "recomputed gradient: -0.082167041",
-      "delta: 1.000000000e-6",
-      "tolerance: 0.000000001"
+      "recomputed gradient: -0.082167040",
+      "delta: 9.99",
+      "tolerance: 1.000000000e-9"
     ],
-    "stderr_may_also_contain": [
+    "stderr_section_count": {
+      "Rule 4:": 1
+    },
+    "stderr_may_also_contain_when_more_rules_land": [
       "Rule 5",
       "(cascade)"
     ]
   },
   "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures. The post_update_forward.status = 'pending_engine_first_run' on this fixture must NOT mask the Rule 4 failure. If the reconciler reports 'draft not promoted' before reporting Rule 4, the failure-priority rule is violated.",
-  "error_message_format_note": "The 'delta: 1.000000000e-6' rendering is via src/error-format.ts (scientific notation permitted for error magnitudes), not src/format.ts (receipt emission, plain decimal only). Error-format and receipt-format are separate code paths.",
+  "error_message_format_note": "Delta and tolerance render via toExponential(9) in src/bin/bp.ts (scientific notation permitted for error magnitudes), not src/format.ts (receipt emission, plain decimal only). Error-format and receipt-format are separate code paths.",
   "purpose": "Proves the verifier checks math, not just byte equality and schema validity. Written and committed BEFORE the engine produces any receipt, so the verifier cannot be co-developed against engine output. Implements 'bad receipts precede good receipts' from the law stack.",
-  "post_v0_1_extensions": "v0.2 should add one bad fixture per reconciliation rule (target = eight bad fixtures total, one per rule). v0.1 only requires the Rule 4 fixture as the minimum anti-circularity gate."
+  "post_v0_1_extensions": "v0.2 should add one bad fixture per reconciliation rule (target = eight bad fixtures total, one per rule). v0.1 only requires the Rule 4 fixture as the minimum anti-circularity gate. Also v0.2: revisit numeric_policy.tolerance to a hybrid rtol+atol form per Agent A research findings (see precision_normalization_history.v0_2_followup)."
 }
