@@ -1,0 +1,135 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "mazur-bad-gradient",
+  "step": 1,
+  "fixture_status": {
+    "authoring_state": "deliberately_corrupted",
+    "verification_state": "expected_to_fail_reconciliation",
+    "canonical": false,
+    "describes_in": "fixtures/bad/mazur.bad-gradient.meta.json"
+  },
+  "metadata": {
+    "source": "Matt Mazur, 'A Step by Step Backpropagation Example' (2015), with deliberate mutation",
+    "url_reference": "https://mattmazur.com/2015/03/17/a-step-by-step-backpropagation-example/",
+    "hand_derived_on": "2026-05-13",
+    "gradient_convention": "descent_direction",
+    "reconciliation_rules_doc": "docs/reconciliation.md",
+    "computation_order_doc": "docs/computation-order.md",
+    "purpose": "Anti-circularity gate: reconciler must reject this receipt on Rule 4. See fixtures/bad/mazur.bad-gradient.meta.json for full expectation."
+  },
+  "numeric_policy": {
+    "number_encoding": "decimal",
+    "precision_significant_digits": 9,
+    "rounding": "round_half_to_even",
+    "tolerance": 1e-9,
+    "computation_order": "schema_defined",
+    "byte_output": {
+      "format": "jsonl",
+      "json_key_order": "schema_defined",
+      "trailing_zero_policy": "pad_to_significant_digits",
+      "indent": "none"
+    }
+  },
+  "bias_policy": {
+    "mode": "constant",
+    "reason": "Mazur's published derivation does not update bias terms in step 1",
+    "updated_in_step": false,
+    "reconciliation": "parameters_after.b1 == parameters_before.b1 AND parameters_after.b2 == parameters_before.b2"
+  },
+  "topology": {
+    "layers": ["input", "hidden", "output"],
+    "input_size": 2,
+    "hidden_size": 2,
+    "output_size": 2,
+    "activation": "sigmoid",
+    "loss": "half_squared_error",
+    "bias_sharing": "per_layer"
+  },
+  "learning_rate": 0.5,
+  "inputs":  { "i1": 0.05, "i2": 0.10 },
+  "targets": { "o1": 0.01, "o2": 0.99 },
+  "parameters_before": {
+    "w1": 0.15, "w2": 0.20, "w3": 0.25, "w4": 0.30,
+    "w5": 0.40, "w6": 0.45, "w7": 0.50, "w8": 0.55,
+    "b1": 0.35, "b2": 0.60
+  },
+  "forward": {
+    "h1": { "net": 0.3775,      "out": 0.593269992 },
+    "h2": { "net": 0.3925,      "out": 0.596884378 },
+    "o1": { "net": 1.105905967, "out": 0.751365070 },
+    "o2": { "net": 1.224921404, "out": 0.772928465 }
+  },
+  "loss": {
+    "per_output": { "o1": 0.274811083, "o2": 0.023560026 },
+    "total": 0.298371109
+  },
+  "backward": {
+    "output_error_signals": {
+      "o1": {
+        "factors": [
+          { "name": "target_minus_output",   "value": -0.741365070 },
+          { "name": "activation_derivative", "value":  0.186815602 }
+        ],
+        "product_order": "left_to_right",
+        "signal_value": -0.138498562
+      },
+      "o2": {
+        "factors": [
+          { "name": "target_minus_output",   "value":  0.217071535 },
+          { "name": "activation_derivative", "value":  0.175510052 }
+        ],
+        "product_order": "left_to_right",
+        "signal_value":  0.038098237
+      }
+    },
+    "hidden_error_signals": {
+      "h1": {
+        "downstream_contributions": [
+          { "from": "o1", "downstream_signal": -0.138498562, "via_weight": "w5", "weight_value": 0.40, "value": -0.055399425 },
+          { "from": "o2", "downstream_signal":  0.038098237, "via_weight": "w7", "weight_value": 0.50, "value":  0.019049119 }
+        ],
+        "summation_order": ["o1", "o2"],
+        "backpropagated_sum": -0.036350306,
+        "activation_derivative": 0.241300709,
+        "product_order": "left_to_right",
+        "signal_value": -0.008771355
+      },
+      "h2": {
+        "downstream_contributions": [
+          { "from": "o1", "downstream_signal": -0.138498562, "via_weight": "w6", "weight_value": 0.45, "value": -0.062324353 },
+          { "from": "o2", "downstream_signal":  0.038098237, "via_weight": "w8", "weight_value": 0.55, "value":  0.020954030 }
+        ],
+        "summation_order": ["o1", "o2"],
+        "backpropagated_sum": -0.041370323,
+        "activation_derivative": 0.240613417,
+        "product_order": "left_to_right",
+        "signal_value": -0.009954259
+      }
+    }
+  },
+  "updates": [
+    { "parameter_id": "w1", "kind": "weight", "layer_edge": "input_to_hidden",  "parameter_role": "input_1_to_hidden_1",  "from_unit": "i1", "to_unit": "h1", "weight_before": 0.15, "optimizer": { "name": "sgd", "learning_rate": 0.5, "factors": [ { "name": "hidden_error_signal", "from": "backward.hidden_error_signals.h1.signal_value", "value": -0.008771355 }, { "name": "upstream_activation", "from": "inputs.i1", "value": 0.05 } ], "product_order": "left_to_right" }, "gradient": -0.000438568, "update": -0.000219284, "weight_after": 0.149780716 },
+    { "parameter_id": "w2", "kind": "weight", "layer_edge": "input_to_hidden",  "parameter_role": "input_2_to_hidden_1",  "from_unit": "i2", "to_unit": "h1", "weight_before": 0.20, "optimizer": { "name": "sgd", "learning_rate": 0.5, "factors": [ { "name": "hidden_error_signal", "from": "backward.hidden_error_signals.h1.signal_value", "value": -0.008771355 }, { "name": "upstream_activation", "from": "inputs.i2", "value": 0.10 } ], "product_order": "left_to_right" }, "gradient": -0.000877136, "update": -0.000438568, "weight_after": 0.199561432 },
+    { "parameter_id": "w3", "kind": "weight", "layer_edge": "input_to_hidden",  "parameter_role": "input_1_to_hidden_2",  "from_unit": "i1", "to_unit": "h2", "weight_before": 0.25, "optimizer": { "name": "sgd", "learning_rate": 0.5, "factors": [ { "name": "hidden_error_signal", "from": "backward.hidden_error_signals.h2.signal_value", "value": -0.009954259 }, { "name": "upstream_activation", "from": "inputs.i1", "value": 0.05 } ], "product_order": "left_to_right" }, "gradient": -0.000497713, "update": -0.000248856, "weight_after": 0.249751144 },
+    { "parameter_id": "w4", "kind": "weight", "layer_edge": "input_to_hidden",  "parameter_role": "input_2_to_hidden_2",  "from_unit": "i2", "to_unit": "h2", "weight_before": 0.30, "optimizer": { "name": "sgd", "learning_rate": 0.5, "factors": [ { "name": "hidden_error_signal", "from": "backward.hidden_error_signals.h2.signal_value", "value": -0.009954259 }, { "name": "upstream_activation", "from": "inputs.i2", "value": 0.10 } ], "product_order": "left_to_right" }, "gradient": -0.000995426, "update": -0.000497713, "weight_after": 0.299502287 },
+    { "parameter_id": "w5", "kind": "weight", "layer_edge": "hidden_to_output", "parameter_role": "hidden_1_to_output_1", "from_unit": "h1", "to_unit": "o1", "weight_before": 0.40, "optimizer": { "name": "sgd", "learning_rate": 0.5, "factors": [ { "name": "output_error_signal", "from": "backward.output_error_signals.o1.signal_value", "value": -0.138498562 }, { "name": "upstream_activation", "from": "forward.h1.out", "value": 0.593269992 } ], "product_order": "left_to_right" }, "gradient": -0.082166041, "update": -0.041083520, "weight_after": 0.358916480 },
+    { "parameter_id": "w6", "kind": "weight", "layer_edge": "hidden_to_output", "parameter_role": "hidden_2_to_output_1", "from_unit": "h2", "to_unit": "o1", "weight_before": 0.45, "optimizer": { "name": "sgd", "learning_rate": 0.5, "factors": [ { "name": "output_error_signal", "from": "backward.output_error_signals.o1.signal_value", "value": -0.138498562 }, { "name": "upstream_activation", "from": "forward.h2.out", "value": 0.596884378 } ], "product_order": "left_to_right" }, "gradient": -0.082667625, "update": -0.041333813, "weight_after": 0.408666187 },
+    { "parameter_id": "w7", "kind": "weight", "layer_edge": "hidden_to_output", "parameter_role": "hidden_1_to_output_2", "from_unit": "h1", "to_unit": "o2", "weight_before": 0.50, "optimizer": { "name": "sgd", "learning_rate": 0.5, "factors": [ { "name": "output_error_signal", "from": "backward.output_error_signals.o2.signal_value", "value":  0.038098237 }, { "name": "upstream_activation", "from": "forward.h1.out", "value": 0.593269992 } ], "product_order": "left_to_right" }, "gradient":  0.022602540, "update":  0.011301270, "weight_after": 0.511301270 },
+    { "parameter_id": "w8", "kind": "weight", "layer_edge": "hidden_to_output", "parameter_role": "hidden_2_to_output_2", "from_unit": "h2", "to_unit": "o2", "weight_before": 0.55, "optimizer": { "name": "sgd", "learning_rate": 0.5, "factors": [ { "name": "output_error_signal", "from": "backward.output_error_signals.o2.signal_value", "value":  0.038098237 }, { "name": "upstream_activation", "from": "forward.h2.out", "value": 0.596884378 } ], "product_order": "left_to_right" }, "gradient":  0.022740244, "update":  0.011370122, "weight_after": 0.561370122 }
+  ],
+  "parameters_after": {
+    "w1": 0.149780716, "w2": 0.199561432, "w3": 0.249751144, "w4": 0.299502287,
+    "w5": 0.358916480, "w6": 0.408666187, "w7": 0.511301270, "w8": 0.561370122,
+    "b1": 0.35, "b2": 0.60
+  },
+  "post_update_forward": {
+    "status": "pending_engine_first_run",
+    "required_before_promotion": false,
+    "note": "Not relevant for this bad fixture; reconciler ignores post-update fields when reconciliation rules detect failure."
+  },
+  "post_update_loss": {
+    "status": "pending_engine_first_run",
+    "required_before_promotion": false,
+    "note": "Not relevant for this bad fixture."
+  }
+}

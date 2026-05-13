@@ -1,0 +1,49 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "mazur.bad-gradient.meta",
+  "describes": "fixtures/bad/mazur.bad-gradient.jsonl",
+  "based_on": "Structurally derived from the same step 1 receipt design as fixtures/drafts/mazur.golden.draft.jsonl (not yet committed at the time of this fixture's authoring).",
+  "mutation": {
+    "field_path": "updates[4].gradient",
+    "parameter_id": "w5",
+    "original": -0.082167041,
+    "mutated": -0.082166041,
+    "delta_absolute": 1.0e-6,
+    "delta_vs_tolerance_multiplier": 1000,
+    "what_was_NOT_mutated": [
+      "optimizer.factors[*].value (product of factors still equals the original gradient)",
+      "updates[4].update (still derived from original gradient, so it will cascade to Rule 5 failure)",
+      "updates[4].weight_after (still derived from original update, so it will cascade to Rule 6 failure under recomputation)",
+      "all other parameter updates",
+      "forward / loss / backward / parameters_before / parameters_after"
+    ]
+  },
+  "reconciliation_check_targeted_first": "Rule 4: update.gradient == product(optimizer.factors)",
+  "cascading_failures_expected": [
+    "Rule 5: update == learning_rate * gradient (cascade; stored update was derived from original gradient, so it is no longer consistent with the mutated stored gradient)",
+    "Rule 6: weight_after == weight_before + update (cascade only if the reconciler recomputes update from the mutated gradient; if it uses the stored update value, Rule 6 passes independently)"
+  ],
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/mazur.bad-gradient.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "w5",
+      "Rule 4"
+    ],
+    "stderr_must_report_at_least_one_of": [
+      "stored gradient: -0.082166041",
+      "recomputed gradient: -0.082167041",
+      "delta: 1.000000000e-6",
+      "tolerance: 0.000000001"
+    ],
+    "stderr_may_also_contain": [
+      "Rule 5",
+      "(cascade)"
+    ]
+  },
+  "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures. The post_update_forward.status = 'pending_engine_first_run' on this fixture must NOT mask the Rule 4 failure. If the reconciler reports 'draft not promoted' before reporting Rule 4, the failure-priority rule is violated.",
+  "error_message_format_note": "The 'delta: 1.000000000e-6' rendering is via src/error-format.ts (scientific notation permitted for error magnitudes), not src/format.ts (receipt emission, plain decimal only). Error-format and receipt-format are separate code paths.",
+  "purpose": "Proves the verifier checks math, not just byte equality and schema validity. Written and committed BEFORE the engine produces any receipt, so the verifier cannot be co-developed against engine output. Implements 'bad receipts precede good receipts' from the law stack.",
+  "post_v0_1_extensions": "v0.2 should add one bad fixture per reconciliation rule (target = eight bad fixtures total, one per rule). v0.1 only requires the Rule 4 fixture as the minimum anti-circularity gate."
+}
