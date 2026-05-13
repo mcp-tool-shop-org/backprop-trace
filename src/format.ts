@@ -1,7 +1,7 @@
 /**
  * Decimal-string formatter policy for backprop-trace.
  *
- * v0.1 implements:
+ * Implements:
  *   formatDecimalStringForFixture(input_decimal: string) -> string
  *
  * Driven by fixtures/formatter.policy.golden.json. Operates on decimal-string
@@ -9,9 +9,9 @@
  * the input to a JS number, does NOT use Math.round / Math.floor / Math.ceil,
  * does NOT use any IEEE-754 floating-point operation on the input value.
  *
- * formatNumberForEngine is stubbed here; it lands when runtime formatting
- * comes online in a later slice. Until then, the policy formatter is the
- * sole authority on rounding behavior.
+ * The runtime-side formatter (formatNumberForEngine) lives in
+ * src/runtime-format.ts and bridges JS doubles to this policy by routing
+ * through toPrecision(17) + scientificToPlain.
  */
 
 export type FormatErrorKind = "NON_PLAIN_DECIMAL_INPUT" | "PLAIN_DECIMAL_OUT_OF_SCOPE";
@@ -205,10 +205,3 @@ function emitFormatted(
   return sign + integerStr + "." + fractionalStr;
 }
 
-export function formatNumberForEngine(_input_double: number): string {
-  // Runtime formatter — paired with formatter.runtime-node.template.json.
-  // Implementation deferred to a later slice. Calling this in v0.1 is an
-  // error; the law stack says formatter policy precedes runtime formatting,
-  // and v0.1 has not yet earned the runtime layer.
-  throw new Error("formatNumberForEngine is not implemented in v0.1");
-}
