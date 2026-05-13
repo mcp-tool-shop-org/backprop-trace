@@ -1,0 +1,18 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "formatter.runtime-node",
+  "authority": "empirical-runtime-evidence",
+  "policy_reference": "fixtures/formatter.policy.golden.json",
+  "runtime": {
+    "engine": "node",
+    "version_constraint": "documented_at_generation_time",
+    "parser": "JSON.parse (V8) for JSON-literal inputs; ECMAScript NumericLiteral for code-literal inputs"
+  },
+  "binds_implementation": "formatNumberForEngine(input_double: number) -> string",
+  "relation_to_policy": "Cases here document what the runtime formatter produces for specific JS number literals. These outputs do not redefine policy. A divergence between runtime output and policy expected is an engineering finding, not a policy revision.",
+  "generation_protocol": "Cases populated by running test/format-runtime.gen.ts under the documented Node version. Observed output written to tmp/formatter.runtime-node.observed.json. Promoted to a committed runtime golden (fixtures/formatter.runtime-node.golden.json) only when v0.2+ requires cross-runtime reproducibility evidence. In v0.1, the generator's output is diagnostic, not committed.",
+  "v0_1_status": "template_only",
+  "v0_1_committed_golden_exists": false,
+  "ci_rule": "If fixtures/formatter.runtime-node.golden.json exists, it must have cases.length > 0 (CI fails otherwise). If it doesn't exist, the runtime-evidence test step reports SKIPPED, not PASS.",
+  "cases": []
+}

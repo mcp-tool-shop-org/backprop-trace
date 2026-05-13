@@ -1,0 +1,63 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "formatter.policy",
+  "authority": "decimal-string-truth",
+  "policy": {
+    "significant_digits": 9,
+    "rounding": "round_half_to_even",
+    "trailing_zero_policy": "pad_to_significant_digits",
+    "negative_zero": "normalize_to_positive_zero",
+    "scientific_notation_output": "never",
+    "plain_decimal_range": {
+      "min_magnitude": 1e-6,
+      "max_magnitude_exclusive": 1e7
+    },
+    "zero_representation": "0.000000000"
+  },
+  "binds_implementation": "formatDecimalStringForFixture(input_decimal: string) -> string",
+  "implementation_rules": {
+    "must_not": [
+      "call Number() or parseFloat() on input_decimal",
+      "coerce input string to a JS number for any intermediate step",
+      "use Math.round / Math.floor / Math.ceil",
+      "use any IEEE-754 floating-point operation"
+    ],
+    "must": [
+      "reject inputs not matching /^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$/ with NON_PLAIN_DECIMAL_INPUT",
+      "tokenize matched inputs into (sign, integer_digits, fractional_digits) as digit-string arrays",
+      "check magnitude against plain_decimal_range; emit PLAIN_DECIMAL_OUT_OF_SCOPE if outside",
+      "locate the significant-digit window from the first non-zero digit",
+      "inspect the guard digit (10th sig digit) for the rounding decision",
+      "apply round-half-to-even on the digit array, propagating carries digit-by-digit",
+      "emit a plain-decimal string with trailing zeros padded to 9 sig figs",
+      "normalize negative zero to positive zero before emission"
+    ]
+  },
+  "out_of_scope_behavior": "Inputs whose value falls outside plain_decimal_range produce expected_error PLAIN_DECIMAL_OUT_OF_SCOPE. Inputs not in plain-decimal format produce expected_error NON_PLAIN_DECIMAL_INPUT. These categories are not interchangeable.",
+  "cases": [
+    { "category": "round_down",                "input_decimal":  "0.1234567894",  "expected":  "0.123456789",   "note": "10th sig digit = 4 (< 5), round down" },
+    { "category": "round_up_strict",           "input_decimal":  "0.1234567896",  "expected":  "0.123456790",   "note": "10th sig digit = 6 (> 5), round up" },
+    { "category": "tie",                       "input_decimal":  "0.1234567895",  "expected":  "0.123456790",   "note": "Tie at 10th sig digit; 9th = 9 (odd), round up, carries to 0" },
+    { "category": "tie",                       "input_decimal":  "0.1234567885",  "expected":  "0.123456788",   "note": "Tie at 10th sig digit; 9th = 8 (even), stay" },
+    { "category": "tie",                       "input_decimal":  "0.1234567905",  "expected":  "0.123456790",   "note": "Tie at 10th sig digit; 9th = 0 (even), stay" },
+    { "category": "tie",                       "input_decimal":  "0.1234567915",  "expected":  "0.123456792",   "note": "Tie at 10th sig digit; 9th = 1 (odd), round up to 2 (even)" },
+    { "category": "tie_negative",              "input_decimal": "-0.1234567895",  "expected": "-0.123456790",   "note": "Symmetric: round magnitude under HTE, reapply sign" },
+    { "category": "tie_negative",              "input_decimal": "-0.1234567885",  "expected": "-0.123456788",   "note": "Symmetric: 9th = 8 (even), stay" },
+    { "category": "carry_propagation",         "input_decimal":  "0.1234567995",  "expected":  "0.123456800",   "note": "Tie, round up; 9 -> 10 carries through adjacent 9, lifts 7th digit" },
+    { "category": "carry_to_unit",             "input_decimal":  "0.9999999995",  "expected":  "1.00000000",    "note": "Carries all the way through to next order of magnitude" },
+    { "category": "carry_to_unit_negative",    "input_decimal": "-0.9999999995",  "expected": "-1.00000000",    "note": "Symmetric negative carry" },
+    { "category": "carry_to_ten",              "input_decimal":  "9.999999995",   "expected":  "10.0000000",    "note": "Carries through ones place; digit count shifts but sig-fig count holds at 9" },
+    { "category": "below_tie",                 "input_decimal":  "0.9999999994",  "expected":  "0.999999999",   "note": "10th sig digit = 4, no carry" },
+    { "category": "exactly_representable",     "input_decimal":  "0.5",           "expected":  "0.500000000",   "note": "Half; pad to 9 sig figs" },
+    { "category": "leading_zeros",             "input_decimal":  "0.05",          "expected":  "0.0500000000",  "note": "Leading zero before first sig digit doesn't count; 9 sig figs from the 5" },
+    { "category": "leading_zeros_round",       "input_decimal":  "0.01234567895", "expected":  "0.0123456790",  "note": "Tie at 10th sig digit; 9th = 9 (odd), round up, carries" },
+    { "category": "already_9_sig",             "input_decimal":  "0.0123456789",  "expected":  "0.0123456789",  "note": "Exactly 9 sig figs, no rounding" },
+    { "category": "zero",                      "input_decimal":  "0",             "expected":  "0.000000000",   "note": "Canonical zero per zero_representation policy" },
+    { "category": "zero_negative",             "input_decimal": "-0",             "expected":  "0.000000000",   "note": "Negative zero normalized to positive" },
+    { "category": "integer_padding",           "input_decimal":  "1",             "expected":  "1.00000000",    "note": "Pad integer to 9 sig figs" },
+    { "category": "round_trip_identity",       "input_decimal":  "0.149780716",   "expected":  "0.149780716",   "note": "Already canonical; round-trip stability" },
+    { "category": "out_of_scope_value_small",  "input_decimal":  "0.0000001",     "expected_error": "PLAIN_DECIMAL_OUT_OF_SCOPE", "note": "Valid plain decimal; magnitude below plain_decimal_range.min_magnitude" },
+    { "category": "out_of_scope_value_large",  "input_decimal": "10000000",       "expected_error": "PLAIN_DECIMAL_OUT_OF_SCOPE", "note": "Valid plain decimal; magnitude at plain_decimal_range.max_magnitude_exclusive" },
+    { "category": "invalid_input_format",      "input_decimal":  "1e-7",          "expected_error": "NON_PLAIN_DECIMAL_INPUT",    "note": "Scientific notation; policy formatter rejects non-plain-decimal inputs before evaluating value" }
+  ]
+}
