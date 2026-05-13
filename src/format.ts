@@ -27,7 +27,7 @@ export class FormatPolicyError extends Error {
 
 const PLAIN_DECIMAL_REGEX = /^-?(0|[1-9][0-9]*)(\.[0-9]+)?$/;
 const SIGNIFICANT_DIGITS = 9;
-const PLAIN_DECIMAL_MIN_EXPONENT = -6;
+const PLAIN_DECIMAL_MIN_EXPONENT = -9;
 const PLAIN_DECIMAL_MAX_EXPONENT_EXCLUSIVE = 7;
 const ZERO_REPRESENTATION = "0.000000000";
 

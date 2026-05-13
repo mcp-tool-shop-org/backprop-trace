@@ -99,6 +99,15 @@ magnitude falls outside `plain_decimal_range`
 (see `fixtures/formatter.policy.golden.json`) cause emission to error
 rather than silently switching to scientific notation.
 
+The range floor (currently `[1e-9, 1e7)`) is sized to admit every value
+that v0.1 receipts can store — including `numeric_policy.tolerance`
+(`1e-9` in v0.1), which sits at the floor itself. Receipt-resident data
+(gradients, weights, signals, losses, inputs) sits well above the floor in
+practice; the floor exists to keep configuration constants emittable, not
+to clip data. If a future tolerance ever needs to be tighter than `1e-9`,
+the floor expands first; the engine never invents scientific-notation
+fallbacks.
+
 Error messages and diagnostics are a separate code path
 (`src/error-format.ts`) and **may** use scientific notation when reporting
 delta magnitudes outside the plain-decimal range. Error-format and
