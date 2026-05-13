@@ -1,0 +1,19 @@
+{
+  "name": "@mcptoolshop/backprop-trace",
+  "version": "0.0.0",
+  "description": "Deterministic training-trace engine for explaining neural-network learning from receipts. v0.1 implements the reconciler against the Mazur 2-2-2 fixture; engine, formatter, and Mazur verification follow.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/reconcile.bad-gradient.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
