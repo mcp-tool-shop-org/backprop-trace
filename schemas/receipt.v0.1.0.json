@@ -1,0 +1,398 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mcp-tool-shop-org/backprop-trace/schemas/receipt.v0.1.0.json",
+  "title": "Backprop-Trace Receipt v0.1.0",
+  "description": "Receipt for one training step of a small, hand-verifiable classical neural network. Captures forward pass, loss, backward signals, per-parameter updates, and (when filled) post-update forward + loss. Field order in canonical emission is determined by x-order annotations. See docs/canonical-emission.md.",
+  "type": "object",
+  "x-order": [
+    "schema_version",
+    "fixture",
+    "step",
+    "fixture_status",
+    "metadata",
+    "numeric_policy",
+    "bias_policy",
+    "topology",
+    "learning_rate",
+    "inputs",
+    "targets",
+    "parameters_before",
+    "forward",
+    "loss",
+    "backward",
+    "updates",
+    "parameters_after",
+    "post_update_forward",
+    "post_update_loss",
+    "unit_order",
+    "parameter_order"
+  ],
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fixture",
+    "step",
+    "fixture_status",
+    "numeric_policy",
+    "bias_policy",
+    "topology",
+    "learning_rate",
+    "inputs",
+    "targets",
+    "parameters_before",
+    "forward",
+    "loss",
+    "backward",
+    "updates",
+    "parameters_after"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.1.0" },
+    "fixture": { "type": "string" },
+    "step": { "type": "integer", "minimum": 1 },
+    "fixture_status": { "$ref": "#/$defs/FixtureStatus" },
+    "metadata": {
+      "description": "Free-form provenance and authoring notes. Permissive in v0.1; v0.2+ may lock structure.",
+      "type": "object"
+    },
+    "numeric_policy": { "$ref": "#/$defs/NumericPolicy" },
+    "bias_policy": { "$ref": "#/$defs/BiasPolicy" },
+    "topology": { "$ref": "#/$defs/Topology" },
+    "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
+    "inputs": { "$ref": "#/$defs/InputsMazur" },
+    "targets": { "$ref": "#/$defs/TargetsMazur" },
+    "parameters_before": { "$ref": "#/$defs/ParametersMazur" },
+    "forward": { "$ref": "#/$defs/ForwardMazur" },
+    "loss": { "$ref": "#/$defs/Loss" },
+    "backward": { "$ref": "#/$defs/BackwardMazur" },
+    "updates": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Update" }
+    },
+    "parameters_after": { "$ref": "#/$defs/ParametersMazur" },
+    "post_update_forward": { "$ref": "#/$defs/PostUpdateForward" },
+    "post_update_loss": { "$ref": "#/$defs/PostUpdateLoss" },
+    "unit_order": {
+      "description": "v0.2+ field for general topologies. Optional in v0.1 (Mazur orderings are hard-coded via the *Mazur $defs).",
+      "type": "object"
+    },
+    "parameter_order": {
+      "description": "v0.2+ field for general topologies. Optional in v0.1.",
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "FixtureStatus": {
+      "type": "object",
+      "x-order": ["authoring_state", "verification_state", "canonical", "promote_to", "describes_in", "blockers_to_promotion"],
+      "additionalProperties": false,
+      "required": ["authoring_state", "verification_state", "canonical"],
+      "properties": {
+        "authoring_state": { "enum": ["hand_derived", "engine_emitted", "deliberately_corrupted"] },
+        "verification_state": { "enum": ["pending_engine_reproduction", "engine_reproduced_byte_equal", "expected_to_fail_reconciliation"] },
+        "canonical": { "type": "boolean" },
+        "promote_to": { "type": "string" },
+        "describes_in": { "type": "string" },
+        "blockers_to_promotion": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "NumericPolicy": {
+      "type": "object",
+      "x-order": ["number_encoding", "precision_significant_digits", "rounding", "tolerance", "computation_order", "byte_output"],
+      "additionalProperties": false,
+      "required": ["number_encoding", "precision_significant_digits", "rounding", "tolerance"],
+      "properties": {
+        "number_encoding": { "const": "decimal" },
+        "precision_significant_digits": { "const": 9 },
+        "rounding": { "const": "round_half_to_even" },
+        "tolerance": { "type": "number", "exclusiveMinimum": 0 },
+        "computation_order": { "const": "schema_defined" },
+        "byte_output": {
+          "type": "object",
+          "x-order": ["format", "json_key_order", "trailing_zero_policy", "indent"],
+          "additionalProperties": false,
+          "properties": {
+            "format": { "const": "jsonl" },
+            "json_key_order": { "const": "schema_defined" },
+            "trailing_zero_policy": { "const": "pad_to_significant_digits" },
+            "indent": { "const": "none" }
+          }
+        }
+      }
+    },
+    "BiasPolicy": {
+      "type": "object",
+      "x-order": ["mode", "reason", "updated_in_step", "reconciliation"],
+      "additionalProperties": false,
+      "required": ["mode", "updated_in_step"],
+      "properties": {
+        "mode": { "enum": ["constant", "sgd"] },
+        "reason": { "type": "string" },
+        "updated_in_step": { "type": "boolean" },
+        "reconciliation": { "type": "string" }
+      }
+    },
+    "Topology": {
+      "type": "object",
+      "x-order": ["layers", "input_size", "hidden_size", "output_size", "activation", "loss", "bias_sharing"],
+      "additionalProperties": false,
+      "required": ["layers", "input_size", "hidden_size", "output_size", "activation", "loss"],
+      "properties": {
+        "layers": { "type": "array", "items": { "type": "string" } },
+        "input_size": { "type": "integer", "minimum": 1 },
+        "hidden_size": { "type": "integer", "minimum": 1 },
+        "output_size": { "type": "integer", "minimum": 1 },
+        "activation": { "enum": ["sigmoid"] },
+        "loss": { "enum": ["half_squared_error"] },
+        "bias_sharing": { "enum": ["per_layer", "per_neuron"] }
+      }
+    },
+    "InputsMazur": {
+      "type": "object",
+      "x-order": ["i1", "i2"],
+      "additionalProperties": false,
+      "required": ["i1", "i2"],
+      "properties": {
+        "i1": { "type": "number" },
+        "i2": { "type": "number" }
+      }
+    },
+    "TargetsMazur": {
+      "type": "object",
+      "x-order": ["o1", "o2"],
+      "additionalProperties": false,
+      "required": ["o1", "o2"],
+      "properties": {
+        "o1": { "type": "number" },
+        "o2": { "type": "number" }
+      }
+    },
+    "ParametersMazur": {
+      "type": "object",
+      "x-order": ["w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8", "b1", "b2"],
+      "additionalProperties": false,
+      "required": ["w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8", "b1", "b2"],
+      "properties": {
+        "w1": { "type": "number" },
+        "w2": { "type": "number" },
+        "w3": { "type": "number" },
+        "w4": { "type": "number" },
+        "w5": { "type": "number" },
+        "w6": { "type": "number" },
+        "w7": { "type": "number" },
+        "w8": { "type": "number" },
+        "b1": { "type": "number" },
+        "b2": { "type": "number" }
+      }
+    },
+    "ForwardMazur": {
+      "type": "object",
+      "x-order": ["h1", "h2", "o1", "o2"],
+      "additionalProperties": false,
+      "required": ["h1", "h2", "o1", "o2"],
+      "properties": {
+        "h1": { "$ref": "#/$defs/ForwardUnit" },
+        "h2": { "$ref": "#/$defs/ForwardUnit" },
+        "o1": { "$ref": "#/$defs/ForwardUnit" },
+        "o2": { "$ref": "#/$defs/ForwardUnit" }
+      }
+    },
+    "ForwardUnit": {
+      "type": "object",
+      "x-order": ["net", "out"],
+      "additionalProperties": false,
+      "required": ["net", "out"],
+      "properties": {
+        "net": { "type": "number" },
+        "out": { "type": "number" }
+      }
+    },
+    "Loss": {
+      "type": "object",
+      "x-order": ["per_output", "total"],
+      "additionalProperties": false,
+      "required": ["per_output", "total"],
+      "properties": {
+        "per_output": {
+          "type": "object",
+          "x-order": ["o1", "o2"],
+          "additionalProperties": false,
+          "required": ["o1", "o2"],
+          "properties": {
+            "o1": { "type": "number" },
+            "o2": { "type": "number" }
+          }
+        },
+        "total": { "type": "number" }
+      }
+    },
+    "BackwardMazur": {
+      "type": "object",
+      "x-order": ["output_error_signals", "hidden_error_signals"],
+      "additionalProperties": false,
+      "required": ["output_error_signals", "hidden_error_signals"],
+      "properties": {
+        "output_error_signals": {
+          "type": "object",
+          "x-order": ["o1", "o2"],
+          "additionalProperties": false,
+          "required": ["o1", "o2"],
+          "properties": {
+            "o1": { "$ref": "#/$defs/OutputErrorSignal" },
+            "o2": { "$ref": "#/$defs/OutputErrorSignal" }
+          }
+        },
+        "hidden_error_signals": {
+          "type": "object",
+          "x-order": ["h1", "h2"],
+          "additionalProperties": false,
+          "required": ["h1", "h2"],
+          "properties": {
+            "h1": { "$ref": "#/$defs/HiddenErrorSignal" },
+            "h2": { "$ref": "#/$defs/HiddenErrorSignal" }
+          }
+        }
+      }
+    },
+    "OutputErrorSignal": {
+      "type": "object",
+      "x-order": ["factors", "product_order", "signal_value"],
+      "additionalProperties": false,
+      "required": ["factors", "product_order", "signal_value"],
+      "properties": {
+        "factors": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/NamedFactor" }
+        },
+        "product_order": { "const": "left_to_right" },
+        "signal_value": { "type": "number" }
+      }
+    },
+    "HiddenErrorSignal": {
+      "type": "object",
+      "x-order": ["downstream_contributions", "summation_order", "backpropagated_sum", "activation_derivative", "product_order", "signal_value"],
+      "additionalProperties": false,
+      "required": ["downstream_contributions", "summation_order", "backpropagated_sum", "activation_derivative", "product_order", "signal_value"],
+      "properties": {
+        "downstream_contributions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/DownstreamContribution" }
+        },
+        "summation_order": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "backpropagated_sum": { "type": "number" },
+        "activation_derivative": { "type": "number" },
+        "product_order": { "const": "left_to_right" },
+        "signal_value": { "type": "number" }
+      }
+    },
+    "DownstreamContribution": {
+      "type": "object",
+      "x-order": ["from", "downstream_signal", "via_weight", "weight_value", "value"],
+      "additionalProperties": false,
+      "required": ["from", "downstream_signal", "via_weight", "weight_value", "value"],
+      "properties": {
+        "from": { "type": "string" },
+        "downstream_signal": { "type": "number" },
+        "via_weight": { "type": "string" },
+        "weight_value": { "type": "number" },
+        "value": { "type": "number" }
+      }
+    },
+    "NamedFactor": {
+      "type": "object",
+      "x-order": ["name", "from", "value"],
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": { "type": "string" },
+        "from": {
+          "description": "Dotted/bracketed path into the receipt where this factor's value originates. Reconciliation Rule 8 checks that value equals the referenced path's value within tolerance. Factors without a from field skip the provenance check.",
+          "type": "string"
+        },
+        "value": { "type": "number" }
+      }
+    },
+    "Update": {
+      "type": "object",
+      "x-order": ["parameter_id", "kind", "layer_edge", "parameter_role", "from_unit", "to_unit", "weight_before", "optimizer", "gradient", "update", "weight_after"],
+      "additionalProperties": false,
+      "required": ["parameter_id", "kind", "weight_before", "optimizer", "gradient", "update", "weight_after"],
+      "properties": {
+        "parameter_id": { "type": "string" },
+        "kind": { "enum": ["weight", "bias"] },
+        "layer_edge": { "enum": ["input_to_hidden", "hidden_to_output", "bias_to_layer"] },
+        "parameter_role": { "type": "string" },
+        "from_unit": { "type": "string" },
+        "to_unit": { "type": "string" },
+        "weight_before": { "type": "number" },
+        "optimizer": {
+          "type": "object",
+          "x-order": ["name", "learning_rate", "factors", "product_order"],
+          "additionalProperties": false,
+          "required": ["name", "learning_rate", "factors", "product_order"],
+          "properties": {
+            "name": { "enum": ["sgd"] },
+            "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
+            "factors": {
+              "type": "array",
+              "minItems": 2,
+              "items": { "$ref": "#/$defs/NamedFactor" }
+            },
+            "product_order": { "const": "left_to_right" }
+          }
+        },
+        "gradient": { "type": "number" },
+        "update": { "type": "number" },
+        "weight_after": { "type": "number" }
+      }
+    },
+    "PostUpdateForward": {
+      "type": "object",
+      "x-order": ["status", "required_before_promotion", "fields_required", "fill_specification", "note", "h1", "h2", "o1", "o2"],
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["pending_engine_first_run", "filled"] },
+        "required_before_promotion": { "type": "boolean" },
+        "fields_required": { "type": "array", "items": { "type": "string" } },
+        "fill_specification": { "type": "string" },
+        "note": { "type": "string" },
+        "h1": { "$ref": "#/$defs/ForwardUnit" },
+        "h2": { "$ref": "#/$defs/ForwardUnit" },
+        "o1": { "$ref": "#/$defs/ForwardUnit" },
+        "o2": { "$ref": "#/$defs/ForwardUnit" }
+      }
+    },
+    "PostUpdateLoss": {
+      "type": "object",
+      "x-order": ["status", "required_before_promotion", "fields_required", "drift_check_against_published", "note", "per_output", "total"],
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["pending_engine_first_run", "filled"] },
+        "required_before_promotion": { "type": "boolean" },
+        "fields_required": { "type": "array", "items": { "type": "string" } },
+        "drift_check_against_published": { "type": "object" },
+        "note": { "type": "string" },
+        "per_output": {
+          "type": "object",
+          "x-order": ["o1", "o2"],
+          "additionalProperties": false,
+          "properties": {
+            "o1": { "type": "number" },
+            "o2": { "type": "number" }
+          }
+        },
+        "total": { "type": "number" }
+      }
+    }
+  }
+}
