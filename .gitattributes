@@ -1,1 +1,6 @@
 * text=auto eol=lf
+*.jsonl binary
+*.json text eol=lf
+*.md text eol=lf
+*.ts text eol=lf
+*.yml text eol=lf

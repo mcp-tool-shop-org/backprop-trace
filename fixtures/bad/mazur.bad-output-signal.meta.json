@@ -1,0 +1,52 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "mazur.bad-output-signal.meta",
+  "describes": "fixtures/bad/mazur.bad-output-signal.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/mazur.golden.jsonl (engine-emitted canonical bytes). The bad fixture differs from the golden in exactly two places: the fixture_status block (3 fields) and the single targeted numeric value.",
+  "mutation": {
+    "field_path": "backward.output_error_signals.o1.signal_value",
+    "parameter_id": "o1",
+    "original": -0.138498562,
+    "mutated": -0.138497562,
+    "delta_absolute": 1.0e-6,
+    "delta_vs_tolerance_multiplier": 1000,
+    "what_was_NOT_mutated": [
+      "backward.output_error_signals.o1.factors[*].value (product of factors still equals the original signal_value)",
+      "backward.output_error_signals.o2.* (the other output unit untouched)",
+      "backward.hidden_error_signals.* (downstream backprop is computed from o1's stored signal_value the engine wrote; the downstream values still match what they were computed from)",
+      "updates[*] (gradients remain as the engine emitted them)",
+      "all other parameter updates' factor values",
+      "forward / loss / parameters_before / parameters_after"
+    ]
+  },
+  "single_target_invariant": "Reconciliation produces exactly one Rule 1 failure, and that failure names o1 (backward.output_error_signals.o1.signal_value). A Rule 8 cascade is expected and acceptable: updates[4] (w5) and updates[5] (w6) carry factors[0].from = 'backward.output_error_signals.o1.signal_value' with the original factor value -0.138498562, so when Rule 8 resolves the path it sees the mutated source -0.138497562 and reports the divergence. Rule 1 is the originating rule; Rule 8 failures on w5/w6 are downstream provenance cascades.",
+  "reconciliation_check_targeted_first": "Rule 1: signal_value == product(factors, left_to_right)",
+  "cascading_failures_observed": [
+    "Rule 8 on updates[4].optimizer.factors[0] (w5): factor.from='backward.output_error_signals.o1.signal_value', factor.value=-0.138498562, resolved source=-0.138497562, delta=1.0e-6 (cascade of Rule 1)",
+    "Rule 8 on updates[5].optimizer.factors[0] (w6): same cascade — w6 also references o1.signal_value"
+  ],
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/mazur.bad-output-signal.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 1",
+      "o1"
+    ],
+    "stderr_must_NOT_contain": [
+      "o2",
+      "h1",
+      "h2"
+    ],
+    "stderr_section_count": {
+      "Rule 1:": 1
+    },
+    "stderr_may_also_contain": [
+      "Rule 8",
+      "w5",
+      "w6"
+    ]
+  },
+  "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures. The fixture_status.verification_state = 'expected_to_fail_reconciliation' on this fixture must NOT mask the Rule 1 failure.",
+  "purpose": "Anti-circularity (Csmith / CompCert lineage): proves the reconciler checks Rule 1 (output error signal product consistency) by detecting a 1e-6 mismatch (1000x the 1e-9 tolerance) between stored signal_value and the product of the (unmutated) factors. Without Rule 1 implementation, this fixture would silently pass."
+}

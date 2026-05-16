@@ -12,10 +12,46 @@
  * The runtime-side formatter (formatNumberForEngine) lives in
  * src/runtime-format.ts and bridges JS doubles to this policy by routing
  * through toPrecision(17) + scientificToPlain.
+ *
+ * Rounding choice: round_half_to_even (HTE). This matches IEEE 754-2019
+ * §4.3.1, which specifies roundTiesToEven as the default rounding-direction
+ * attribute for binary formats. Node/V8's Number.prototype.toPrecision uses
+ * the same default per ECMA-262 §21.1.3.5 (which delegates to the IEEE-754
+ * round-to-nearest-even semantics). Aligning the policy's final rounding
+ * with toPrecision's intermediate rounding eliminates silent drift between
+ * the two stages of the pipeline — values that survive toPrecision unrounded
+ * are then rounded by the same rule when the policy formatter reduces them
+ * to 9 significant digits.
  */
 
+/**
+ * Discriminator for FormatPolicyError. Two kinds:
+ *
+ *   - `NON_PLAIN_DECIMAL_INPUT` — the input string failed PLAIN_DECIMAL_REGEX
+ *     validation. Either the caller passed a JS number directly (use
+ *     formatNumberForEngine instead), passed scientific notation (route through
+ *     scientificToPlain first), or passed a non-numeric/structurally malformed
+ *     string.
+ *
+ *   - `PLAIN_DECIMAL_OUT_OF_SCOPE` — the input parsed cleanly but its
+ *     magnitude falls outside the v0.1 plain-decimal range [1e-9, 1e7).
+ *     Receipt-resident scalars (gradients, weights, signals, losses, inputs)
+ *     sit comfortably inside this range for the Mazur 2-2-2 fixture; values
+ *     beyond it indicate either a bug upstream or a need to widen
+ *     plain_decimal_range in fixtures/formatter.policy.golden.json.
+ */
 export type FormatErrorKind = "NON_PLAIN_DECIMAL_INPUT" | "PLAIN_DECIMAL_OUT_OF_SCOPE";
 
+/**
+ * Typed error raised by formatDecimalStringForFixture when input fails policy
+ * validation. The `kind` discriminator allows callers to pattern-match without
+ * parsing the message string. The message itself includes a remediation hint
+ * pointing to formatNumberForEngine when scientific notation or a JS number
+ * was probably intended.
+ *
+ * `FormatPolicyError` is part of the public API; the kind enum is exported
+ * separately as FormatErrorKind.
+ */
 export class FormatPolicyError extends Error {
   readonly kind: FormatErrorKind;
   constructor(kind: FormatErrorKind, message: string) {
@@ -50,12 +86,36 @@ const DIGIT_IS_ODD: Record<string, boolean> = {
   "5": true,  "6": false, "7": true,  "8": false, "9": true,
 };
 
+/**
+ * Format a plain-decimal digit string into the canonical fixture
+ * representation (9 significant digits, round-half-to-even, no scientific
+ * notation, no trailing exponent).
+ *
+ * Input contract — must-have:
+ *   - String matching PLAIN_DECIMAL_REGEX (optional minus, integer part, optional
+ *     fractional part). No scientific notation, no whitespace, no leading "+".
+ *   - Magnitude in [1e-9, 1e7) — the v0.1 plain-decimal range.
+ *
+ * Input contract — must-NOT:
+ *   - No call to Number(), parseFloat(), or any IEEE-754 coercion of input.
+ *   - No call to Math.round / Math.floor / Math.ceil — rounding is done on
+ *     digit characters via lookup tables (INC_DIGIT, DIGIT_IS_ODD).
+ *   - No reliance on JS number-to-string conversion for the input value.
+ *
+ * The runtime-side bridge for JS numbers is formatNumberForEngine in
+ * src/runtime-format.ts; it handles toPrecision(17) + scientificToPlain so the
+ * caller never has to construct the digit string by hand.
+ *
+ * @throws FormatPolicyError with kind === "NON_PLAIN_DECIMAL_INPUT" when the
+ *   input does not match PLAIN_DECIMAL_REGEX, or kind ===
+ *   "PLAIN_DECIMAL_OUT_OF_SCOPE" when magnitude is outside [1e-9, 1e7).
+ */
 export function formatDecimalStringForFixture(input_decimal: string): string {
   // 1. Validate format
   if (!PLAIN_DECIMAL_REGEX.test(input_decimal)) {
     throw new FormatPolicyError(
       "NON_PLAIN_DECIMAL_INPUT",
-      `Input ${JSON.stringify(input_decimal)} is not a plain-decimal literal (regex ${PLAIN_DECIMAL_REGEX.source}).`,
+      `Input ${JSON.stringify(input_decimal)} is not a plain-decimal literal (regex ${PLAIN_DECIMAL_REGEX.source}). Hint: this function operates on plain-decimal strings only. To format a JS Number, use formatNumberForEngine from src/runtime-format.ts which routes through toPrecision(17) + scientificToPlain first.`,
     );
   }
 
@@ -92,13 +152,13 @@ export function formatDecimalStringForFixture(input_decimal: string): string {
   if (leadingExponent < PLAIN_DECIMAL_MIN_EXPONENT) {
     throw new FormatPolicyError(
       "PLAIN_DECIMAL_OUT_OF_SCOPE",
-      `Magnitude of ${JSON.stringify(input_decimal)} is below plain_decimal_range.min_magnitude (1e${PLAIN_DECIMAL_MIN_EXPONENT}).`,
+      `Magnitude of ${JSON.stringify(input_decimal)} is below plain_decimal_range.min_magnitude (1e${PLAIN_DECIMAL_MIN_EXPONENT}). Hint: v0.1 plain-decimal range is [1e-9, 1e7). Receipt-resident data (gradients, weights, signals, losses, inputs) sits well above the 1e-9 floor in practice; the floor exists to keep numeric_policy.tolerance (=1e-9) emittable. If a future tolerance needs to be tighter than 1e-9, the floor expands first (see docs/canonical-emission.md).`,
     );
   }
   if (leadingExponent >= PLAIN_DECIMAL_MAX_EXPONENT_EXCLUSIVE) {
     throw new FormatPolicyError(
       "PLAIN_DECIMAL_OUT_OF_SCOPE",
-      `Magnitude of ${JSON.stringify(input_decimal)} is at or above plain_decimal_range.max_magnitude_exclusive (1e${PLAIN_DECIMAL_MAX_EXPONENT_EXCLUSIVE}).`,
+      `Magnitude of ${JSON.stringify(input_decimal)} is at or above plain_decimal_range.max_magnitude_exclusive (1e${PLAIN_DECIMAL_MAX_EXPONENT_EXCLUSIVE}). Hint: v0.1 plain-decimal range is [1e-9, 1e7). Receipt-resident data (gradients, weights, signals, losses, inputs) sits well above the 1e-9 floor in practice; the floor exists to keep numeric_policy.tolerance (=1e-9) emittable. If a future tolerance needs to be tighter than 1e-9, the floor expands first (see docs/canonical-emission.md).`,
     );
   }
 
@@ -112,7 +172,7 @@ export function formatDecimalStringForFixture(input_decimal: string): string {
   if (finalExponent >= PLAIN_DECIMAL_MAX_EXPONENT_EXCLUSIVE) {
     throw new FormatPolicyError(
       "PLAIN_DECIMAL_OUT_OF_SCOPE",
-      `After rounding, magnitude of ${JSON.stringify(input_decimal)} reached >= 1e${PLAIN_DECIMAL_MAX_EXPONENT_EXCLUSIVE}.`,
+      `After rounding, magnitude of ${JSON.stringify(input_decimal)} reached >= 1e${PLAIN_DECIMAL_MAX_EXPONENT_EXCLUSIVE}. Hint: v0.1 plain-decimal range is [1e-9, 1e7). Receipt-resident data (gradients, weights, signals, losses, inputs) sits well above the 1e-9 floor in practice; the floor exists to keep numeric_policy.tolerance (=1e-9) emittable. If a future tolerance needs to be tighter than 1e-9, the floor expands first (see docs/canonical-emission.md).`,
     );
   }
 

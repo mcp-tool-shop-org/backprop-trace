@@ -1,0 +1,52 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "mazur.bad-provenance.meta",
+  "describes": "fixtures/bad/mazur.bad-provenance.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/mazur.golden.jsonl (engine-emitted canonical bytes). The fixture differs from the golden in exactly two places: the fixture_status block (3 fields) and the single targeted numeric value.",
+  "mutation": {
+    "field_path": "updates[4].optimizer.factors[0].value",
+    "parameter_id": "w5",
+    "original": -0.138498562,
+    "mutated": -0.138497562,
+    "delta_absolute": 1.0e-6,
+    "delta_vs_tolerance_multiplier": 1000,
+    "what_was_NOT_mutated": [
+      "updates[4].optimizer.factors[0].from ('backward.output_error_signals.o1.signal_value' — the provenance pointer Rule 8 resolves)",
+      "updates[4].optimizer.factors[0].name ('output_error_signal')",
+      "backward.output_error_signals.o1.signal_value (-0.138498562 — Rule 8 resolves the path and finds this UNMUTATED value, then compares against the mutated factor.value)",
+      "updates[4].optimizer.factors[1] (upstream_activation — w5's other factor is intact)",
+      "updates[5] (w6) and beyond — only w5's factor[0].value mutated; the same -0.138498562 value appears in w6's factor[0].value, NOT mutated here",
+      "forward / loss / backward / parameters_*"
+    ],
+    "rule_4_cascade_unavoidable": "Rule 8 mutates a FACTOR value. Rule 4 multiplies factors to recompute gradient. Mutating any factor value perturbs the Rule-4 product by O(delta * other_factor). Specifically: new_product = -0.138497562 * 0.593269992 vs stored gradient -0.0821670406; delta ≈ 5.9e-7 (still > 1e-9 tolerance). So Rule 4 ALSO fires on w5. This is structurally unavoidable for the 'mutate factor.value, leave from intact' fixture design — Rule 4 cannot pass when its inputs are wrong. Rule 8 is the targeted invariant; Rule 4 is the structural cascade. The reconciler must distinguish them via the field_path: Rule 8 reports field_path = the 'from' string ('backward.output_error_signals.o1.signal_value'), Rule 4 reports field_path = 'updates[4].gradient'."
+  },
+  "single_target_invariant": "Reconciliation produces exactly one Rule 8 failure naming parameter w5 with field_path = 'backward.output_error_signals.o1.signal_value' (the 'from' path). One Rule 4 failure on updates[4].gradient is the structural cascade.",
+  "reconciliation_check_targeted_first": "Rule 8: factor.value == value at the path indicated by factor.from",
+  "cascading_failures_observed": [
+    "Rule 4 on updates[4].gradient (w5): product(mutated factor.value, upstream_activation) no longer matches stored gradient. Structural cascade — cannot be eliminated without making the fixture violate the 'single mutation' contract."
+  ],
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/mazur.bad-provenance.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 8",
+      "w5",
+      "backward.output_error_signals.o1.signal_value"
+    ],
+    "stderr_must_NOT_contain": [
+      "Rule 1",
+      "Rule 2",
+      "Rule 3",
+      "Rule 5",
+      "Rule 6",
+      "Rule 7"
+    ],
+    "stderr_section_count": {
+      "Rule 8:": 1,
+      "Rule 4:": 1
+    }
+  },
+  "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures.",
+  "purpose": "Anti-circularity (Csmith / CompCert lineage): proves the reconciler checks Rule 8 (provenance reference consistency — factor.value resolves to the value at factor.from) by detecting a 1e-6 mismatch (1000x the 1e-9 tolerance). The Rule 4 cascade is acceptable and documented."
+}

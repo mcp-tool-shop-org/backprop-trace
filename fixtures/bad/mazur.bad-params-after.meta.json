@@ -1,0 +1,51 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "mazur.bad-params-after.meta",
+  "describes": "fixtures/bad/mazur.bad-params-after.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/mazur.golden.jsonl (engine-emitted canonical bytes). The fixture differs from the golden in exactly two places: the fixture_status block (3 fields) and the single targeted numeric value.",
+  "mutation": {
+    "field_path": "parameters_after.w5",
+    "parameter_id": "w5",
+    "original": 0.358916480,
+    "mutated": 0.358917480,
+    "delta_absolute": 1.0e-6,
+    "delta_vs_tolerance_multiplier": 1000,
+    "what_was_NOT_mutated": [
+      "parameters_before.w5 (0.4 — left operand of Rule 7 sum)",
+      "updates[4].update (-0.0410835203 — right operand of Rule 7 sum)",
+      "updates[4].weight_after (0.358916480 — Rule 6 still passes because it doesn't read parameters_after)",
+      "updates[4].gradient / updates[4].optimizer.* (Rules 4 + 5 still pass)",
+      "all other parameter_after entries (only w5 mutated)",
+      "all other updates",
+      "forward / loss / backward"
+    ]
+  },
+  "single_target_invariant": "Reconciliation produces exactly one Rule 7 failure naming parameters_after.w5. Rule 6 must NOT fire (updates[4].weight_after is internally consistent with weight_before + update). No other rule fires.",
+  "reconciliation_check_targeted_first": "Rule 7: parameters_after[param] == parameters_before[param] + sum(updates targeting param)",
+  "cascading_failures_observed": [],
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/mazur.bad-params-after.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 7",
+      "w5",
+      "parameters_after"
+    ],
+    "stderr_must_NOT_contain": [
+      "Rule 1",
+      "Rule 2",
+      "Rule 3",
+      "Rule 4",
+      "Rule 5",
+      "Rule 6",
+      "Rule 8"
+    ],
+    "stderr_section_count": {
+      "Rule 7:": 1
+    }
+  },
+  "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures.",
+  "bias_edge_case_note": "This fixture targets the weight branch of Rule 7 (parameter id appears in some updates[i].parameter_id). The bias branch (parameter not in any update, bias_policy.mode === 'constant', exact-zero-delta) is exercised by test/reconcile.bad-params-after.test.ts subtest (b) via in-memory mutation rather than a dedicated fixture, because the bias case requires a sub-tolerance delta that this fixture would not exercise.",
+  "purpose": "Anti-circularity (Csmith / CompCert lineage): proves the reconciler checks Rule 7 (final state == parameters_before + sum(updates)) by detecting a 1e-6 mismatch (1000x the 1e-9 tolerance) between stored parameters_after.w5 and the sum of (unmutated) parameters_before.w5 + updates[4].update."
+}

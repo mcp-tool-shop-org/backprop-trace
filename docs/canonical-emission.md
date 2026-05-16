@@ -40,6 +40,19 @@ plus any re-serializer will produce different bytes than the original.
 - Each JSONL record ends with `\n` (LF, not CRLF).
 - The last record in a file ends with `\n`. No additional trailing newline.
 
+### Multi-record framing
+
+JSONL receipts are framed with one record per line, each terminated by LF (`\n`).
+A file with N records has N LF terminators including a trailing one — i.e.,
+`{...}\n{...}\n{...}\n`. This matches the ndjson convention's "trailing newline
+acceptable" reading, and is what `emitReceipts([r1, r2, r3])` produces.
+
+A single-record file from `emitMazurReceipt(r)` is structurally `{...}\n` — the
+N=1 case of the above. There is no separate single-record vs multi-record framing.
+Library consumers writing multiple receipts should call `emitReceipts(receipts)`
+rather than concatenating `emitMazurReceipt` outputs manually; the helper exists
+so the trailing-LF contract has a single owner.
+
 ### Unknown keys
 - Emission errors. Schema is closed; the receipt cannot contain undeclared
   fields. Verification likewise rejects receipts with unknown keys before
@@ -130,3 +143,43 @@ The reconciler (which validates math under `docs/reconciliation.md`) is
 tested against bad receipts before any good receipt exists. Canonical
 emission is therefore tested only after the reconciler is proven, since
 byte-equality testing requires a trustworthy receipt to compare against.
+
+## Related work and trade-offs
+
+backprop-trace chose **schema-defined key order** (via `x-order` annotations)
+over **alphabetical key order** (RFC 8785 JSON Canonicalization Scheme,
+https://www.rfc-editor.org/rfc/rfc8785; RFC 8949 §4.2 CBOR core
+deterministic encoding, https://www.rfc-editor.org/rfc/rfc8949.html). The
+trade-off:
+
+- **Alphabetical** (JCS / cJSON / CBOR-det): verifier needs zero schema
+  dependency — can canonicalize any payload from bytes alone.
+- **Schema-defined** (this repo): receipts read top-down in causal/execution
+  order (inputs -> forward -> loss -> backward -> updates), which is
+  auditor-friendly. The cost is that the schema becomes a load-bearing
+  dependency of canonicalization: schema versioning is a security property,
+  not a docs concern. backprop-trace addresses this by emitting
+  `schema_version` as the first field of every receipt and freezing the
+  v0.1 schema bytes.
+
+The receipt schema maps cleanly to an in-toto attestation predicate
+(`predicateType: "https://mcptoolshop.org/backprop-trace/receipt/v1"`),
+making the path open to DSSE-wrapped, Rekor-logged provenance integration
+later (https://github.com/in-toto/attestation/blob/main/spec/v1/envelope.md).
+v0.1 does not ship this integration; the architectural seam exists.
+
+## Reference class
+
+backprop-trace is a **structural-trace verifier with canonical bytewise
+encoding** — the fixture-determinism engine class (Jest snapshots, Rust insta),
+NOT an ML metrics logger (TensorBoard, MLflow, Weights & Biases). The string IS
+the contract here; production ML trackers treat the number as the contract and
+let serialization vary. The closest formal analog in ML provenance is
+Proof-of-Learning (Jia et al. IEEE S&P 2021,
+https://ar5iv.labs.arxiv.org/html/2103.05633), which uses accumulated training
+state to let verifiers recompute selected gradient steps.
+
+The trace reproduction-status vocabulary used in this repo
+(`bit_exact | math_only | drift_within_tolerance | failed_reconciliation`)
+appears to be novel — no existing standard (W3C PROV, MLflow, ML-Schema,
+FAIR4ML) covers this specific distinction.

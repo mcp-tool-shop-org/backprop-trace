@@ -22,12 +22,13 @@
   "precision_normalization_history": {
     "issue": "Initial hand-derivation of the non-mutated update records used 9-sig-fig values for gradient / update / weight_after. For w6 and w8 specifically, the IEEE-754 product of the stored factor doubles differs from the 9-sig-fig stored gradient by ~3e-9 and ~1.5e-9 — both above the 1e-9 absolute tolerance. This produced incidental Rule 4 failures on w6 and w8 alongside the deliberate w5 failure.",
     "fix": "Replaced w6 and w8 gradient / update / weight_after fields with full-double-precision values that round-trip exactly through JSON.parse. This is acceptable because the bad fixture is a contract-test artifact, not a canonical receipt. The eventual mazur.golden.jsonl (engine-emitted) will use 9-sig-fig canonical emission under numeric_policy.byte_output.",
+    "v0_2_observation": "Rule 3 now fires on backward.hidden_error_signals.h2.signal_value with a precision-noise delta ≈ 4.2e-9 (~4x the 1e-9 tolerance). This is a hand-derivation precision artifact on h2's signal calculation (sum × derivative recomputes to -0.009954254779 vs stored -0.009954259), not a deliberate mutation. The test `reconcile.bad-gradient.test.ts` filters specifically for Rule 4 failures via .filter(f => f.rule === 4) and is unaffected, but the incidental Rule 3 failure is now observed in v0.2 with Rule 3 wired. Cleanest fix is to regenerate the bad-gradient fixture from the engine via byte-precise mutation of mazur.golden.jsonl (the technique used for the seven v0.2 bad-* fixtures); deferred to a follow-up so v0.2's existing T-A-005 anti-circularity proof remains stable against the same fixture bytes.",
     "v0_2_followup": "Tolerance policy should likely become hybrid (rtol + atol) rather than pure-absolute 1e-9. Production numerical test suites (PyTorch, numpy, JAX) all use |a-b| <= max(atol, rtol * max(|a|,|b|)). Investigation issue is the natural way to track this."
   },
   "reconciliation_check_targeted_first": "Rule 4: update.gradient == product(optimizer.factors)",
-  "cascading_failures_expected_when_other_rules_land": [
-    "Rule 5: update == learning_rate * gradient (cascade from w5; stored update -0.041083520 was derived from the original gradient, so it is no longer consistent with the mutated stored gradient -0.082166041)",
-    "Rule 6: weight_after == weight_before + update (cascade from w5 if the reconciler recomputes update from the mutated gradient; if it uses the stored update value, Rule 6 passes independently)"
+  "cascading_failures_observed": [
+    "Rule 5 on updates[4].update (w5): cascade_of_rule = 4. Stored update -0.041083520 was derived from the original gradient; it is no longer consistent with the mutated stored gradient -0.082166041 under the engine agent's stored-values implementation choice. Cascade became observable in v0.2 when Rule 5 was wired.",
+    "Rule 6 on updates[4].weight_after: does NOT cascade under the engine's stored-values implementation choice — weight_before + stored update remains consistent with stored weight_after to within tolerance. (Under a recompute-from-mutated-gradient implementation, Rule 6 would cascade; the engine agent chose stored-values, matching v0.1 expectations.)"
   ],
   "expected_verify_outcome": {
     "command": "bp reconcile receipt fixtures/bad/mazur.bad-gradient.jsonl",
@@ -35,7 +36,9 @@
     "stderr_must_contain": [
       "reconciliation failed",
       "w5",
-      "Rule 4"
+      "Rule 4",
+      "Rule 5",
+      "cascades from Rule"
     ],
     "stderr_must_NOT_contain": [
       "w6",
@@ -49,11 +52,7 @@
     ],
     "stderr_section_count": {
       "Rule 4:": 1
-    },
-    "stderr_may_also_contain_when_more_rules_land": [
-      "Rule 5",
-      "(cascade)"
-    ]
+    }
   },
   "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures. The post_update_forward.status = 'pending_engine_first_run' on this fixture must NOT mask the Rule 4 failure. If the reconciler reports 'draft not promoted' before reporting Rule 4, the failure-priority rule is violated.",
   "error_message_format_note": "Delta and tolerance render via toExponential(9) in src/bin/bp.ts (scientific notation permitted for error magnitudes), not src/format.ts (receipt emission, plain decimal only). Error-format and receipt-format are separate code paths.",

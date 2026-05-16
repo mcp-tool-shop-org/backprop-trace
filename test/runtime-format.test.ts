@@ -146,3 +146,67 @@ test("scientificToPlain('') throws (empty input)", () => {
   }
   assert.ok(caught instanceof Error, "must throw on empty input");
 });
+
+// =============================================================================
+// T-A-014: scientificToPlain rejects exponents far outside binary64 range
+// =============================================================================
+//
+// Binary64 has |exp10| < ~310; |exp| of 400+ is unreachable from any finite
+// JS double — toPrecision(17) on a finite double never produces an exponent
+// magnitude greater than ~308. A value with `|e| > 400` in scientific
+// notation can only reach scientificToPlain via direct user mis-use of the
+// helper or a malformed upstream pipeline. The function must reject it
+// rather than allocate a string with hundreds of millions of leading zeros
+// or carry an enormous decimal-position shift through to a downstream
+// formatter. This pins the guard that the format agent is expected to add
+// on top of the existing scientific-notation validator.
+
+test(
+  "T-A-014: scientificToPlain rejects exponent > 400 (1e500)",
+  () => {
+    let caught: unknown;
+    try {
+      // Construct a string by hand — JS Number cannot represent 1e500.
+      scientificToPlain("1e500");
+    } catch (e) {
+      caught = e;
+    }
+    assert.ok(
+      caught instanceof Error,
+      `scientificToPlain('1e500') must throw (exp magnitude 500 > 400 guard); got no throw`,
+    );
+  },
+);
+
+test(
+  "T-A-014: scientificToPlain rejects exponent < -400 (1e-500)",
+  () => {
+    let caught: unknown;
+    try {
+      scientificToPlain("1e-500");
+    } catch (e) {
+      caught = e;
+    }
+    assert.ok(
+      caught instanceof Error,
+      `scientificToPlain('1e-500') must throw (exp magnitude 500 > 400 guard); got no throw`,
+    );
+  },
+);
+
+test(
+  "T-A-014: scientificToPlain rejects pathological exponent (1e10000)",
+  () => {
+    let caught: unknown;
+    try {
+      scientificToPlain("1e10000");
+    } catch (e) {
+      caught = e;
+    }
+    assert.ok(
+      caught instanceof Error,
+      `scientificToPlain('1e10000') must throw; allowing this would attempt to allocate ` +
+        `a 10kdigit string and burn arbitrary memory on a malformed input`,
+    );
+  },
+);

@@ -13,6 +13,8 @@ const repoRoot = resolve(__dirname, "..");
 const outputPath = resolve(repoRoot, "tmp/mazur.generated.jsonl");
 const goldenPath = resolve(repoRoot, "fixtures/mazur.golden.jsonl");
 const publishedPath = resolve(repoRoot, "fixtures/mazur.published.json");
+const packageJsonPath = resolve(repoRoot, "package.json");
+const schemaPath = resolve(repoRoot, "schemas/receipt.v0.1.0.json");
 
 // Pinned engine value for post_update_loss.total.
 // Source: V8/Node 22 IEEE-754 first-run output on the Mazur 2-2-2 fixture.
@@ -151,5 +153,151 @@ test("fixtures/mazur.published.json documents post_update_total_error drift as W
     claim.drift_absolute !== undefined &&
       Math.abs(claim.drift_absolute - expectedDrift) < 1e-15,
     `drift_absolute must equal published - engine (expected ${expectedDrift}, got ${claim.drift_absolute})`,
+  );
+});
+
+/**
+ * Parse a simple node-version range and return whether `actualMajor` (the
+ * first numeric component of `process.versions.node`) satisfies the range.
+ *
+ * Supported forms (the only forms package.json engines.node should use in
+ * v0.1; we don't pull semver as a runtime dep just for one test):
+ *   - "<major>.x"      e.g. "22.x"   -> actualMajor === parsed major
+ *   - ">=<major>"      e.g. ">=20"   -> actualMajor >= parsed major
+ *   - ">=<major>.<m>"  e.g. ">=20.0" -> actualMajor >= parsed major
+ *   - "<major>"        e.g. "22"     -> actualMajor === parsed major
+ *
+ * Throws if the range form is not recognized so the test fails loudly
+ * rather than silently accepting an unparseable range.
+ */
+function nodeMajorSatisfies(range: string, actualMajor: number): boolean {
+  const trimmed = range.trim();
+  const dotXMatch = trimmed.match(/^(\d+)\.x$/);
+  if (dotXMatch) {
+    const major = parseInt(dotXMatch[1]!, 10);
+    return actualMajor === major;
+  }
+  const gteMatch = trimmed.match(/^>=\s*(\d+)(?:\.\d+(?:\.\d+)?)?$/);
+  if (gteMatch) {
+    const major = parseInt(gteMatch[1]!, 10);
+    return actualMajor >= major;
+  }
+  const bareMajor = trimmed.match(/^(\d+)$/);
+  if (bareMajor) {
+    const major = parseInt(bareMajor[1]!, 10);
+    return actualMajor === major;
+  }
+  throw new Error(
+    `nodeMajorSatisfies: unrecognized engines.node range form ${JSON.stringify(range)}. ` +
+      `Supported forms: "<major>.x", ">=<major>", ">=<major>.<minor>", "<major>".`,
+  );
+}
+
+test(
+  "T-A-002: process.versions.node satisfies package.json engines.node range",
+  () => {
+    const pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
+      engines?: { node?: string };
+    };
+    const range = pkg.engines?.node;
+    assert.ok(
+      typeof range === "string" && range.length > 0,
+      "package.json must declare engines.node — determinism claim depends on a pinned runtime",
+    );
+
+    const runtime = process.versions.node;
+    const actualMajor = parseInt(runtime.split(".")[0]!, 10);
+    assert.ok(
+      Number.isInteger(actualMajor) && actualMajor > 0,
+      `could not parse process.versions.node major from ${JSON.stringify(runtime)}`,
+    );
+
+    assert.ok(
+      nodeMajorSatisfies(range, actualMajor),
+      `process.versions.node ${runtime} (major ${actualMajor}) must satisfy engines.node ${JSON.stringify(range)}`,
+    );
+  },
+);
+
+test(
+  "T-A-007: engine receipt schema_version equals schemas/receipt.v0.1.0.json properties.schema_version.const",
+  () => {
+    const schema = JSON.parse(readFileSync(schemaPath, "utf-8")) as {
+      properties?: { schema_version?: { const?: string } };
+    };
+    const schemaConst = schema.properties?.schema_version?.const;
+    assert.ok(
+      typeof schemaConst === "string" && schemaConst.length > 0,
+      "schemas/receipt.v0.1.0.json must pin properties.schema_version.const",
+    );
+
+    const receipt = runMazurStep(MAZUR_INPUT);
+    assert.strictEqual(
+      receipt.schema_version,
+      schemaConst,
+      `engine receipt.schema_version (${receipt.schema_version}) must equal schema's pinned const (${schemaConst})`,
+    );
+  },
+);
+
+/**
+ * T-A-012: byte-level whitespace exhaustive check on emitted text.
+ *
+ * Pre-amend the main test asserted no `\r`, no `": "`, no `", "`, and a
+ * single trailing LF. That covers the headline cases; this subtest closes
+ * the long tail:
+ *
+ *   - No tab characters (TAB would bloat the file and break "no
+ *     whitespace inside the record" canonical-emission claim).
+ *   - Exactly one LF terminator (split by "\n" yields exactly
+ *     [record, ""] — confirms there is no trailing blank line and the
+ *     record itself contains no embedded newline).
+ *   - No whitespace adjacent to closing braces/brackets and delimiters
+ *     (regex `/[\}\]]\s+[,\}\]]/`). This would catch a future pretty-print
+ *     bug that emits `}  ,` between sibling objects.
+ *
+ * If any of these slip in, the on-disk golden no longer round-trips
+ * byte-equal against the engine output, so the existing main test catches
+ * it — but only AFTER the golden has been regenerated. This subtest fails
+ * fast on the in-memory emitted bytes, before any disk write.
+ */
+test("T-A-012: emitted Mazur receipt passes exhaustive byte-level whitespace checks", () => {
+  const receipt = runMazurStep(MAZUR_INPUT);
+  const emitted = emitMazurReceipt(receipt);
+
+  // No tab characters.
+  assert.ok(
+    !emitted.includes("\t"),
+    "emitted text must contain no tab characters",
+  );
+
+  // Exactly one LF terminator: split on "\n" yields [record, ""] (the
+  // empty trailing element confirms the file ends with LF; record itself
+  // must not contain an internal LF).
+  const splits = emitted.split("\n");
+  assert.strictEqual(
+    splits.length,
+    2,
+    `emitted text must contain exactly one LF (terminator); split('\\n') yielded ${splits.length} segments`,
+  );
+  assert.strictEqual(
+    splits[1],
+    "",
+    `LF must be the terminator (trailing empty segment); got ${JSON.stringify(splits[1])}`,
+  );
+  // The record itself (splits[0]) must not contain whitespace between
+  // closing delimiters — pretty-printers leak space here.
+  const record = splits[0]!;
+  assert.doesNotMatch(
+    record,
+    /[\}\]]\s+[,\}\]]/,
+    `emitted record must contain no whitespace between closing brace/bracket and delimiter — ` +
+      `pretty-printer leak would break byte-equality`,
+  );
+  // Also: no space immediately after open delimiters.
+  assert.doesNotMatch(
+    record,
+    /[\{\[]\s+/,
+    `emitted record must contain no whitespace immediately after open brace/bracket`,
   );
 });

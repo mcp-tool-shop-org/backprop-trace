@@ -1,0 +1,54 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "mazur.bad-hidden-signal.meta",
+  "describes": "fixtures/bad/mazur.bad-hidden-signal.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/mazur.golden.jsonl (engine-emitted canonical bytes). The fixture differs from the golden in exactly two places: the fixture_status block (3 fields) and the single targeted numeric value.",
+  "mutation": {
+    "field_path": "backward.hidden_error_signals.h1.signal_value",
+    "parameter_id": "h1",
+    "original": -0.00877135469,
+    "mutated": -0.00877035469,
+    "delta_absolute": 1.0e-6,
+    "delta_vs_tolerance_multiplier": 1000,
+    "what_was_NOT_mutated": [
+      "backward.hidden_error_signals.h1.backpropagated_sum (-0.0363503064 — left operand of Rule 3 product)",
+      "backward.hidden_error_signals.h1.activation_derivative (0.241300709 — right operand of Rule 3 product)",
+      "backward.hidden_error_signals.h1.downstream_contributions[*] (Rule 2 inputs untouched — Rule 2 still passes)",
+      "backward.hidden_error_signals.h2.* / backward.output_error_signals.*",
+      "updates[*] (gradients remain as the engine emitted them; w1/w2 factors[0].from=backward.hidden_error_signals.h1.signal_value carries the original -0.00877135469 value, so when Rule 8 resolves the path it sees -0.00877035469 — that's a cascade)",
+      "forward / loss / parameters_before / parameters_after"
+    ]
+  },
+  "single_target_invariant": "Reconciliation produces exactly one Rule 3 failure, and that failure names backward.hidden_error_signals.h1.signal_value. Rule 2 must NOT fire (sum + contributions are untouched). Rule 8 cascade is expected on updates[0] (w1) and updates[1] (w2), both of which carry factors[0].from='backward.hidden_error_signals.h1.signal_value' with the original value -0.00877135469.",
+  "reconciliation_check_targeted_first": "Rule 3: signal_value == backpropagated_sum * activation_derivative",
+  "cascading_failures_observed": [
+    "Rule 8 on updates[0].optimizer.factors[0] (w1): factor.value=-0.00877135469 vs resolved source=-0.00877035469",
+    "Rule 8 on updates[1].optimizer.factors[0] (w2): same cascade — w2 also references h1.signal_value"
+  ],
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/mazur.bad-hidden-signal.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 3",
+      "h1",
+      "signal_value"
+    ],
+    "stderr_must_NOT_contain": [
+      "h2",
+      "o1",
+      "o2",
+      "Rule 2"
+    ],
+    "stderr_section_count": {
+      "Rule 3:": 1
+    },
+    "stderr_may_also_contain": [
+      "Rule 8",
+      "w1",
+      "w2"
+    ]
+  },
+  "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures.",
+  "purpose": "Anti-circularity (Csmith / CompCert lineage): proves the reconciler checks Rule 3 (hidden error signal = backprop_sum × activation_derivative) by detecting a 1e-6 mismatch (1000x the 1e-9 tolerance) between stored signal_value and the product of (unmutated) backpropagated_sum × activation_derivative."
+}

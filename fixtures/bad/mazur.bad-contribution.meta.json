@@ -1,0 +1,46 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "mazur.bad-contribution.meta",
+  "describes": "fixtures/bad/mazur.bad-contribution.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/mazur.golden.jsonl (engine-emitted canonical bytes). The bad fixture differs from the golden in exactly two places: the fixture_status block (3 fields) and the single targeted numeric value.",
+  "mutation": {
+    "field_path": "backward.hidden_error_signals.h1.downstream_contributions[0].value",
+    "parameter_id": "h1.downstream_contributions[0]",
+    "original": -0.0553994247,
+    "mutated": -0.0553984247,
+    "delta_absolute": 1.0e-6,
+    "delta_vs_tolerance_multiplier": 1000,
+    "what_was_NOT_mutated": [
+      "backward.hidden_error_signals.h1.downstream_contributions[0].downstream_signal (-0.138498562 — referenced by Rule 2 as the left factor)",
+      "backward.hidden_error_signals.h1.downstream_contributions[0].weight_value (0.40 — referenced by Rule 2 as the right factor)",
+      "backward.hidden_error_signals.h1.downstream_contributions[1] (the o2->h1 contribution is unchanged)",
+      "backward.hidden_error_signals.h1.backpropagated_sum (-0.0363503064 — this is the sum claimed by the receipt; Rule 2's sum check will see the mutated contribution and report a sum mismatch as well)",
+      "backward.hidden_error_signals.h2.* (the other hidden unit untouched)",
+      "backward.output_error_signals.* / updates[*] / forward / loss / parameters_*"
+    ]
+  },
+  "single_target_invariant": "Reconciliation produces at least one Rule 2 failure whose field_path names backward.hidden_error_signals.h1.downstream_contributions[0].value. A second Rule 2 failure on backward.hidden_error_signals.h1.backpropagated_sum is also expected and acceptable — when one contribution's stored value is wrong, the stored backprop_sum (computed from the original contributions) no longer equals sum(stored contributions), so the sum check also fires. Both are Rule 2 failures on the same unit h1, expressing the same root cause.",
+  "reconciliation_check_targeted_first": "Rule 2: contribution.value == downstream_signal * weight_value",
+  "cascading_failures_observed": [
+    "Rule 2 on backward.hidden_error_signals.h1.backpropagated_sum: sum(stored contributions) no longer matches stored backprop_sum, because contributions[0].value was mutated"
+  ],
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/mazur.bad-contribution.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 2",
+      "h1"
+    ],
+    "stderr_must_NOT_contain": [
+      "h2",
+      "o1",
+      "o2"
+    ],
+    "stderr_section_count": {
+      "Rule 2:": 2
+    }
+  },
+  "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures. The fixture_status.verification_state = 'expected_to_fail_reconciliation' on this fixture must NOT mask the Rule 2 failure.",
+  "purpose": "Anti-circularity (Csmith / CompCert lineage): proves the reconciler checks Rule 2 per-contribution (downstream_signal × weight_value consistency) by detecting a 1e-6 mismatch (1000x the 1e-9 tolerance) between stored contribution.value and the product of (unmutated) downstream_signal × weight_value."
+}

@@ -3,7 +3,34 @@
   "fixture": "mazur-2-2-2",
   "compiled_on": "2026-05-13",
   "evidence_ledger_for": "fixtures/mazur.golden.jsonl",
+  "human_readable_summary": "This ledger records what Mazur's 2015 blog post published (one widely-cited downstream anchor for post-update total error) and what backprop-trace's V8/Node 22 engine reproduces. The two differ by ~1.5e-7 at the 7th significant digit — the engine's value is what's emitted into receipts; the anchor is provided here for educational comparison. Drift on this claim is NOT a hard gate; bp verify mazur WARNs but does not FAIL when run against this published ledger. If your engine differs from Mazur by ~1.5e-7 on post_update_total_error, that's expected — see the drift_observed claim below.",
   "engine_reproduction_source": "fixtures/mazur.golden.jsonl is the committed canonical first-run output of src/engine.ts (V8/Node 22). When this file documents drift against an anchor, the canonical engine value comes from the golden, not from this published ledger.",
+  "compute_infrastructure": {
+    "cpu_arch": "x86_64",
+    "node_version_at_generation": "22.x",
+    "v8_version_at_generation": "12.x.x",
+    "os_at_generation": "windows",
+    "generation_date": "2026-05-13"
+  },
+  "caveats_and_recommendations": {
+    "scope": "single-step only (v0.1)",
+    "topology": "2-2-2 hand-derived (Mazur fixture; not generalized)",
+    "loss": "half_squared_error (MSE)",
+    "activation": "sigmoid (Math.exp via V8 fdlibm port; deterministic on Node 22 V8)",
+    "batching": "none",
+    "optimizer": "sgd (no momentum, no Adam, no weight decay)",
+    "bias_policy": "constant in step 1 (per Mazur's derivation)",
+    "gpu_determinism": "not applicable (CPU-only)",
+    "cross_engine_portability": "V8 only; Hermes / JSC / Bun-JSC untested",
+    "cross_node_major_portability": "tested on Node 22.x only; Math.exp is not contractually bit-stable across V8 majors"
+  },
+  "standards_referenced": [
+    "Pineau et al. JMLR 2021 — ML Reproducibility Checklist (https://arxiv.org/abs/2003.12206)",
+    "Mitchell et al. FAT* 2019 — Model Cards (https://arxiv.org/abs/1810.03993)",
+    "Gebru et al. CACM 2021 — Datasheets for Datasets (https://arxiv.org/abs/1803.09010)",
+    "Kapoor et al. Science Advances 2024 — REFORMS (https://www.science.org/doi/10.1126/sciadv.adk3452)",
+    "Jia et al. IEEE S&P 2021 — Proof-of-Learning (https://ar5iv.labs.arxiv.org/html/2103.05633)"
+  ],
   "source": {
     "author": "Matt Mazur",
     "title": "A Step by Step Backpropagation Example",

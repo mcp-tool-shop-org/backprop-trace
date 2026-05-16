@@ -107,7 +107,7 @@
         "number_encoding": { "const": "decimal" },
         "precision_significant_digits": { "const": 9 },
         "rounding": { "const": "round_half_to_even" },
-        "tolerance": { "type": "number", "exclusiveMinimum": 0 },
+        "tolerance": { "const": 1e-9 },
         "computation_order": { "const": "schema_defined" },
         "byte_output": {
           "type": "object",

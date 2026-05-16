@@ -16,6 +16,24 @@ to have done actually add up?**
 If the answer is "no," the reconciler refuses to certify the receipt and
 the verifier fails closed.
 
+## Quick reference: the 8 rules
+
+| # | Rule | Status |
+|---|------|--------|
+| 1 | Output error signal == product(factors) | **implemented (v0.2)** |
+| 2 | Backpropagated sum == sum(downstream contributions) AND contribution.value == downstream_signal * weight_value | **implemented (v0.2)** |
+| 3 | Hidden error signal == backprop_sum * activation_derivative | **implemented (v0.2)** |
+| 4 | Update gradient == product(optimizer.factors) | **implemented (v0.1)** |
+| 5 | Update value == learning_rate * gradient | **implemented (v0.2)** |
+| 6 | Weight progression: weight_after == weight_before + update | **implemented (v0.2)** |
+| 7 | Parameter final state consistency | **implemented (v0.2)** |
+| 8 | Provenance reference (factor.from path) | **implemented (v0.2)** |
+
+All eight rules ship in v0.2.0. Each landed with a deliberately-broken
+`fixtures/bad/mazur.bad-<rule-name>.jsonl` fixture per the
+anti-circularity doctrine — bad receipts precede good receipts (Csmith /
+CompCert lineage; see "Academic lineage" below and `CONTRIBUTING.md`).
+
 ## The eight rules
 
 All comparisons use `numeric_policy.tolerance` (1e-9 in v0.1). All
@@ -159,12 +177,31 @@ reconciler ignores both and reports Rule 4 first. If the verifier
 reports lifecycle status before reaching the math check, the
 failure-priority rule is violated and the test fails.
 
+## Academic lineage
+
+The "bad receipts precede good receipts" doctrine has direct precedent in
+compiler testing. Csmith (Yang, Chen, Eide, Regehr, PLDI 2011 —
+https://users.cs.utah.edu/~regehr/papers/pldi11-preprint.pdf) demonstrated
+that adversarial corpus generation is the strongest test of a verifier:
+"Csmith found bugs in every compiler we tested except for the proven parts
+of CompCert" (Leroy, CACM 2009 —
+https://xavierleroy.org/publi/compcert-CACM.pdf). The anti-circularity
+ratchet — rule detection must precede lifecycle-metadata read — is the
+in-domain equivalent of "the verifier may not consult the test oracle's
+metadata." `mazur.bad-gradient.jsonl` is to the reconciler what Csmith's
+generated adversarial inputs are to a C compiler.
+
 ## Reporting format
 
 Successful reconciliation produces no stderr output and exits with code 0.
 
 Failed reconciliation produces stderr of approximately the following form
-and exits with code nonzero:
+and exits with code nonzero.
+
+The example below illustrates the format when multiple rules are
+wired and cascades become observable — v0.2 ships all eight rules, so
+multi-rule output is the common case. Rule numbers other than the
+originating failure carry a `Note: cascades from Rule N` line.
 
 ```
 reconciliation failed
@@ -186,7 +223,7 @@ Rule 5: update.update inconsistent with update.gradient on w5
   Note: cascades from Rule 4. Fix Rule 4 first.
 ```
 
-The exact body format is not prescribed by v0.1. The **load-bearing**
+The exact body format is not prescribed. The **load-bearing**
 requirements are:
 
 - `reconciliation failed` appears as a prominent marker.

@@ -1,0 +1,48 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "mazur.bad-weight-after.meta",
+  "describes": "fixtures/bad/mazur.bad-weight-after.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/mazur.golden.jsonl (engine-emitted canonical bytes). The fixture differs from the golden in exactly two places: the fixture_status block (3 fields) and the single targeted numeric value.",
+  "mutation": {
+    "field_path": "updates[4].weight_after",
+    "parameter_id": "w5",
+    "original": 0.358916480,
+    "mutated": 0.358917480,
+    "delta_absolute": 1.0e-6,
+    "delta_vs_tolerance_multiplier": 1000,
+    "what_was_NOT_mutated": [
+      "updates[4].weight_before (0.4 — left operand of Rule 6 sum)",
+      "updates[4].update (-0.0410835203 — right operand of Rule 6 sum)",
+      "updates[4].gradient + updates[4].optimizer.* (Rule 4 + Rule 5 still pass — gradient and update are internally consistent)",
+      "parameters_after.w5 (0.358916480 — derived from parameters_before + update; Rule 7 still passes because it uses parameters_before + update, NOT the stored weight_after; if a future Rule 7 implementation also uses stored weight_after, this fixture would need a sibling update)",
+      "all other parameter updates",
+      "forward / loss / backward"
+    ]
+  },
+  "single_target_invariant": "Reconciliation produces exactly one Rule 6 failure naming updates[4].weight_after on parameter w5. Rule 5 must NOT fire (update is unchanged). Rule 7 must NOT fire (parameters_after.w5 is consistent with parameters_before + update, which is the spec form of Rule 7).",
+  "reconciliation_check_targeted_first": "Rule 6: weight_after == weight_before + update",
+  "cascading_failures_observed": [],
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/mazur.bad-weight-after.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 6",
+      "w5"
+    ],
+    "stderr_must_NOT_contain": [
+      "Rule 1",
+      "Rule 2",
+      "Rule 3",
+      "Rule 4",
+      "Rule 5",
+      "Rule 7",
+      "Rule 8"
+    ],
+    "stderr_section_count": {
+      "Rule 6:": 1
+    }
+  },
+  "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures.",
+  "purpose": "Anti-circularity (Csmith / CompCert lineage): proves the reconciler checks Rule 6 (weight_after == weight_before + update) by detecting a 1e-6 mismatch (1000x the 1e-9 tolerance) between stored weight_after and the sum of (unmutated) weight_before + update. This is the cleanest single-rule fixture in v0.2 — no cascades."
+}

@@ -1,0 +1,54 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "mazur.bad-update-value.meta",
+  "describes": "fixtures/bad/mazur.bad-update-value.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/mazur.golden.jsonl (engine-emitted canonical bytes). The fixture differs from the golden in exactly two places: the fixture_status block (3 fields) and the single targeted numeric value.",
+  "mutation": {
+    "field_path": "updates[4].update",
+    "parameter_id": "w5",
+    "original": -0.0410835203,
+    "mutated": -0.0410825203,
+    "delta_absolute": 1.0e-6,
+    "delta_vs_tolerance_multiplier": 1000,
+    "what_was_NOT_mutated": [
+      "updates[4].gradient (-0.0821670406 — Rule 4 still passes: product(factors) still equals stored gradient)",
+      "updates[4].optimizer.learning_rate (0.5 — Rule 5 expects update == 0.5 * gradient)",
+      "updates[4].optimizer.factors[*] (Rule 4 inputs untouched)",
+      "updates[4].weight_before (0.4)",
+      "updates[4].weight_after (0.358916480 — derived from the ORIGINAL update; Rule 6 will cascade since stored weight_after no longer equals weight_before + mutated update)",
+      "all other updates",
+      "parameters_after (consistent with the ORIGINAL update; Rule 7 will cascade if it uses the mutated update value)"
+    ]
+  },
+  "single_target_invariant": "Reconciliation produces exactly one Rule 5 failure naming updates[4].update on parameter w5. Rule 4 must NOT fire (gradient is unchanged). Rules 6 and 7 cascade from Rule 5 — both observe parameter_id 'w5' with cascade_of_rule = 5.",
+  "reconciliation_check_targeted_first": "Rule 5: update == optimizer.learning_rate * gradient",
+  "cascading_failures_observed": [
+    "Rule 6 on updates[4].weight_after: stored weight_after (0.358916480) was derived from original update; recomputed = weight_before + mutated update differs by ~1e-6 (cascade_of_rule: 5)",
+    "Rule 7 on parameters_after.w5: stored parameters_after.w5 (0.358916480) was derived from original update; recomputed = parameters_before.w5 + mutated update differs by ~1e-6 (cascade_of_rule: 5)"
+  ],
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/mazur.bad-update-value.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 5",
+      "w5"
+    ],
+    "stderr_must_NOT_contain": [
+      "Rule 4",
+      "Rule 1",
+      "Rule 2",
+      "Rule 3"
+    ],
+    "stderr_section_count": {
+      "Rule 5:": 1
+    },
+    "stderr_may_also_contain": [
+      "Rule 6",
+      "Rule 7",
+      "(cascade)"
+    ]
+  },
+  "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures.",
+  "purpose": "Anti-circularity (Csmith / CompCert lineage): proves the reconciler checks Rule 5 (update == lr × gradient) by detecting a 1e-6 mismatch (1000x the 1e-9 tolerance) between stored update and the product of (unmutated) lr × gradient. Cascade into Rules 6, 7 demonstrates the cascade_of_rule wiring."
+}

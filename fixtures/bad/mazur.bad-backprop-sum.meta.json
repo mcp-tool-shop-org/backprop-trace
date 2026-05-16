@@ -1,0 +1,50 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "mazur.bad-backprop-sum.meta",
+  "describes": "fixtures/bad/mazur.bad-backprop-sum.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/mazur.golden.jsonl (engine-emitted canonical bytes). Targets the SUM side of Rule 2 (vs the per-contribution side covered by mazur.bad-contribution.jsonl). The fixture differs from the golden in exactly two places: the fixture_status block (3 fields) and the single targeted numeric value.",
+  "mutation": {
+    "field_path": "backward.hidden_error_signals.h1.backpropagated_sum",
+    "parameter_id": "h1",
+    "original": -0.0363503064,
+    "mutated": -0.0363493064,
+    "delta_absolute": 1.0e-6,
+    "delta_vs_tolerance_multiplier": 1000,
+    "what_was_NOT_mutated": [
+      "backward.hidden_error_signals.h1.downstream_contributions[*] (both contributions left intact — sum(contributions) still equals the original sum)",
+      "backward.hidden_error_signals.h1.summation_order (canonical [o1, o2])",
+      "backward.hidden_error_signals.h1.activation_derivative (still 0.241300709)",
+      "backward.hidden_error_signals.h1.signal_value (-0.00877135469 — derived from the ORIGINAL sum; Rule 3 will cascade since stored signal_value no longer equals mutated sum * activation_derivative)",
+      "backward.hidden_error_signals.h2.* / backward.output_error_signals.* / updates[*] / forward / loss"
+    ]
+  },
+  "single_target_invariant": "Reconciliation produces at least one Rule 2 failure whose field_path names backward.hidden_error_signals.h1.backpropagated_sum. A Rule 3 cascade on h1.signal_value is expected and acceptable: signal_value was derived from the ORIGINAL sum, so when Rule 3 recomputes via the mutated sum, the stored signal_value disagrees.",
+  "reconciliation_check_targeted_first": "Rule 2: backpropagated_sum == sum(contributions in summation_order)",
+  "cascading_failures_observed": [
+    "Rule 3 on backward.hidden_error_signals.h1.signal_value: stored signal_value was derived from the original (unmutated) sum; recomputed = mutated_sum * activation_derivative differs by ~delta * activation_derivative ≈ 2.4e-7 (still > 1e-9 tolerance)"
+  ],
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/mazur.bad-backprop-sum.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 2",
+      "h1",
+      "backpropagated_sum"
+    ],
+    "stderr_must_NOT_contain": [
+      "h2",
+      "o1",
+      "o2"
+    ],
+    "stderr_section_count": {
+      "Rule 2:": 1
+    },
+    "stderr_may_also_contain": [
+      "Rule 3",
+      "(cascade)"
+    ]
+  },
+  "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures.",
+  "purpose": "Anti-circularity (Csmith / CompCert lineage): proves the reconciler checks Rule 2's SUM half — backpropagated_sum == sum(stored contributions in summation_order). Distinct from mazur.bad-contribution.jsonl, which targets the per-contribution multiplicative check; together the two fixtures exercise both halves of Rule 2."
+}
