@@ -246,6 +246,7 @@ export const RULE_DESCRIPTIONS: Record<number, string> = {
   8: "Provenance reference consistency: each factor.from path resolves and factor.value matches the referenced field.",
   9: "Multi-step parameter chain: step N parameters_before == step N-1 parameters_after (within tolerance).",
   10: "Multi-step trace identity: all receipts share trace_id AND step_index is sequential (0, 1, 2, ..., N-1).",
+  12: "Loss formula consistency: loss.per_output[u] and loss.total match the formula declared by topology.loss (v0.4.2: half_squared_error; v0.5+: cross_entropy_softmax). Independent of backward — closes a real v0.4.1 trust gap surfaced by the v0.5 study.",
 }
 
 type Factor = { name: string; from?: string; value: number }
@@ -282,6 +283,17 @@ type TopologyShape = {
   unit_order?: { input?: string[]; hidden?: string[]; output?: string[] }
   parameters?: TopologyParameter[]
   bias_sharing?: "per_layer" | "per_neuron"
+  loss?: "half_squared_error" | "cross_entropy_softmax"
+}
+
+type ForwardUnit = {
+  net?: number
+  out?: number
+}
+
+type LossShape = {
+  per_output?: Record<string, number>
+  total?: number
 }
 
 type Contribution = {
@@ -314,6 +326,10 @@ type Receipt = {
   parameters_before?: Record<string, number>
   parameters_after?: Record<string, number>
   topology?: TopologyShape
+  inputs?: Record<string, number>
+  targets?: Record<string, number>
+  forward?: Record<string, ForwardUnit>
+  loss?: LossShape
   backward?: {
     output_error_signals?: Record<string, OutputErrorSignalShape>
     hidden_error_signals?: Record<string, HiddenErrorSignalShape>
@@ -719,6 +735,15 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
 
   // --- Rule 8: provenance reference (factor.from path resolution) ------
   checkRule8(r, tolerance, failures)
+
+  // --- Rule 12: loss formula consistency (per-output + total) ----------
+  // Independent of backward (loss is a forward-side computation). Wired in
+  // v0.4.2 as a polymorphic dispatcher on topology.loss; v0.4.2 implements
+  // the half_squared_error branch and reserves cross_entropy_softmax for
+  // v0.5. Closes a real v0.4.1 gap: prior to v0.4.2, loss.total was schema-
+  // validated but never math-checked by any rule (the half_squared_error
+  // formula was effectively trust-on-faith).
+  checkRule12LossFormula(r, tolerance, failures)
 
   if (failures.length === 0) {
     return { ok: true }
@@ -1921,4 +1946,149 @@ export function reconcileMultiStep(
   failures.push(...checkRule10(receipts))
 
   return failures.length === 0 ? { ok: true } : { ok: false, failures }
+}
+
+/**
+ * Rule 12: loss formula consistency.
+ *
+ * Polymorphic dispatcher on `topology.loss`. v0.4.2 implements the
+ * `half_squared_error` branch — the only loss currently supported by the
+ * engine and the only one that appears in shipped fixtures. v0.5 will
+ * extend with `cross_entropy_softmax` per the v0.5 study consolidator.
+ *
+ * For `half_squared_error`:
+ *   - Per-output: `loss.per_output[u] == 0.5 * (targets[u] - forward[u].out)^2`
+ *   - Total:      `loss.total == sum(loss.per_output[u] for u in output_units)`
+ *
+ * Gracefully no-ops when:
+ *   - `topology.loss` is absent (v0.1 Mazur receipts where topology is the
+ *     narrow Mazur shape without a `loss` field) — we fall back to the
+ *     receipt's implicit half_squared_error assumption only when forward +
+ *     targets are present.
+ *   - `loss.per_output` or `loss.total` is absent
+ *   - `targets` or `forward` is absent
+ *
+ * This rule INDEPENDENTLY catches loss-side mutations that Rules 1-8 miss:
+ * Rules 1-8 are backward-side (signal_value, gradients, updates) and never
+ * read `loss.total` or `loss.per_output`. v0.4.2 closes the gap surfaced
+ * by Agent C in the v0.5 study: pre-v0.4.2, a receipt could mutate
+ * `loss.total` arbitrarily and reconcileReceipt would return ok===true.
+ *
+ * Failure quartet: `stored` = the receipt's claim, `recomputed` = what the
+ * formula derives from forward + targets. Field path points at the exact
+ * loss field that contradicts the formula (`loss.total` or
+ * `loss.per_output.<unit>`).
+ */
+function checkRule12LossFormula(
+  r: Receipt,
+  tolerance: TolerancePolicy,
+  failures: ReconciliationFailure[],
+): void {
+  // Determine the loss formula. Prefer topology.loss; fall back to
+  // half_squared_error for receipts that don't declare one (v0.1 Mazur).
+  const declared = r.topology?.loss
+  const formula: "half_squared_error" | "cross_entropy_softmax" =
+    declared ?? "half_squared_error"
+
+  // v0.5 stub: cross_entropy_softmax dispatcher will land alongside
+  // softmax+CE engine support. For v0.4.2 we no-op rather than firing a
+  // structural failure — Rule 0 will eventually gate the wider topology
+  // declaration and surface a Rule 0 failure if a receipt declares CE
+  // without the v0.5 softmax fields.
+  if (formula === "cross_entropy_softmax") {
+    return
+  }
+
+  // half_squared_error branch — the v0.4.2 ship.
+  const loss = r.loss
+  const targets = r.targets
+  const forward = r.forward
+  if (!loss || !targets || !forward) {
+    // Missing required data — silently no-op. Schema validation would
+    // catch a malformed receipt before reconciliation; this guard exists
+    // for defensive depth.
+    return
+  }
+
+  const perOutput = loss.per_output
+  if (!perOutput || typeof perOutput !== "object") {
+    failures.push({
+      rule: 12,
+      field_path: "loss.per_output",
+      stored: 0,
+      recomputed: 0,
+      delta: 0,
+      tolerance: 0,
+      message:
+        "Rule 12 (half_squared_error): loss.per_output is missing or not an object. " +
+        "Receipt cannot be reconciled against the loss formula without per-output entries.",
+    })
+    return
+  }
+
+  // Per-output check: loss.per_output[u] == 0.5 * (targets[u] - forward[u].out)^2
+  // Iterate over the per_output keys (which should match output unit ids).
+  let expectedTotal = 0
+  let totalReconstructable = true
+  for (const unitId of Object.keys(perOutput)) {
+    const stored = perOutput[unitId]
+    if (typeof stored !== "number") continue
+    const target = targets[unitId]
+    const out = forward[unitId]?.out
+    if (typeof target !== "number" || typeof out !== "number") {
+      // Missing the inputs needed to recompute — skip this unit's check
+      // but DO disqualify the total reconstruction.
+      totalReconstructable = false
+      continue
+    }
+    const diff = target - out
+    const recomputed = 0.5 * diff * diff
+    expectedTotal = expectedTotal + recomputed
+    const check = applyToleranceCheck(stored, recomputed, tolerance)
+    if (!check.ok) {
+      failures.push({
+        rule: 12,
+        parameter_id: unitId,
+        field_path: `loss.per_output.${unitId}`,
+        stored,
+        recomputed,
+        delta: check.delta,
+        tolerance: check.appliedTolerance,
+        message: check.isFinite
+          ? undefined
+          : nonFiniteMessage(12, `loss.per_output.${unitId}`, recomputed, stored),
+      })
+    }
+  }
+
+  // Total check: loss.total == sum(loss.per_output[*])
+  if (typeof loss.total === "number" && totalReconstructable) {
+    const storedTotal = loss.total
+    const check = applyToleranceCheck(storedTotal, expectedTotal, tolerance)
+    if (!check.ok) {
+      failures.push({
+        rule: 12,
+        field_path: "loss.total",
+        stored: storedTotal,
+        recomputed: expectedTotal,
+        delta: check.delta,
+        tolerance: check.appliedTolerance,
+        message: check.isFinite
+          ? undefined
+          : nonFiniteMessage(12, "loss.total", expectedTotal, storedTotal),
+      })
+    }
+  } else if (loss.total !== undefined && typeof loss.total !== "number") {
+    failures.push({
+      rule: 12,
+      field_path: "loss.total",
+      stored: 0,
+      recomputed: 0,
+      delta: 0,
+      tolerance: 0,
+      message:
+        "Rule 12 (half_squared_error): loss.total is present but not a number. " +
+        "Expected the sum of loss.per_output[*] under the half_squared_error formula.",
+    })
+  }
 }

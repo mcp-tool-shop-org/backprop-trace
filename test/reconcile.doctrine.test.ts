@@ -122,6 +122,16 @@ const FILENAME_KIND_TO_RULE: Record<string, number> = {
   "bias-params-after": 7,
   "bias-provenance": 8,
   "bias-mode-mismatch": 0,
+  // v0.4.1 Rule 0 sub-checks (bias_sharing / kind-vs-role / topology size).
+  "bad-bias-sharing-mismatch": 0,
+  "bad-kind-vs-role": 0,
+  "bad-topology-size": 0,
+  "bias-sharing-mismatch": 0,
+  "kind-vs-role": 0,
+  "topology-size": 0,
+  // v0.4.2 Rule 12 (loss formula consistency, half_squared_error branch).
+  "bad-loss-total": 12,
+  "loss-total": 12,
 };
 
 /**
@@ -233,17 +243,18 @@ test(
 );
 
 test(
-  "T-A-009: v0.3 reconciler implements all 10 reconciliation rules (scope-extend over v0.2's Rules 1-8)",
+  "T-A-009: v0.4.2 reconciler implements Rules 1-10 + Rule 12 (loss formula consistency)",
   () => {
     const implemented = extractImplementedRules();
     assert.deepStrictEqual(
       Array.from(implemented).sort((a, b) => a - b),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-      "v0.3 reconciler scope is Rules 1-10 — Rules 9 (multi-step parameter chain) and 10 " +
-        "(multi-step trace identity) extend v0.2's per-receipt Rules 1-8. When v0.4+ adds " +
-        "a new rule, update this expected list AND ship a sibling bad-* fixture. " +
-        "The doctrine-ratchet test (every-rule-has-a-fixture) fails loudly if a rule lands " +
-        "without its paired fixture.",
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12],
+      "v0.4.2 reconciler scope: Rules 1-8 (per-receipt), 9-10 (multi-step), 12 (loss formula " +
+        "consistency, half_squared_error branch). Rule 11 (softmax sum-to-unity) and Rule 13 " +
+        "(softmax+CE collapsed↔Jacobian) are RESERVED for v0.5 alongside the softmax+CE engine " +
+        "path. When v0.4.3+ or v0.5 adds a new rule, update this expected list AND ship a " +
+        "sibling bad-* fixture. The doctrine-ratchet test (every-rule-has-a-fixture) fails " +
+        "loudly if a rule lands without its paired fixture.",
     );
   },
 );

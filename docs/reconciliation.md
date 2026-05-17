@@ -30,13 +30,21 @@ the verifier fails closed.
 | 8 | Provenance reference (factor.from path) | **implemented (v0.2)** |
 | 9 | Multi-step parameter chain (`parameters_before[N]` equals prior `parameters_after[N-1]`) | **implemented (v0.3)** |
 | 10 | Multi-step trace identity (shared `trace_id` + sequential `step_index`) | **implemented (v0.3)** |
+| 11 | Softmax normalization (sum of softmax outputs equals 1) | reserved (v0.5) |
+| 12 | Loss formula consistency (`loss.per_output[u]` and `loss.total` match `topology.loss` formula) | **implemented (v0.4.2)** — half_squared_error branch; cross_entropy_softmax branch reserved for v0.5 |
+| 13 | Softmax+CE collapsed↔Jacobian agreement (gated by dual-form declaration) | reserved (v0.5) |
 
 Rules 1-8 ship in v0.2.0. Rules 9 + 10 ship in v0.3.0 and fire from the
 multi-record verify path (`bp verify multi <file.jsonl>` /
-`reconcileMultiStep(receipts)`), NOT from the single-record path. Each
-rule landed with a deliberately-broken bad-* fixture per the
-anti-circularity doctrine — bad receipts precede good receipts (Csmith /
-CompCert lineage; see "Academic lineage" below and `CONTRIBUTING.md`).
+`reconcileMultiStep(receipts)`), NOT from the single-record path. Rule 12
+ships in v0.4.2 as the loss-formula trust-gap closer — pre-v0.4.2, `loss.total`
+was schema-validated but never math-checked, so a corrupted `loss.total` would
+silently pass `reconcileReceipt`. Rules 11 and 13 are reserved for v0.5
+alongside the softmax + cross-entropy engine path; their numeric slot is
+locked here so v0.5's softmax wave doesn't renumber the rule set. Each shipped
+rule landed with a deliberately-broken bad-* fixture per the anti-circularity
+doctrine — bad receipts precede good receipts (Csmith / CompCert lineage; see
+"Academic lineage" below and `CONTRIBUTING.md`).
 Rules 9 + 10 ship with `fixtures/bad/multi-step.bad-chain.jsonl` and
 `fixtures/bad/multi-step.bad-trace-id.jsonl` respectively.
 

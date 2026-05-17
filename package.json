@@ -1,6 +1,6 @@
 {
   "name": "@mcptoolshop/backprop-trace",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Deterministic backprop training-trace engine — v0.4 adds authoring tools (bp generate from-config / bp scaffold topology / bp validate-input) and per-neuron bias on top of the v0.3 generalized N-input N-hidden N-output topology + hybrid tolerance + multi-step receipt spine.",
   "type": "module",
   "license": "MIT",

@@ -1,0 +1,45 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "mazur.bad-loss-total.meta",
+  "describes": "fixtures/bad/mazur.bad-loss-total.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/mazur.golden.jsonl. Differs in exactly 4 places: the 3 fixture_status fields and the single targeted loss.total numeric field.",
+  "mutation": {
+    "field_path": "loss.total",
+    "parameter_id": null,
+    "original": 0.298371109,
+    "mutated": 0.298372109,
+    "delta_absolute": 1.0e-6,
+    "delta_vs_tolerance_multiplier": 1000,
+    "kind": "number_change",
+    "what_was_NOT_mutated": [
+      "loss.per_output.o1 (0.274811083 — still consistent with 0.5 * (target.o1 - forward.o1.out)^2 individually; the contradiction is only at the SUM level)",
+      "loss.per_output.o2 (0.0235600256 — still consistent individually)",
+      "targets.o1, targets.o2 (still the canonical Mazur values 0.01, 0.99)",
+      "forward.o1.out, forward.o2.out (still the engine's pinned values 0.751365070, 0.772928465)",
+      "all backward, all updates, parameters_after, post_update_forward, post_update_loss"
+    ]
+  },
+  "single_target_invariant": "Receipt declares loss.total = 0.298372109 but the per-output entries sum to 0.298371109 (= 0.5*(0.01-0.751365070)^2 + 0.5*(0.99-0.772928465)^2, the canonical Mazur half-squared-error). Rule 12 (half_squared_error branch) catches this: 'loss.total == sum(loss.per_output[*])' fails by 1e-6, well above the hybrid tolerance for that magnitude (~3e-10 = 1e-9 atol vs rtol-zero scalar form).",
+  "reconciliation_check_targeted_first": "Rule 12 (loss formula consistency): loss.total must equal sum(loss.per_output[*]) under topology.loss='half_squared_error'.",
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/mazur.bad-loss-total.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 12",
+      "loss.total"
+    ],
+    "stderr_must_NOT_contain": [
+      "Rule 1",
+      "Rule 2",
+      "Rule 3",
+      "Rule 4",
+      "Rule 5",
+      "Rule 6",
+      "Rule 7",
+      "Rule 8"
+    ]
+  },
+  "purpose": "Anti-circularity (Csmith/CompCert lineage) for the v0.4.2 Rule 12 (loss formula consistency) reconciler. Loss-side mutations are independent of backward-side computations: Rules 1-8 never read loss.total or loss.per_output, so prior to v0.4.2 a receipt could mutate loss.total arbitrarily and reconcileReceipt would return ok===true. Rule 12 closes that gap. This fixture is the minimum-viable bad case: a single +1e-6 mutation on loss.total that fires Rule 12 alone with no cascade to any other rule.",
+  "v0_4_2_note": "v0.4.2 is the focused trust patch landing Rule 12 ahead of v0.5's softmax+CE wave. Rule 12 is the shared machinery: the half_squared_error branch ships in v0.4.2; cross_entropy_softmax branch lands with v0.5's softmax+CE engine path."
+}

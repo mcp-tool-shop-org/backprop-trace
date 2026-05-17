@@ -14,6 +14,56 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.4.2] - 2026-05-17
+
+Focused trust patch closing a real v0.4.1 gap surfaced by the v0.5 study-swarm:
+`loss.total` was schema-validated but never math-checked by any reconciler rule.
+A receipt could mutate `loss.total` arbitrarily and `reconcileReceipt` would
+return `ok===true`. v0.4.2 wires Rule 12 (loss formula consistency) as a
+polymorphic dispatcher on `topology.loss`; the half_squared_error branch ships
+now, cross_entropy_softmax branch is reserved for v0.5 alongside the softmax
++ CE engine path.
+
+### Added
+
+- **Rule 12 — Loss formula consistency** (per-output + total). Polymorphic
+  dispatcher on `topology.loss`:
+  - `half_squared_error` (v0.4.2): `loss.per_output[u] == 0.5 * (targets[u] - forward[u].out)^2` AND `loss.total == sum(loss.per_output[*])`. Both checks fire independently; either or both can surface a Rule 12 failure.
+  - `cross_entropy_softmax` (RESERVED for v0.5): no-op in v0.4.2; will land with the softmax + CE engine path. Receipts with v0.5 cross_entropy_softmax declarations pass v0.4.2's reconciler without firing Rule 12 (it skips silently rather than firing a structural failure — Rule 0 will gate the wider topology declaration when v0.5 ships).
+- New paired bad fixture: `fixtures/bad/mazur.bad-loss-total.jsonl` + `.meta.json`. Mutates `loss.total` from 0.298371109 to 0.298372109 (delta +1e-6, ~1000x scalar tolerance) while leaving per-output entries, targets, and forward outputs byte-identical. Rule 12 catches; Rules 1-8 do NOT cascade (loss is independent of backward).
+- New test file `test/reconcile.bad-loss-total.test.ts` covers: (1) bad fixture fires Rule 12 on loss.total alone with no cascade to Rules 1-8, (2) Mazur / XOR / iris / per-neuron-bias goldens all pass Rule 12 cleanly under the half_squared_error branch.
+
+### Changed
+
+- `RULE_DESCRIPTIONS[12]` added with explicit reference to topology.loss dispatch + the v0.4.1 trust gap it closes.
+- `bp` CLI `RULE_LABELS[12]` added so `bp reconcile receipt` renders "Rule 12: loss formula consistency violation..." instead of the generic "rule mismatch" placeholder.
+- `Receipt` type in `src/reconcile.ts` widened with optional `inputs`, `targets`, `forward`, `loss` fields (additive; v0.1 Mazur receipts that don't declare topology.loss fall back to the implicit half_squared_error assumption only when both forward and targets are present).
+- `TopologyShape` widened with `loss?: "half_squared_error" | "cross_entropy_softmax"` for v0.5 forward-compat.
+- Doctrine ratchet test `test/reconcile.doctrine.test.ts` updated: implemented-rules expectation is now `[1-10, 12]` (Rules 11/13 reserved for v0.5); FILENAME_KIND_TO_RULE map adds `bad-loss-total → 12` plus the v0.4.1 sub-checks that were missing from the static map.
+
+### Tests
+
+- 294 → 299 total; 292 → 297 passing; skips unchanged at 2 (carry-overs from v0.3: cross-version verify-general policy + good multi-step fixture).
+- 0 fail. Mazur byte-equal preserved. All v0.4.0/v0.4.1 behavior unchanged.
+
+### Migration notes (v0.4.1 → v0.4.2)
+
+- Pure additive on the reconciler surface. Receipts that pass v0.4.1 continue to pass v0.4.2 IF they were math-consistent on `loss.total` (engine-emitted receipts always are). Receipts that v0.4.1 silently accepted with mutated `loss.total` now surface Rule 12 failures — these were always structurally inconsistent.
+- v0.1 Mazur receipts (which use the narrow Mazur Topology without `topology.loss`) gracefully fall back to half_squared_error when `forward` and `targets` are present. No schema bump.
+- Consumers iterating `result.failures[*].rule` should be prepared for `rule: 12` entries.
+
+### Out of scope (v0.5 study deferrals, restated)
+
+- Rule 11 (softmax sum-to-unity) — v0.5
+- Rule 13 (collapsed↔Jacobian) — v0.5, gated by author intent
+- Rule 0.8 (softmax non-negativity sub-check) — v0.5
+- `cross_entropy_softmax` engine path + receipt fields — v0.5
+- Schema v0.3.0 (additive widening for softmax+CE) — v0.5
+- Hybrid tolerance widen to `{1e-11, 1e-7}` — v0.5 (current `{1e-12, 1e-8}` is sufficient for half_squared_error)
+- Translations / release pipeline / landing / handbook / npm publish — standing constraint
+
+---
+
 ## [0.4.1] - 2026-05-17
 
 Focused trust patch on the v0.4.0 ship: closes the known reconciler gap
