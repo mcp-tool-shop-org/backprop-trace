@@ -84,8 +84,15 @@ export type Topology = {
   readonly parameter_order: readonly ParameterId[]
   readonly parameters: readonly Parameter[]
   readonly activation_hidden: "sigmoid" | "identity" | "relu"
-  readonly activation_output: "sigmoid" | "identity" | "relu"
-  readonly loss: "half_squared_error"
+  // v0.5: softmax added as an output-only activation (vector op; dispatched
+  // outside the per-scalar `activate(name, x)` table — engine branches on
+  // activation_output === "softmax" before calling activate).
+  readonly activation_output: "sigmoid" | "identity" | "relu" | "softmax"
+  // v0.5: cross_entropy_softmax added alongside half_squared_error. CE is
+  // only meaningful when activation_output === "softmax" (the engine
+  // validates this at the boundary). The polymorphic Rule 12 dispatcher in
+  // reconcile.ts routes per-loss to its formula.
+  readonly loss: "half_squared_error" | "cross_entropy_softmax"
   readonly bias_sharing: "per_layer" | "per_neuron"
   readonly input_size: number
   readonly hidden_size: number
@@ -306,17 +313,41 @@ export function assertTopologyValid(t: Topology): void {
   }
 
   // 7. Activations
-  const supportedActivations: readonly string[] = ["sigmoid", "identity", "relu"]
-  if (!supportedActivations.includes(t.activation_hidden)) {
+  const supportedHiddenActivations: readonly string[] = ["sigmoid", "identity", "relu"]
+  const supportedOutputActivations: readonly string[] = ["sigmoid", "identity", "relu", "softmax"]
+  if (!supportedHiddenActivations.includes(t.activation_hidden)) {
     throw new Error(
       `Topology: activation_hidden '${t.activation_hidden}' is not supported. ` +
-        `Hint: v0.3 supports {sigmoid, identity, relu}.`,
+        `Hint: v0.5 supports {sigmoid, identity, relu} in hidden layers. ` +
+        `Softmax is output-only (it is a vector op over the logit layer).`,
     )
   }
-  if (!supportedActivations.includes(t.activation_output)) {
+  if (!supportedOutputActivations.includes(t.activation_output)) {
     throw new Error(
       `Topology: activation_output '${t.activation_output}' is not supported. ` +
-        `Hint: v0.3 supports {sigmoid, identity, relu}.`,
+        `Hint: v0.5 supports {sigmoid, identity, relu, softmax}.`,
+    )
+  }
+
+  // 8. v0.5 softmax+CE pairing invariant. The two are co-required:
+  //   - cross_entropy_softmax MUST pair with activation_output === "softmax"
+  //     (the engine's collapsed dL/dz = p - y derivation only holds when
+  //     the output activation is softmax).
+  //   - activation_output === "softmax" MUST pair with cross_entropy_softmax
+  //     loss (softmax with half_squared_error is a valid math but the v0.5
+  //     engine doesn't implement that combination; the gradient would need
+  //     to walk the full softmax Jacobian without the CE-side simplification).
+  if (t.loss === "cross_entropy_softmax" && t.activation_output !== "softmax") {
+    throw new Error(
+      `Topology: loss='cross_entropy_softmax' requires activation_output='softmax' (got '${t.activation_output}'). ` +
+        `Hint: the v0.5 collapsed CE+softmax derivation only holds for softmax outputs.`,
+    )
+  }
+  if (t.activation_output === "softmax" && t.loss !== "cross_entropy_softmax") {
+    throw new Error(
+      `Topology: activation_output='softmax' requires loss='cross_entropy_softmax' (got '${t.loss}'). ` +
+        `Hint: v0.5 ships softmax only paired with CE loss. Softmax + MSE is a valid math but ` +
+        `requires walking the full softmax Jacobian — deferred beyond v0.5.`,
     )
   }
 }

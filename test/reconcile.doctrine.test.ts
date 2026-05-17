@@ -132,6 +132,23 @@ const FILENAME_KIND_TO_RULE: Record<string, number> = {
   // v0.4.2 Rule 12 (loss formula consistency, half_squared_error branch).
   "bad-loss-total": 12,
   "loss-total": 12,
+  // v0.5 softmax+CE Rule 11 + Rule 12 CE branch + Rule 13 (gated dual-form).
+  // Rule 0.8 (probability bounds) is a Rule 0 sub-check — the failure record
+  // uses rule: 0, so its fixture maps to 0, not 0.8.
+  "bad-prob-bound": 0,
+  "prob-bound": 0,
+  "bad-softmax-sum": 11,
+  "softmax-sum": 11,
+  "bad-ce-per-output": 12,
+  "ce-per-output": 12,
+  "bad-ce-total": 12,
+  "ce-total": 12,
+  "bad-dual-term": 13,
+  "dual-term": 13,
+  "bad-dual-sum": 13,
+  "dual-sum": 13,
+  "bad-collapsed-vs-dual": 13,
+  "collapsed-vs-dual": 13,
 };
 
 /**
@@ -243,18 +260,20 @@ test(
 );
 
 test(
-  "T-A-009: v0.4.2 reconciler implements Rules 1-10 + Rule 12 (loss formula consistency)",
+  "T-A-009: v0.5 reconciler implements Rules 1-13 (1-8 per-receipt, 9-10 multi-step, 11 softmax-norm, 12 loss formula (both branches), 13 gated dual-form)",
   () => {
     const implemented = extractImplementedRules();
     assert.deepStrictEqual(
       Array.from(implemented).sort((a, b) => a - b),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12],
-      "v0.4.2 reconciler scope: Rules 1-8 (per-receipt), 9-10 (multi-step), 12 (loss formula " +
-        "consistency, half_squared_error branch). Rule 11 (softmax sum-to-unity) and Rule 13 " +
-        "(softmax+CE collapsed↔Jacobian) are RESERVED for v0.5 alongside the softmax+CE engine " +
-        "path. When v0.4.3+ or v0.5 adds a new rule, update this expected list AND ship a " +
-        "sibling bad-* fixture. The doctrine-ratchet test (every-rule-has-a-fixture) fails " +
-        "loudly if a rule lands without its paired fixture.",
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+      "v0.5 reconciler scope: Rules 1-8 (per-receipt math), 9-10 (multi-step), 11 (softmax " +
+        "normalization — sum(forward[output].out) == 1.0), 12 (loss formula consistency — " +
+        "both half_squared_error and cross_entropy_softmax branches), 13 (GATED dual-form " +
+        "consistency for softmax+CE — fires only when OutputErrorSignal.dual_form is " +
+        "present). Rule 0.8 (probability bounds for softmax outputs) is a Rule 0 sub-check, " +
+        "not a separate integer rule. When a future version adds a new rule, update this " +
+        "expected list AND ship a sibling bad-* fixture; the doctrine ratchet fails loudly " +
+        "if a rule lands without its paired fixture.",
     );
   },
 );

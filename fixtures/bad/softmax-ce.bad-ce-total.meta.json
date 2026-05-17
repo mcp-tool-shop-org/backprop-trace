@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "softmax-ce.bad-ce-total.meta",
+  "describes": "fixtures/bad/softmax-ce.bad-ce-total.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/softmax-ce.golden.jsonl. Differs in the 3 fixture_status fields and the targeted v0.5 softmax+CE field(s) described below.",
+  "mutation": {
+    "field_path": "loss.total",
+    "original": 0.87434342,
+    "mutated": 0.97434342,
+    "kind": "v0_5_softmax_ce_targeted_mutation",
+    "description": "Mutated loss.total by +0.1 (from 0.874343420 to 0.974343420). Rule 12 (cross_entropy_softmax branch) fires on the total check: stored 0.974... != expected sum(-y_u * log(p_u)) over output units = 0.874... + 0 + 0 = 0.874... (since y_o2 = y_o3 = 0 force the term to 0). loss.per_output.o1 entry still matches the formula independently."
+  },
+  "reconciliation_check_targeted_first": "Rule 12 (loss formula consistency, cross_entropy_softmax branch): loss.per_output[u] == -y_u * log(p_u) AND loss.total == sum over output units.",
+  "purpose": "Anti-circularity (Csmith/CompCert lineage) for the v0.5 softmax+CE reconciler additions (Rules 0.8 / 11 / 12 CE branch / 13 gated dual-form). Targeted mutation isolates the rule under test.",
+  "v0_5_note": "v0.5 ships the softmax+CE wave: schema v0.3.0 (additive), Rules 0.8/11/13 new, Rule 12 CE branch filled in. The 7-fixture plate exercises every new rule plus each sub-check of Rule 13."
+}

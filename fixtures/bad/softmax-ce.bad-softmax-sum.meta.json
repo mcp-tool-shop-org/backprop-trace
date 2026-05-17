@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "softmax-ce.bad-softmax-sum.meta",
+  "describes": "fixtures/bad/softmax-ce.bad-softmax-sum.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/softmax-ce.golden.jsonl. Differs in the 3 fixture_status fields and the targeted v0.5 softmax+CE field(s) described below.",
+  "mutation": {
+    "field_path": "forward.o2.out",
+    "original": 0.256049895,
+    "mutated": 0.35604989500000006,
+    "kind": "v0_5_softmax_ce_targeted_mutation",
+    "description": "Mutated forward.o2.out by +0.1 (from 0.256049895 to 0.356049895). Each individual value stays in [0, 1] (Rule 0.8 passes), but sum(forward[output].out) now ≈ 1.1 instead of 1.0. Rule 11 (softmax normalization) fires. Cascades into Rules 12 / 13c since p_o2 was used to compute loss.per_output.o2, signal_value.o2, dual_form on every unit — those checks ALSO fail but Rule 11 is the load-bearing detector."
+  },
+  "reconciliation_check_targeted_first": "Rule 11 (softmax normalization): sum(forward[output].out) MUST equal 1.0 within tolerance when topology.activation_output === 'softmax'.",
+  "purpose": "Anti-circularity (Csmith/CompCert lineage) for the v0.5 softmax+CE reconciler additions (Rules 0.8 / 11 / 12 CE branch / 13 gated dual-form). Targeted mutation isolates the rule under test.",
+  "v0_5_note": "v0.5 ships the softmax+CE wave: schema v0.3.0 (additive), Rules 0.8/11/13 new, Rule 12 CE branch filled in. The 7-fixture plate exercises every new rule plus each sub-check of Rule 13."
+}

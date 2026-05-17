@@ -1,7 +1,7 @@
 {
   "name": "@mcptoolshop/backprop-trace",
-  "version": "0.4.2",
-  "description": "Deterministic backprop training-trace engine — v0.4 adds authoring tools (bp generate from-config / bp scaffold topology / bp validate-input) and per-neuron bias on top of the v0.3 generalized N-input N-hidden N-output topology + hybrid tolerance + multi-step receipt spine.",
+  "version": "0.5.0",
+  "description": "Deterministic backprop training-trace engine — v0.5 adds softmax + cross-entropy support: schema v0.3.0, Rule 0.8 (probability bounds), Rule 11 (softmax normalization), Rule 12 cross_entropy_softmax branch, Rule 13 GATED dual-form consistency. Layered on the v0.4 authoring spine + v0.3 generalized N-input N-hidden N-output topology + hybrid tolerance + multi-step receipt spine.",
   "type": "module",
   "license": "MIT",
   "author": "mcp-tool-shop <64996768+mcp-tool-shop@users.noreply.github.com>",
@@ -30,7 +30,11 @@
     "multi-step",
     "topology-input",
     "per-neuron-bias",
-    "authoring"
+    "authoring",
+    "softmax",
+    "cross-entropy",
+    "log-sum-exp",
+    "dual-form-verification"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -106,6 +110,7 @@
     "./schema": "./schemas/receipt.v0.1.0.json",
     "./schema/0.1.0": "./schemas/receipt.v0.1.0.json",
     "./schema/0.2.0": "./schemas/receipt.v0.2.0.json",
+    "./schema/0.3.0": "./schemas/receipt.v0.3.0.json",
     "./schema/0.4.0": "./schemas/topology-input.v0.4.0.json",
     "./package.json": "./package.json"
   },

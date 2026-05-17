@@ -1,0 +1,24 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "softmax-ce.bad-collapsed-vs-dual.meta",
+  "describes": "fixtures/bad/softmax-ce.bad-collapsed-vs-dual.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/softmax-ce.golden.jsonl. Differs in the 3 fixture_status fields and the targeted v0.5 softmax+CE field(s) described below.",
+  "mutation": {
+    "field_path": "backward.output_error_signals.o1.dual_form.summed_value (and supporting term)",
+    "original": {
+      "delta_ju_minus_p_u": 0.582864187,
+      "term_value": 0.582864187,
+      "summed_value": 0.582864187
+    },
+    "mutated": {
+      "delta_ju_minus_p_u": 0.583864187,
+      "term_value": 0.583864187,
+      "summed_value": 0.583864187
+    },
+    "kind": "v0_5_softmax_ce_targeted_mutation",
+    "description": "Mutated dual_form for o1 SELF-CONSISTENTLY: jacobian_terms[0].factors[1] (delta_ju_minus_p_u) by +0.001 AND propagated to term_value (factors product) and summed_value (sum of terms). Rules 13a (per-term multiplication) and 13b (summation) both PASS because the dual_form is internally consistent. ONLY Rule 13c (collapsed-vs-dual) fires: dual_form.summed_value (0.583864...) disagrees with the untouched OutputErrorSignal.signal_value (0.582864...). This isolates Rule 13c — the GATED cross-form check that depends on dual_form being present."
+  },
+  "reconciliation_check_targeted_first": "Rule 13 (gated dual-form consistency): when OutputErrorSignal.dual_form is present, 13a per-term multiplication, 13b summation, 13c collapsed-vs-dual must hold.",
+  "purpose": "Anti-circularity (Csmith/CompCert lineage) for the v0.5 softmax+CE reconciler additions (Rules 0.8 / 11 / 12 CE branch / 13 gated dual-form). Targeted mutation isolates the rule under test.",
+  "v0_5_note": "v0.5 ships the softmax+CE wave: schema v0.3.0 (additive), Rules 0.8/11/13 new, Rule 12 CE branch filled in. The 7-fixture plate exercises every new rule plus each sub-check of Rule 13."
+}

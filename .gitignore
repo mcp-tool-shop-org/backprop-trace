@@ -16,3 +16,7 @@ Thumbs.db
 
 # Translation tool cache (polyglot-mcp / TranslateGemma)
 .polyglot-cache.json
+
+# Local repo-knowledge DB + config (created by `rk init`; not shipped)
+data/
+rk.config.json

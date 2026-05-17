@@ -128,7 +128,9 @@ const RULE_LABELS: Record<number, string> = {
   8: "factor value disagrees with provenance",
   9: "multi-step parameter chain violation (parameters_before != prior parameters_after)",
   10: "multi-step trace identity violation (trace_id or step_index)",
+  11: "softmax normalization violation (sum(forward[output].out) != 1.0)",
   12: "loss formula consistency violation (loss.per_output[u] or loss.total disagrees with topology.loss formula)",
+  13: "dual-form consistency violation (jacobian_terms multiplication / summation / collapsed-vs-dual)",
 };
 
 // =============================================================================

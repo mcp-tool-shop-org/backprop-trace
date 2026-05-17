@@ -37,7 +37,9 @@
 import {
   activate,
   activationDerivativeFromOut,
+  softmaxVector,
   type ActivationName,
+  type OutputActivationName,
 } from "./activations.js"
 import {
   assertTopologyValid,
@@ -68,6 +70,12 @@ export type OutputErrorSignal = {
   factors: NamedFactor[]
   product_order: "left_to_right"
   signal_value: number
+  /**
+   * v0.5 — optional dual-form Jacobian decomposition. Present for softmax+CE
+   * receipts the engine emits; absent for half_squared_error receipts
+   * (Mazur, XOR, iris, per-neuron-bias). Rule 13 fires only when present.
+   */
+  dual_form?: DualForm
 }
 
 export type DownstreamContribution = {
@@ -227,13 +235,24 @@ export type SerializedTopology = {
     applies_to_units?: UnitId[]
   }>
   activation_hidden: ActivationName
-  activation_output: ActivationName
-  loss: "half_squared_error"
+  // v0.5: widened to OutputActivationName to admit "softmax". For non-softmax
+  // outputs the bytes are unchanged; softmax is a v0.3.0-schema-only addition.
+  activation_output: OutputActivationName
+  // v0.5: widened to admit "cross_entropy_softmax". Pairs with
+  // activation_output === "softmax" — topology.ts asserts the co-requirement.
+  loss: "half_squared_error" | "cross_entropy_softmax"
   bias_sharing: "per_layer" | "per_neuron"
   input_size: number
   hidden_size: number
   output_size: number
 }
+
+// v0.5 — re-export DualForm + JacobianTerm from engine.ts so consumers can
+// import them from either engine module. The canonical declaration lives in
+// engine.ts (alongside OutputErrorSignal) so the emit-side narrow type
+// shares the same shape.
+export type { JacobianTerm, DualForm } from "./engine.js"
+import type { DualForm, JacobianTerm } from "./engine.js"
 
 export type FixtureStatus = {
   authoring_state: "engine_generated"
@@ -253,7 +272,12 @@ export type FixtureStatus = {
  *   - Optional trace_id / step_index for multi-step overlay.
  */
 export type GeneralReceipt = {
-  schema_version: "0.2.0"
+  // v0.5: schema_version is "0.2.0" for half_squared_error receipts (byte-
+  // identical to v0.3/v0.4 fixtures) and "0.3.0" for cross_entropy_softmax
+  // receipts (the v0.5 additive-schema path). The engine picks the version
+  // based on topology.loss inside runGeneralStep so legacy callers don't
+  // need to pass it explicitly.
+  schema_version: "0.2.0" | "0.3.0"
   fixture: string
   step: 1
   fixture_status: FixtureStatus
@@ -349,10 +373,15 @@ function assertFiniteGeneralInput(input: GeneralInput): void {
 }
 
 function assertSupportedPolicy(input: GeneralInput): void {
-  if (input.topology.loss !== "half_squared_error") {
+  if (
+    input.topology.loss !== "half_squared_error" &&
+    input.topology.loss !== "cross_entropy_softmax"
+  ) {
     throw new Error(
-      `runGeneralStep: topology.loss must be 'half_squared_error' in v0.3 (got '${input.topology.loss}'). ` +
-        `Hint: cross_entropy and softmax losses are deferred to v0.4+.`,
+      `runGeneralStep: topology.loss must be 'half_squared_error' or 'cross_entropy_softmax' (got '${input.topology.loss}'). ` +
+        `Hint: v0.5 ships these two losses. The softmax+CE pairing invariant ` +
+        `(loss='cross_entropy_softmax' iff activation_output='softmax') is ` +
+        `enforced by assertTopologyValid before this check.`,
     )
   }
   if (input.bias_policy.mode !== "constant" && input.bias_policy.mode !== "sgd") {
@@ -536,47 +565,187 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
     const out = activate(t.activation_hidden, net)
     forward[hUnit] = { net, out }
   }
-  for (const oUnit of t.unit_order.output) {
-    let net = 0
-    for (const hUnit of t.unit_order.hidden) {
-      const w = findWeight(t.parameters, hUnit, oUnit)
-      const wVal = before[w.id]!
-      const hOut = forward[hUnit]!.out
-      net = net + hOut * wVal
+  // --- Output forward pass ---
+  //
+  // For non-softmax outputs (the v0.1-v0.4 path), each output unit is computed
+  // independently in unit_order order and activated per-scalar. BYTE-EQUAL
+  // PRESERVATION: this loop is identical to the v0.4 code for non-softmax
+  // outputs — `activate(t.activation_output, net)` is the same dispatcher.
+  //
+  // For softmax outputs (v0.5), each unit's net (the logit z_u) is computed
+  // first (same per-unit loop as before, without activation), then
+  // softmaxVector is called ONCE over the assembled logit vector. The result
+  // p_u is written to forward[oUnit].out.
+  //
+  // Determinism contract: net is computed left-to-right in unit_order.hidden
+  // for each output unit, identically for both branches. softmaxVector uses
+  // the stable LSE trick (subtract max, then exp, then divide by sum) which
+  // is deterministic across V8/Node 22.x runs given the determinism canary.
+  if (t.activation_output === "softmax") {
+    // Phase 1: compute logits z_u per output unit (left-to-right in unit_order).
+    const logits: number[] = []
+    for (const oUnit of t.unit_order.output) {
+      let net = 0
+      for (const hUnit of t.unit_order.hidden) {
+        const w = findWeight(t.parameters, hUnit, oUnit)
+        const wVal = before[w.id]!
+        const hOut = forward[hUnit]!.out
+        net = net + hOut * wVal
+      }
+      const biasParam = resolveOutputBiasParam(oUnit)
+      net = net + before[biasParam.id]!
+      logits.push(net)
+      // Seed forward[oUnit] with net only — out is filled in phase 2.
+      forward[oUnit] = { net, out: 0 }
     }
-    const biasParam = resolveOutputBiasParam(oUnit)
-    net = net + before[biasParam.id]!
-    const out = activate(t.activation_output, net)
-    forward[oUnit] = { net, out }
+    // Phase 2: vectorized softmax over the logit vector.
+    const probabilities = softmaxVector(logits)
+    for (let i = 0; i < t.unit_order.output.length; i++) {
+      const oUnit = t.unit_order.output[i]!
+      forward[oUnit] = { net: logits[i]!, out: probabilities[i]! }
+    }
+  } else {
+    // Non-softmax outputs (v0.1-v0.4 byte-equal path).
+    for (const oUnit of t.unit_order.output) {
+      let net = 0
+      for (const hUnit of t.unit_order.hidden) {
+        const w = findWeight(t.parameters, hUnit, oUnit)
+        const wVal = before[w.id]!
+        const hOut = forward[hUnit]!.out
+        net = net + hOut * wVal
+      }
+      const biasParam = resolveOutputBiasParam(oUnit)
+      net = net + before[biasParam.id]!
+      // For non-softmax outputs, activate() dispatches per-scalar.
+      const out = activate(t.activation_output as ActivationName, net)
+      forward[oUnit] = { net, out }
+    }
   }
 
-  // --- Loss (half squared error, per output, summed) ---
+  // --- Loss (polymorphic on topology.loss) ---
+  //
+  // half_squared_error (v0.1-v0.4 byte-equal path): per_output[u] = 0.5 * (y_u - p_u)^2
+  // cross_entropy_softmax (v0.5): per_output[u] = -y_u * log(p_u); the term
+  // is forced to 0 when y_u === 0 to avoid -0 * log(0) = NaN propagation
+  // (the limit y*log(p) → 0 as y → 0 holds even at p = 0, so the forced 0
+  // is mathematically faithful). For non-zero y_u with p_u > 0, log() is
+  // well-defined; for y_u > 0 with p_u === 0 the formula yields +Infinity,
+  // which is the right diagnostic surface — a NaN/Infinity per_output value
+  // would surface as a Rule 12 NaN-poisoning failure downstream.
   const perOutputLoss: Record<string, number> = {}
   let totalLoss = 0
-  for (const oUnit of t.unit_order.output) {
-    const target = input.targets[oUnit]!
-    const out = forward[oUnit]!.out
-    const diff = target - out
-    const e = 0.5 * diff * diff
-    perOutputLoss[oUnit] = e
-    totalLoss = totalLoss + e
+  if (t.loss === "cross_entropy_softmax") {
+    for (const oUnit of t.unit_order.output) {
+      const target = input.targets[oUnit]!
+      const out = forward[oUnit]!.out
+      const e = target === 0 ? 0 : -target * Math.log(out)
+      perOutputLoss[oUnit] = e
+      totalLoss = totalLoss + e
+    }
+  } else {
+    // half_squared_error
+    for (const oUnit of t.unit_order.output) {
+      const target = input.targets[oUnit]!
+      const out = forward[oUnit]!.out
+      const diff = target - out
+      const e = 0.5 * diff * diff
+      perOutputLoss[oUnit] = e
+      totalLoss = totalLoss + e
+    }
   }
 
-  // --- Backward: output error signals ---
+  // --- Backward: output error signals (polymorphic on loss) ---
+  //
+  // half_squared_error + per-scalar activation (v0.1-v0.4 byte-equal path):
+  //   signal_u = (target - out) * act'(out)     [descent direction]
+  //   factors = [{target_minus_output}, {activation_derivative}]
+  //
+  // cross_entropy_softmax + softmax activation (v0.5 collapsed path):
+  //   signal_u = y_u - p_u                       [descent direction;
+  //                                                negation of textbook
+  //                                                dL/dz_u = p_u - y_u]
+  //   factors = [{target_minus_probability}]
+  //   dual_form = expanded Jacobian:
+  //     sum_j y_j * (delta_ju - p_u)             where delta_ju is 1 iff j=u
+  //   The collapsed signal equals the dual sum: y_u - p_u * sum_j(y_j)
+  //   = y_u - p_u (when targets sum to 1). The engine emits BOTH so Rule 13
+  //   can independently verify the dual decomposition matches the collapsed
+  //   shape (Rule 13c) plus the per-term math (Rule 13a) and summation (Rule
+  //   13b). Receipts authored outside the engine may omit dual_form; Rule 13
+  //   silently skips when absent.
   const outputErrorSignals: Record<string, OutputErrorSignal> = {}
-  for (const oUnit of t.unit_order.output) {
-    const target = input.targets[oUnit]!
-    const out = forward[oUnit]!.out
-    const tmo = target - out
-    const ad = activationDerivativeFromOut(t.activation_output, out)
-    const signal = tmo * ad
-    outputErrorSignals[oUnit] = {
-      factors: [
-        { name: "target_minus_output", value: tmo },
-        { name: "activation_derivative", value: ad },
-      ],
-      product_order: "left_to_right",
-      signal_value: signal,
+  if (t.loss === "cross_entropy_softmax") {
+    // Pre-load p_u + y_u maps so each unit's dual_form can reference them.
+    const probAtUnit: Record<string, number> = {}
+    const targetAtUnit: Record<string, number> = {}
+    for (const u of t.unit_order.output) {
+      probAtUnit[u] = forward[u]!.out
+      targetAtUnit[u] = input.targets[u]!
+    }
+    for (const oUnit of t.unit_order.output) {
+      const y_u = targetAtUnit[oUnit]!
+      const p_u = probAtUnit[oUnit]!
+      // Collapsed descent-direction signal: signal_u = y_u - p_u.
+      const collapsedSignal = y_u - p_u
+      // Build dual_form Jacobian terms in unit_order.output order.
+      const jacobianTerms: JacobianTerm[] = []
+      let dualSum = 0
+      const summationOrder: string[] = []
+      let dualFirst = true
+      for (const jUnit of t.unit_order.output) {
+        const y_j = targetAtUnit[jUnit]!
+        const delta_ju = jUnit === oUnit ? 1 : 0
+        const delta_ju_minus_p_u = delta_ju - p_u
+        const termValue = y_j * delta_ju_minus_p_u
+        jacobianTerms.push({
+          target_unit: jUnit,
+          factors: [
+            { name: "y_j", from: `targets.${jUnit}`, value: y_j },
+            { name: "delta_ju_minus_p_u", value: delta_ju_minus_p_u },
+          ],
+          term_value: termValue,
+        })
+        if (dualFirst) {
+          dualSum = termValue
+          dualFirst = false
+        } else {
+          dualSum = dualSum + termValue
+        }
+        summationOrder.push(jUnit)
+      }
+      outputErrorSignals[oUnit] = {
+        factors: [
+          {
+            name: "target_minus_probability",
+            value: collapsedSignal,
+          },
+        ],
+        product_order: "left_to_right",
+        signal_value: collapsedSignal,
+        dual_form: {
+          jacobian_terms: jacobianTerms,
+          product_order: "left_to_right",
+          summation_order: summationOrder,
+          summed_value: dualSum,
+        },
+      }
+    }
+  } else {
+    // half_squared_error path (v0.1-v0.4 byte-equal).
+    for (const oUnit of t.unit_order.output) {
+      const target = input.targets[oUnit]!
+      const out = forward[oUnit]!.out
+      const tmo = target - out
+      const ad = activationDerivativeFromOut(t.activation_output as ActivationName, out)
+      const signal = tmo * ad
+      outputErrorSignals[oUnit] = {
+        factors: [
+          { name: "target_minus_output", value: tmo },
+          { name: "activation_derivative", value: ad },
+        ],
+        product_order: "left_to_right",
+        signal_value: signal,
+      }
     }
   }
 
@@ -802,6 +971,10 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
   }
 
   // --- Post-update forward pass ---
+  // Mirrors the pre-update forward pass: hidden layer per-scalar; output
+  // layer branches on activation_output. Byte-equal for non-softmax outputs
+  // (v0.1-v0.4 fixtures preserved); softmax outputs use softmaxVector once
+  // over the logit vector.
   const postUpdateForward: Record<string, ForwardUnit> = {}
   for (const hUnit of t.unit_order.hidden) {
     let net = 0
@@ -816,30 +989,62 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
     const out = activate(t.activation_hidden, net)
     postUpdateForward[hUnit] = { net, out }
   }
-  for (const oUnit of t.unit_order.output) {
-    let net = 0
-    for (const hUnit of t.unit_order.hidden) {
-      const w = findWeight(t.parameters, hUnit, oUnit)
-      const wVal = parametersAfter[w.id]!
-      const hOut = postUpdateForward[hUnit]!.out
-      net = net + hOut * wVal
+  if (t.activation_output === "softmax") {
+    const logits: number[] = []
+    for (const oUnit of t.unit_order.output) {
+      let net = 0
+      for (const hUnit of t.unit_order.hidden) {
+        const w = findWeight(t.parameters, hUnit, oUnit)
+        const wVal = parametersAfter[w.id]!
+        const hOut = postUpdateForward[hUnit]!.out
+        net = net + hOut * wVal
+      }
+      const biasParam = resolveOutputBiasParam(oUnit)
+      net = net + parametersAfter[biasParam.id]!
+      logits.push(net)
+      postUpdateForward[oUnit] = { net, out: 0 }
     }
-    const biasParam = resolveOutputBiasParam(oUnit)
-    net = net + parametersAfter[biasParam.id]!
-    const out = activate(t.activation_output, net)
-    postUpdateForward[oUnit] = { net, out }
+    const probabilities = softmaxVector(logits)
+    for (let i = 0; i < t.unit_order.output.length; i++) {
+      const oUnit = t.unit_order.output[i]!
+      postUpdateForward[oUnit] = { net: logits[i]!, out: probabilities[i]! }
+    }
+  } else {
+    for (const oUnit of t.unit_order.output) {
+      let net = 0
+      for (const hUnit of t.unit_order.hidden) {
+        const w = findWeight(t.parameters, hUnit, oUnit)
+        const wVal = parametersAfter[w.id]!
+        const hOut = postUpdateForward[hUnit]!.out
+        net = net + hOut * wVal
+      }
+      const biasParam = resolveOutputBiasParam(oUnit)
+      net = net + parametersAfter[biasParam.id]!
+      const out = activate(t.activation_output as ActivationName, net)
+      postUpdateForward[oUnit] = { net, out }
+    }
   }
 
-  // --- Post-update loss ---
+  // --- Post-update loss (polymorphic on loss) ---
   const postUpdatePerOutput: Record<string, number> = {}
   let postUpdateTotal = 0
-  for (const oUnit of t.unit_order.output) {
-    const target = input.targets[oUnit]!
-    const out = postUpdateForward[oUnit]!.out
-    const diff = target - out
-    const e = 0.5 * diff * diff
-    postUpdatePerOutput[oUnit] = e
-    postUpdateTotal = postUpdateTotal + e
+  if (t.loss === "cross_entropy_softmax") {
+    for (const oUnit of t.unit_order.output) {
+      const target = input.targets[oUnit]!
+      const out = postUpdateForward[oUnit]!.out
+      const e = target === 0 ? 0 : -target * Math.log(out)
+      postUpdatePerOutput[oUnit] = e
+      postUpdateTotal = postUpdateTotal + e
+    }
+  } else {
+    for (const oUnit of t.unit_order.output) {
+      const target = input.targets[oUnit]!
+      const out = postUpdateForward[oUnit]!.out
+      const diff = target - out
+      const e = 0.5 * diff * diff
+      postUpdatePerOutput[oUnit] = e
+      postUpdateTotal = postUpdateTotal + e
+    }
   }
 
   // --- Build inputs / targets / parameters_before records (plain copies) ---
@@ -858,8 +1063,17 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
     )
   }
 
+  // v0.5: schema_version is "0.3.0" for softmax+CE receipts (the additive-
+  // schema path with dual_form, softmax activation_output, cross_entropy_softmax
+  // loss). All other receipts (Mazur, XOR, iris, per-neuron-bias, and any
+  // future half_squared_error receipts) continue to emit "0.2.0" so the
+  // shipped fixtures stay byte-identical.
+  const schemaVersionForReceipt: "0.2.0" | "0.3.0" =
+    t.loss === "cross_entropy_softmax" || t.activation_output === "softmax"
+      ? "0.3.0"
+      : "0.2.0"
   const receipt: GeneralReceipt = {
-    schema_version: "0.2.0",
+    schema_version: schemaVersionForReceipt,
     fixture: input.fixture ?? "general-engine-first-run",
     step: 1,
     fixture_status: {

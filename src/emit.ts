@@ -235,7 +235,43 @@ function emitNamedFactor(f: NamedFactor): string {
 
 function emitOutputErrorSignal(s: OutputErrorSignal): string {
   const factors = s.factors.map(emitNamedFactor).join(",");
-  return `{"factors":[${factors}],"product_order":${S(s.product_order)},"signal_value":${N(s.signal_value)}}`;
+  // v0.5: dual_form is optional. Emit it only when present so v0.1 Mazur
+  // and all half_squared_error receipts stay byte-identical (no key drift).
+  // When present, dual_form appears AFTER signal_value per the v0.3.0
+  // schema's OutputErrorSignal x-order: ["factors", "product_order",
+  // "signal_value", "dual_form"].
+  const base = `"factors":[${factors}],"product_order":${S(s.product_order)},"signal_value":${N(s.signal_value)}`;
+  if (s.dual_form === undefined) {
+    return `{${base}}`;
+  }
+  return `{${base},"dual_form":${emitDualForm(s.dual_form)}}`;
+}
+
+/**
+ * v0.5 — emit a dual-form Jacobian decomposition block. Schema-ordered
+ * traversal matching schemas/receipt.v0.3.0.json#/$defs/DualForm x-order:
+ * jacobian_terms, product_order, summation_order, summed_value.
+ */
+function emitDualForm(d: import("./engine.js").DualForm): string {
+  const terms = d.jacobian_terms.map(emitJacobianTerm).join(",");
+  const summationOrder = d.summation_order.map(S).join(",");
+  return [
+    "{",
+    `"jacobian_terms":[${terms}],`,
+    `"product_order":${S(d.product_order)},`,
+    `"summation_order":[${summationOrder}],`,
+    `"summed_value":${N(d.summed_value)}`,
+    "}",
+  ].join("");
+}
+
+/**
+ * v0.5 — emit a single (target_unit, factors, term_value) Jacobian term.
+ * Schema x-order: target_unit, factors, term_value.
+ */
+function emitJacobianTerm(t: import("./engine.js").JacobianTerm): string {
+  const factors = t.factors.map(emitNamedFactor).join(",");
+  return `{"target_unit":${S(t.target_unit)},"factors":[${factors}],"term_value":${N(t.term_value)}}`;
 }
 
 function emitDownstreamContribution(c: DownstreamContribution): string {

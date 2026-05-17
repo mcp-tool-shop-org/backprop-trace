@@ -52,13 +52,46 @@ test('getReceiptSchema throws on an unknown version', () => {
   );
 });
 
-test("SCHEMA_VERSIONS = ['0.1.0', '0.2.0'] in v0.3 (extended from v0.1/v0.2's '0.1.0'-only)", () => {
+test("SCHEMA_VERSIONS = ['0.1.0', '0.2.0', '0.3.0'] in v0.5 (extended from v0.3's '0.1.0' + '0.2.0')", () => {
   assert.deepStrictEqual(
     Array.from(SCHEMA_VERSIONS).sort(),
-    ["0.1.0", "0.2.0"],
-    "SCHEMA_VERSIONS must include both '0.1.0' (Mazur-pinned) and '0.2.0' (generalized). " +
-      "When v0.4+ adds a new schema version, update this expected list AND drop the " +
-      "schemas/receipt.v<version>.json file alongside it.",
+    ["0.1.0", "0.2.0", "0.3.0"],
+    "SCHEMA_VERSIONS must include '0.1.0' (Mazur-pinned), '0.2.0' (generalized), and " +
+      "'0.3.0' (v0.5 softmax+CE additive). When v0.5+ adds a new schema version, update " +
+      "this expected list AND drop the schemas/receipt.v<version>.json file alongside it.",
+  );
+});
+
+test('getReceiptSchema("0.3.0") returns the v0.5 softmax+CE schema with v0.3.0 identifying fields', () => {
+  const schema = getReceiptSchema("0.3.0") as Record<string, unknown>;
+  assert.strictEqual(
+    typeof schema,
+    "object",
+    "loaded schema must be an object",
+  );
+  assert.match(
+    String(schema.$id ?? ""),
+    /receipt\.v0\.3\.0\.json/,
+    `v0.3.0 schema $id must reference receipt.v0.3.0.json; got: ${String(schema.$id)}`,
+  );
+  // The v0.3.0 schema must declare the const schema_version: "0.3.0".
+  const props = schema["properties"] as Record<string, unknown> | undefined;
+  const schemaVersionProp = props?.["schema_version"] as Record<string, unknown> | undefined;
+  assert.strictEqual(
+    schemaVersionProp?.["const"],
+    "0.3.0",
+    `v0.3.0 schema must pin properties.schema_version.const to "0.3.0"; got: ` +
+      `${JSON.stringify(schemaVersionProp?.["const"])}`,
+  );
+});
+
+test('getReceiptSchema("0.3.0") returns the same cached object across calls', () => {
+  const a = getReceiptSchema("0.3.0");
+  const b = getReceiptSchema("0.3.0");
+  assert.strictEqual(
+    a,
+    b,
+    "repeat reads of v0.3.0 must hit the same cache entry",
   );
 });
 

@@ -14,6 +14,128 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.5.0] - 2026-05-17
+
+The softmax + cross-entropy wave. v0.4.2's Rule 12 polymorphic dispatcher
+was deliberately shaped so v0.5 could extend it with a
+`cross_entropy_softmax` branch without reshaping any rule signatures or
+schema fields. This release fills in that branch and lands the three other
+softmax+CE verifier rules + the engine path + the schema additive bump that
+the v0.5 study-swarm locked.
+
+Design decisions baked in (per the v0.5 consolidator memo + user-locked
+Q1/Q2/Q3 decisions before greenlight):
+- **Q1: Rule 13 is GATED**, not mandatory. Fires only when
+  `OutputErrorSignal.dual_form` is present. Receipts authored from PyTorch
+  / JAX / other frameworks can omit `dual_form` and Rule 13 silently
+  skips. The engine emits `dual_form` for every softmax+CE receipt it
+  generates so the in-house path is fully verified.
+- **Q2: NO engine auto-synthesis** of Jacobian factors. The engine emits
+  the collapsed `dL/dz_u = y_u - p_u` form (descent direction) as the
+  primary `OutputErrorSignal.factors`. The dual-form Jacobian
+  decomposition is emitted ALONGSIDE the collapsed form when the engine
+  generates softmax+CE receipts; it is never back-filled onto receipts
+  that lack it.
+- **Q3: SPLIT** — v0.4.2 shipped Rule 12's half_squared_error branch as a
+  focused trust patch BEFORE this wave. v0.5 is the full softmax+CE wave.
+
+### Added
+
+- **Schema v0.3.0** (additive over v0.2.0):
+  - `topology.activation_output` enum widened from `[sigmoid, identity, relu]` to `[sigmoid, identity, relu, softmax]`.
+  - `topology.loss` enum widened from `[half_squared_error]` to `[half_squared_error, cross_entropy_softmax]`.
+  - `OutputErrorSignal` gains optional `dual_form` (DualForm) for Rule 13 verification surface. Receipts that don't carry `dual_form` continue to validate against v0.3.0 unchanged.
+  - New `$defs/DualForm` (jacobian_terms[], product_order, summation_order, summed_value) and `$defs/JacobianTerm` (target_unit, factors[], term_value).
+  - Receipt schema_version: `0.3.0`. v0.2.0 receipts continue to validate against the v0.2.0 schema unchanged.
+- **Rule 0.8 — Softmax probability bounds** (a Rule 0 sub-check). When `topology.activation_output === "softmax"`, every `forward[output].out` MUST be in `[0, 1]` within the receipt's atol slack. Fires inside `checkRule0Structural` Phase 0 and short-circuits before Rules 1-13. Failure record uses `rule: 0` with `"Rule 0.8 (probability bounds)"` in the message — the doctrine ratchet (which scans integer rule numbers) sees Rule 0 with a paired `softmax-ce.bad-prob-bound` fixture and is satisfied.
+- **Rule 11 — Softmax normalization**. When `topology.activation_output === "softmax"`, `sum(forward[output_unit].out) == 1.0` within tolerance. Sum is computed left-to-right in `topology.unit_order.output` order for deterministic reproduction. Independent of Rule 0.8 (a receipt could pass either while failing the other).
+- **Rule 12 cross_entropy_softmax branch**. Fills in the v0.4.2 stub:
+  - Per-output: `loss.per_output[u] == (y_u == 0 ? 0 : -y_u * log(p_u))`. The `y_u === 0` short-circuit is mathematically faithful (the `y * log(p) → 0` limit holds at any `p`) AND defends against the `-0 * log(0) = NaN` JavaScript footgun. The engine and the reconciler apply the same short-circuit so engine-emitted receipts pass cleanly.
+  - Total: `loss.total == sum_u loss.per_output[u]` (recomputed from forward + targets, independent of `loss.per_output[*]`).
+- **Rule 13 — Gated dual-form consistency** (softmax+CE). Three sub-checks:
+  - 13a per-term multiplication: each `jacobian_terms[j].term_value == multiply(jacobian_terms[j].factors, left_to_right)`.
+  - 13b summation: `dual_form.summed_value == sum(jacobian_terms[*].term_value)` in `dual_form.summation_order`.
+  - 13c collapsed-vs-dual: `dual_form.summed_value == OutputErrorSignal.signal_value`.
+  GATED: silently skips when `dual_form` is absent.
+- **Softmax engine path** (`src/general-engine.ts`):
+  - Forward output layer branches on `activation_output === "softmax"`. Phase 1 computes logits per unit left-to-right in `unit_order.output`; Phase 2 invokes `softmaxVector` once over the assembled logit vector (LSE-stable: subtract max, exp, sum, divide).
+  - Loss branches on `topology.loss === "cross_entropy_softmax"` for the CE formula.
+  - Backward output_error_signals branches on softmax+CE: collapsed `signal_value = y_u - p_u` (descent direction; the textbook `p_u - y_u` is the positive-direction gradient, negated to match the existing `gradient_convention: "descent_direction"`). Single factor `target_minus_probability`.
+  - Engine ALWAYS emits `dual_form` for every output unit when topology declares softmax+CE. Each term contains two factors (`y_j` with provenance `targets.<j>`, and `delta_ju_minus_p_u` derived). `summed_value` equals `signal_value` by construction.
+  - Post-update forward + loss also branch identically for softmax / CE.
+  - Topology pairing invariant: `loss === "cross_entropy_softmax"` iff `activation_output === "softmax"` — enforced by `assertTopologyValid` at the engine boundary.
+- **softmaxVector activation** in `src/activations.ts`. Stable log-sum-exp form. New type `OutputActivationName = ActivationName | "softmax"` for the topology output-layer slot (softmax stays out of `ActivationName` because it's a vector op, not per-scalar — the `activate()` dispatcher remains per-scalar).
+- **SHARED_NUMERIC_POLICY_V05_SOFTMAX_CE** in `src/mazur.ts`: hybrid tolerance widened to `{atol: 1e-11, rtol: 1e-7}` (up from v0.3's `{1e-12, 1e-8}`) to accommodate softmax (subtract max, exp, sum, divide), log() in CE, and dual_form term products. ~3x headroom over the theoretical chained-error budget.
+- **Canonical softmax+CE topology + input** (`SOFTMAX_CE_TOPOLOGY` + `SOFTMAX_CE_INPUT` in `src/mazur.ts`): 2 inputs → 2 hidden sigmoid → 3 output softmax, one-hot target class o1. Deterministic initial weights. bias_policy.mode = constant (Mazur convention preserved).
+- **`fixtures/softmax-ce.golden.jsonl`** — canonical first-run receipt. schema_version `0.3.0`. Byte-equal-reproducible by `runGeneralStep(SOFTMAX_CE_INPUT) + emitGeneralReceipt`.
+- **7 bad fixtures** under `fixtures/bad/`:
+  - `softmax-ce.bad-prob-bound.jsonl` — forward.o1.out → -0.01 (Rule 0.8 short-circuits).
+  - `softmax-ce.bad-softmax-sum.jsonl` — forward.o2.out += 0.1 (Rule 11 fires; no cascade thanks to widened tolerance).
+  - `softmax-ce.bad-ce-per-output.jsonl` — loss.per_output.o1 += 0.1 (Rule 12 CE per_output; no cascade).
+  - `softmax-ce.bad-ce-total.jsonl` — loss.total += 0.1 (Rule 12 CE total; no cascade).
+  - `softmax-ce.bad-dual-term.jsonl` — dual_form jacobian_terms[0].term_value mutated (Rules 13a + 13b).
+  - `softmax-ce.bad-dual-sum.jsonl` — dual_form.summed_value mutated (Rules 13b + 13c).
+  - `softmax-ce.bad-collapsed-vs-dual.jsonl` — dual_form mutated self-consistently (Rule 13c ALONE — isolates the cross-form check).
+  Each ships with a sibling `.meta.json` carrying `reconciliation_check_targeted_first` for the doctrine ratchet.
+- **`scripts/generate-softmax-ce-bad-fixtures.ts`** — single-source-of-truth generator for the 7 bad fixtures. Read golden → mutate one field → re-emit via the canonical engine emitter so non-mutated bytes are preserved. Re-runnable if the golden ever needs to be regenerated (e.g., V8 Math.exp drift).
+- **Math.exp + Math.log determinism canaries** in `test/determinism.math-exp-canary.test.ts`: `Math.exp(0.5)`, the softmax intermediate `exp(z_o2 - z_max)` from SOFTMAX_CE_INPUT, and `Math.log(p_o1)` at the golden's pinned probability magnitude. CI failure surfaces drift BEFORE any softmax+CE golden regenerates silently.
+
+### Changed
+
+- **`RULE_DESCRIPTIONS`** gains entries 11 + 13; entry 12 updated to note both branches; entry 0 updated to mention Rule 0.8 sub-check.
+- **`bp` CLI `RULE_LABELS`** gains entries 11 + 13.
+- **`Receipt`** + **`TopologyShape`** in `src/reconcile.ts` widened: TopologyShape gains optional `activation_output`. OutputErrorSignal shape gains optional `dual_form` with JacobianTerm + DualForm sub-types.
+- **`OutputErrorSignal`** in `src/engine.ts` widened with optional `dual_form` (additive). Mazur v0.1 receipts that never emit `dual_form` stay byte-identical to the shipped golden.
+- **`emit.ts`** emits the optional `dual_form` key only when present (preserves byte-equality for half_squared_error receipts). Two new helpers: `emitDualForm` and `emitJacobianTerm`.
+- **`general-engine.ts`** `GeneralReceipt.schema_version` widened from `"0.2.0"` to `"0.2.0" | "0.3.0"`. The engine picks the version based on `topology.loss` so callers don't have to.
+- **`assertSupportedPolicy`** in `general-engine.ts` accepts `cross_entropy_softmax` loss now.
+- **`assertTopologyValid`** in `topology.ts` accepts `activation_output === "softmax"` and `loss === "cross_entropy_softmax"`. Enforces the softmax+CE pairing invariant (one requires the other).
+- **`schema-loader.ts`** `SCHEMA_VERSIONS` tuple extended with `"0.3.0"`. `validate.ts`'s default version remains `"0.2.0"` (receipts declare their own schema_version so the default rarely matters).
+- **`package.json`** adds `./schema/0.3.0` subpath export pointing at `schemas/receipt.v0.3.0.json`.
+- **Doctrine ratchet test** updated: implemented-rules expectation is now `[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]`. FILENAME_KIND_TO_RULE map adds entries for all 7 v0.5 bad fixtures.
+
+### Tests
+
+- 299 → 322 total (+23). 297 → 320 passing. 0 fail. 2 carry-over skips unchanged.
+- New test files:
+  - `test/reconcile.bad-prob-bound.test.ts` — Rule 0.8 short-circuits, no numeric cascade.
+  - `test/reconcile.bad-softmax-sum.test.ts` — Rule 11 fires on the sum site.
+  - `test/reconcile.bad-ce-per-output.test.ts` — Rule 12 CE per_output + total, each in isolation.
+  - `test/reconcile.bad-dual-form.test.ts` — Rule 13a/13b/13c, GATED behavior (Mazur + XOR goldens pass cleanly with no dual_form), softmax-ce golden passes all three.
+  - `test/softmax-ce.engine.test.ts` — byte-equality vs golden, schema_version 0.3.0, softmax sum-to-1, collapsed-equals-dual property, per-term multiplication property, CE per_output formula.
+- All v0.1-v0.4.2 fixtures remain byte-identical (Mazur, XOR, iris, per-neuron-bias). The widened `OutputErrorSignal.dual_form` field is optional and `emit.ts` only emits it when present.
+
+### Migration notes (v0.4.2 → v0.5.0)
+
+- Pure additive on receipts that don't declare softmax+CE. Existing
+  half_squared_error receipts validate, reconcile, and emit byte-identically.
+- New schema version `0.3.0`. v0.2.0 receipts continue to validate against
+  v0.2.0; v0.5 receipts that use softmax / CE declare `schema_version: "0.3.0"`.
+- Topology pairing invariant: `topology.loss === "cross_entropy_softmax"`
+  REQUIRES `topology.activation_output === "softmax"` (and vice versa).
+  `assertTopologyValid` rejects mixed pairings at the engine boundary.
+- Rule 13 is GATED: receipts can opt into the extra verification surface
+  by emitting `dual_form` alongside the collapsed factors. The engine emits
+  dual_form when authoring softmax+CE receipts; receipts authored from
+  PyTorch / JAX / etc. may omit it and Rule 13 silently skips.
+- Consumers iterating `result.failures[*].rule` should be prepared for
+  `rule: 11` and `rule: 13` entries. Rule 0.8 surfaces as `rule: 0` with
+  "Rule 0.8" in the message (no new integer rule number to handle).
+- The `OutputErrorSignal` TypeScript type widened with optional `dual_form`
+  (additive). Consumers that pattern-match on the narrow shape continue
+  to work.
+
+### Out of scope (deferred by standing constraint)
+
+- npm publish / git tag / `gh release create` — user-deferred (commit + push only this wave)
+- Translations — user-deferred
+- Landing page / handbook / SHIP_GATE walkthrough — user-deferred
+- Multi-class CE with non-one-hot targets — current implementation accepts arbitrary normalized targets (the math holds), but no fixture exercises non-one-hot yet. Could land in v0.5.x as a fixture-only addition.
+- Bias updates on softmax+CE — bias_policy mode "constant" is the only path shipped with the canonical fixture; bias_policy mode "sgd" + softmax+CE would work mathematically but no fixture covers it.
+- In-toto v1 attestation + DSSE PAE — still deferred to v0.6+ per the v0.4 study.
+
+---
+
 ## [0.4.2] - 2026-05-17
 
 Focused trust patch closing a real v0.4.1 gap surfaced by the v0.5 study-swarm:

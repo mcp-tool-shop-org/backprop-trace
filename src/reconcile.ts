@@ -235,7 +235,7 @@ export type ReconciliationResult =
  * source.
  */
 export const RULE_DESCRIPTIONS: Record<number, string> = {
-  0: "Structural failure: receipt-internal contradiction (shape invalid, unsupported product_order, non-finite arithmetic, OR v0.4.1+ cross-consistency between bias_policy.mode / bias_sharing / Update.kind / topology declarations).",
+  0: "Structural failure: receipt-internal contradiction (shape invalid, unsupported product_order, non-finite arithmetic, OR v0.4.1+ cross-consistency between bias_policy.mode / bias_sharing / Update.kind / topology declarations; v0.5 adds Rule 0.8 sub-check: softmax probability bounds).",
   1: "Output error signal consistency: signal_value == product(factors), left-to-right.",
   2: "Downstream contribution and backpropagated sum: contribution.value == downstream_signal * weight_value AND backpropagated_sum == sum(contributions in summation_order).",
   3: "Hidden error signal consistency: signal_value == backpropagated_sum * activation_derivative, left-to-right.",
@@ -246,7 +246,9 @@ export const RULE_DESCRIPTIONS: Record<number, string> = {
   8: "Provenance reference consistency: each factor.from path resolves and factor.value matches the referenced field.",
   9: "Multi-step parameter chain: step N parameters_before == step N-1 parameters_after (within tolerance).",
   10: "Multi-step trace identity: all receipts share trace_id AND step_index is sequential (0, 1, 2, ..., N-1).",
-  12: "Loss formula consistency: loss.per_output[u] and loss.total match the formula declared by topology.loss (v0.4.2: half_squared_error; v0.5+: cross_entropy_softmax). Independent of backward — closes a real v0.4.1 trust gap surfaced by the v0.5 study.",
+  11: "Softmax normalization: when topology.activation_output === 'softmax', sum(forward[output_unit].out) == 1.0 within tolerance. Fires for v0.5 softmax+CE receipts.",
+  12: "Loss formula consistency: loss.per_output[u] and loss.total match the formula declared by topology.loss (v0.4.2: half_squared_error; v0.5: cross_entropy_softmax). Independent of backward — closes a real v0.4.1 trust gap surfaced by the v0.5 study.",
+  13: "Gated dual-form consistency (softmax+CE): when OutputErrorSignal.dual_form is present, 13a each jacobian_term.term_value == product(jacobian_term.factors), 13b dual_form.summed_value == sum(jacobian_terms.term_value) in summation_order, 13c dual_form.summed_value == OutputErrorSignal.signal_value. Skipped silently when dual_form is absent — the GATED behavior locked in the v0.5 consolidator Q1 decision.",
 }
 
 type Factor = { name: string; from?: string; value: number }
@@ -284,6 +286,12 @@ type TopologyShape = {
   parameters?: TopologyParameter[]
   bias_sharing?: "per_layer" | "per_neuron"
   loss?: "half_squared_error" | "cross_entropy_softmax"
+  /**
+   * v0.5: optional output-layer activation. When "softmax", Rules 0.8
+   * (probability bounds) and 11 (softmax normalization) fire on the receipt's
+   * forward outputs.
+   */
+  activation_output?: "sigmoid" | "identity" | "relu" | "softmax"
 }
 
 type ForwardUnit = {
@@ -304,10 +312,31 @@ type Contribution = {
   value: number
 }
 
+type JacobianTermShape = {
+  target_unit: string
+  factors: Factor[]
+  term_value: number
+}
+
+type DualFormShape = {
+  jacobian_terms: JacobianTermShape[]
+  product_order: "left_to_right"
+  summation_order: string[]
+  summed_value: number
+}
+
 type OutputErrorSignalShape = {
   factors: Factor[]
   product_order: "left_to_right"
   signal_value: number
+  /**
+   * v0.5 dual-form Jacobian decomposition. Present only when the receipt is
+   * a softmax+CE receipt that opted into dual-form emission. Rule 13 fires
+   * only when this field is present (the GATED behavior). Receipts authored
+   * from PyTorch / other frameworks may omit dual_form; Rule 13 is silent
+   * in that case.
+   */
+  dual_form?: DualFormShape
 }
 
 type HiddenErrorSignalShape = {
@@ -736,14 +765,30 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
   // --- Rule 8: provenance reference (factor.from path resolution) ------
   checkRule8(r, tolerance, failures)
 
+  // --- Rule 11: softmax normalization ----------------------------------
+  // When topology.activation_output === "softmax", the forward outputs are
+  // probabilities and MUST sum to 1.0 within tolerance. Silently no-ops when
+  // activation_output is anything else (sigmoid/identity/relu) — those
+  // outputs are not constrained to be normalized.
+  checkRule11SoftmaxNormalization(r, tolerance, failures)
+
   // --- Rule 12: loss formula consistency (per-output + total) ----------
   // Independent of backward (loss is a forward-side computation). Wired in
-  // v0.4.2 as a polymorphic dispatcher on topology.loss; v0.4.2 implements
-  // the half_squared_error branch and reserves cross_entropy_softmax for
-  // v0.5. Closes a real v0.4.1 gap: prior to v0.4.2, loss.total was schema-
-  // validated but never math-checked by any rule (the half_squared_error
-  // formula was effectively trust-on-faith).
+  // v0.4.2 as a polymorphic dispatcher on topology.loss; v0.5 fills in the
+  // cross_entropy_softmax branch. Closes a real v0.4.1 gap: prior to v0.4.2,
+  // loss.total was schema-validated but never math-checked by any rule (the
+  // half_squared_error formula was effectively trust-on-faith).
   checkRule12LossFormula(r, tolerance, failures)
+
+  // --- Rule 13: gated dual-form consistency (softmax+CE) ---------------
+  // Fires ONLY when an output_error_signals[u].dual_form block is present.
+  // Receipts that emit collapsed form only (the engine default for non-
+  // softmax+CE, or PyTorch-style traces) silently skip Rule 13. When
+  // present, three sub-checks: 13a per-term multiplication, 13b summation,
+  // 13c collapsed-vs-dual sum equality. Q1 = GATED, Q2 = NO auto-synthesis
+  // (the engine emits dual_form when authoring softmax+CE; it does NOT
+  // back-fill dual_form on receipts that lack it).
+  checkRule13GatedDualForm(r, tolerance, failures)
 
   if (failures.length === 0) {
     return { ok: true }
@@ -975,6 +1020,71 @@ function checkRule0Structural(
             `updates[${i}].kind='${u.kind}' contradicts topology.parameters[id=${u.parameter_id}].role='${role}'. ` +
             `${isBiasRole ? "Bias-role parameters require kind='bias'" : "Weight-role parameters require kind='weight'"}. ` +
             `Either correct the update's kind or fix the parameter's role declaration.`,
+        })
+      }
+    }
+  }
+
+  // 0.8 (v0.5). Softmax probability bounds: when topology.activation_output
+  // === "softmax", each forward[output_unit].out MUST be in the inclusive
+  // range [0, 1]. Softmax outputs are probabilities by construction; a
+  // value outside [0, 1] is a structural impossibility for a valid receipt
+  // (either a corrupted forward.out or a topology mislabeled as softmax).
+  //
+  // Numbered as "0.8" in docs/reconciliation.md to communicate "this is a
+  // STRUCTURAL bound that precedes the numeric rules" — the failure record
+  // uses rule: 0 (the structural sentinel) with the message naming "Rule
+  // 0.8" so the doctrine ratchet test (which scans integer rule numbers)
+  // continues to work unchanged.
+  //
+  // Inclusive bounds: we use [0, 1] strictly (with a small floating-point
+  // slack via the numeric_policy tolerance) because the engine's softmaxVector
+  // is bounded by construction within FP precision. A value of -0 or 1+ULP
+  // is a Rule 0.8 violation only if it exceeds the receipt's atol.
+  if (
+    topo?.activation_output === "softmax" &&
+    topo.unit_order &&
+    Array.isArray(topo.unit_order.output) &&
+    r.forward
+  ) {
+    // For bounds, use the receipt's atol as a one-sided slack. The hybrid
+    // tolerance form (atol + rtol*max(|a|,|b|)) does not naturally express
+    // "x in [a, b] within slack"; we use the atol component only here,
+    // matching the convention that bounds checks are absolute-tolerance only.
+    const { atol } = normalizeTolerance(r.numeric_policy.tolerance)
+    for (const oUnit of topo.unit_order.output) {
+      const f = r.forward[oUnit]
+      if (!f || typeof f.out !== "number") continue
+      const out = f.out
+      if (!Number.isFinite(out)) {
+        failures.push({
+          rule: 0,
+          parameter_id: oUnit,
+          field_path: `forward.${oUnit}.out`,
+          stored: out,
+          recomputed: 0,
+          delta: Number.NaN,
+          tolerance: 0,
+          message:
+            `Rule 0.8 (probability bounds): forward.${oUnit}.out is non-finite (${String(out)}). ` +
+            `Under topology.activation_output='softmax' every output's .out must be a finite ` +
+            `number in the closed range [0, 1].`,
+        })
+        continue
+      }
+      if (out < -atol || out > 1 + atol) {
+        failures.push({
+          rule: 0,
+          parameter_id: oUnit,
+          field_path: `forward.${oUnit}.out`,
+          stored: out,
+          recomputed: 0,
+          delta: out < 0 ? -out : out - 1,
+          tolerance: atol,
+          message:
+            `Rule 0.8 (probability bounds): forward.${oUnit}.out=${out} is outside [0, 1] ` +
+            `(atol=${atol}). Softmax outputs are probabilities by construction; a value ` +
+            `outside [0, 1] is either a corrupted forward.out or a topology mislabeled as softmax.`,
         })
       }
     }
@@ -1990,12 +2100,100 @@ function checkRule12LossFormula(
   const formula: "half_squared_error" | "cross_entropy_softmax" =
     declared ?? "half_squared_error"
 
-  // v0.5 stub: cross_entropy_softmax dispatcher will land alongside
-  // softmax+CE engine support. For v0.4.2 we no-op rather than firing a
-  // structural failure — Rule 0 will eventually gate the wider topology
-  // declaration and surface a Rule 0 failure if a receipt declares CE
-  // without the v0.5 softmax fields.
   if (formula === "cross_entropy_softmax") {
+    // v0.5 cross_entropy_softmax branch — symmetric with the
+    // half_squared_error branch below but using the CE formula:
+    //   per_output[u] = -y_u * log(p_u)              (forced to 0 when y_u===0
+    //                                                  to match the y*log(y)→0
+    //                                                  limit and avoid -0*log(0)
+    //                                                  NaN propagation; see the
+    //                                                  engine's loss block)
+    //   total         = sum_u per_output[u]
+    //
+    // The reconciler MUST mirror the engine's "force 0 when y_u===0" rule
+    // because a strictly-computed -0*log(0) yields NaN, which would surface
+    // as a non-finite Rule 12 failure even on a valid receipt. The forced 0
+    // is mathematically faithful (the limit holds at y=0 for any p).
+    const loss = r.loss
+    const targets = r.targets
+    const forward = r.forward
+    if (!loss || !targets || !forward) return
+
+    const perOutput = loss.per_output
+    if (!perOutput || typeof perOutput !== "object") {
+      failures.push({
+        rule: 12,
+        field_path: "loss.per_output",
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          "Rule 12 (cross_entropy_softmax): loss.per_output is missing or not an object. " +
+          "Receipt cannot be reconciled against the loss formula without per-output entries.",
+      })
+      return
+    }
+
+    let expectedTotal = 0
+    let totalReconstructable = true
+    for (const unitId of Object.keys(perOutput)) {
+      const stored = perOutput[unitId]
+      if (typeof stored !== "number") continue
+      const target = targets[unitId]
+      const out = forward[unitId]?.out
+      if (typeof target !== "number" || typeof out !== "number") {
+        totalReconstructable = false
+        continue
+      }
+      const recomputed = target === 0 ? 0 : -target * Math.log(out)
+      expectedTotal = expectedTotal + recomputed
+      const check = applyToleranceCheck(stored, recomputed, tolerance)
+      if (!check.ok) {
+        failures.push({
+          rule: 12,
+          parameter_id: unitId,
+          field_path: `loss.per_output.${unitId}`,
+          stored,
+          recomputed,
+          delta: check.delta,
+          tolerance: check.appliedTolerance,
+          message: check.isFinite
+            ? undefined
+            : nonFiniteMessage(12, `loss.per_output.${unitId}`, recomputed, stored),
+        })
+      }
+    }
+
+    if (typeof loss.total === "number" && totalReconstructable) {
+      const storedTotal = loss.total
+      const check = applyToleranceCheck(storedTotal, expectedTotal, tolerance)
+      if (!check.ok) {
+        failures.push({
+          rule: 12,
+          field_path: "loss.total",
+          stored: storedTotal,
+          recomputed: expectedTotal,
+          delta: check.delta,
+          tolerance: check.appliedTolerance,
+          message: check.isFinite
+            ? undefined
+            : nonFiniteMessage(12, "loss.total", expectedTotal, storedTotal),
+        })
+      }
+    } else if (loss.total !== undefined && typeof loss.total !== "number") {
+      failures.push({
+        rule: 12,
+        field_path: "loss.total",
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          "Rule 12 (cross_entropy_softmax): loss.total is present but not a number. " +
+          "Expected the sum of -y_u * log(p_u) over output units.",
+      })
+    }
     return
   }
 
@@ -2090,5 +2288,304 @@ function checkRule12LossFormula(
         "Rule 12 (half_squared_error): loss.total is present but not a number. " +
         "Expected the sum of loss.per_output[*] under the half_squared_error formula.",
     })
+  }
+}
+
+/**
+ * Rule 11 (v0.5): softmax normalization.
+ *
+ * When topology.activation_output === "softmax", the forward outputs are
+ * probabilities and MUST sum to 1.0 within tolerance. The sum is computed
+ * left-to-right in topology.unit_order.output order — the same order the
+ * engine uses when building the softmax vector — so a deterministic
+ * floating-point sum can be reconciled.
+ *
+ * Silently no-ops when activation_output is anything other than "softmax":
+ *  - sigmoid/identity/relu outputs are not constrained to sum to 1.
+ *  - Receipts that don't declare an activation_output (legacy or partial
+ *    receipts) are exempt.
+ *
+ * This is INDEPENDENT of Rule 0.8 (probability bounds): Rule 0.8 checks
+ * per-output `in [0, 1]`; Rule 11 checks the sum-to-unity invariant. A
+ * receipt could pass Rule 0.8 (every value in [0, 1]) while failing Rule 11
+ * (sum ≠ 1, e.g., one value uniformly shrunk to make the sum 0.99) and vice
+ * versa (a value of -0.5 paired with another of 1.5 sums to 1 but violates
+ * 0.8).
+ */
+function checkRule11SoftmaxNormalization(
+  r: Receipt,
+  tolerance: TolerancePolicy,
+  failures: ReconciliationFailure[],
+): void {
+  const topo = r.topology
+  if (topo?.activation_output !== "softmax") return
+  const order = topo.unit_order?.output
+  if (!Array.isArray(order) || order.length === 0) return
+  const forward = r.forward
+  if (!forward) return
+  let sum = 0
+  let first = true
+  let anyMissing = false
+  for (const oUnit of order) {
+    const f = forward[oUnit]
+    if (!f || typeof f.out !== "number") {
+      anyMissing = true
+      break
+    }
+    if (first) {
+      sum = f.out
+      first = false
+    } else {
+      sum = sum + f.out
+    }
+  }
+  if (anyMissing) {
+    // A missing or non-numeric forward.out is a structural issue caught
+    // elsewhere (schema validation, Rule 0). Don't double-report from Rule 11.
+    return
+  }
+  const check = applyToleranceCheck(sum, 1.0, tolerance)
+  if (!check.ok) {
+    failures.push({
+      rule: 11,
+      field_path: "forward[output_units].out (sum)",
+      stored: sum,
+      recomputed: 1.0,
+      delta: check.delta,
+      tolerance: check.appliedTolerance,
+      message: check.isFinite
+        ? `Rule 11 (softmax normalization): sum(forward[output_unit].out) = ${sum} ` +
+          `disagrees with the required normalization 1.0 (delta=${check.delta}, ` +
+          `tolerance=${check.appliedTolerance}). Sum computed left-to-right in ` +
+          `topology.unit_order.output order: [${order.join(", ")}].`
+        : nonFiniteMessage(11, "forward[output_units].out (sum)", sum, 1.0),
+    })
+  }
+}
+
+/**
+ * Rule 13 (v0.5): gated dual-form consistency for softmax+CE.
+ *
+ * Fires ONLY when an OutputErrorSignal carries a `dual_form` block. The v0.5
+ * consolidator locked Rule 13 as GATED (not mandatory) so receipts can opt
+ * into the extra verification surface by emitting dual_form alongside the
+ * collapsed factors. The engine emits dual_form for every softmax+CE
+ * output_error_signal; receipts authored from PyTorch / JAX / other
+ * frameworks can omit dual_form and Rule 13 silently skips.
+ *
+ * Three sub-checks (each fires independently — multiple may surface per
+ * output unit if the receipt is severely corrupted):
+ *
+ *  13a. Per-term multiplication: each jacobian_term.term_value ==
+ *       multiply(jacobian_term.factors), left-to-right. Reuses the existing
+ *       multiplyFactorsLeftToRight primitive so the named "product_order"
+ *       contract is consistent with Rules 1, 3, 4.
+ *
+ *  13b. Summation: dual_form.summed_value == sum(jacobian_terms.term_value)
+ *       in dual_form.summation_order order. Reuses sumInOrder so the
+ *       summation contract matches Rule 2's backpropagated_sum convention.
+ *
+ *  13c. Collapsed-vs-dual: dual_form.summed_value == OutputErrorSignal.signal_value.
+ *       This is the load-bearing cross-form check — if both the collapsed
+ *       factors and the expanded Jacobian decomposition are emitted, they
+ *       MUST agree at the sum level. A disagreement means either the
+ *       collapsed factors lied or the dual decomposition is wrong; the
+ *       message names the discrepancy without choosing sides.
+ *
+ * No-cascade: Rule 13 does NOT consume cascade state from Rules 1-8 because
+ * its three sub-checks are independent — a per-term failure (13a) doesn't
+ * make the summation check (13b) less informative, and the cross-form check
+ * (13c) is orthogonal to both. All three fire if applicable.
+ */
+function checkRule13GatedDualForm(
+  r: Receipt,
+  tolerance: TolerancePolicy,
+  failures: ReconciliationFailure[],
+): void {
+  const signals = r.backward?.output_error_signals
+  if (!signals || typeof signals !== "object") return
+  for (const unitId of Object.keys(signals)) {
+    const unit = signals[unitId]
+    if (!unit || typeof unit !== "object") continue
+    const dual = unit.dual_form
+    if (!dual) continue // GATED: silently skip when absent.
+
+    // Structural guard: dual_form.product_order must be left_to_right (the
+    // only order the v0.5 reconciler accepts, matching the rest of the
+    // multiplication-rule sites).
+    if (dual.product_order !== "left_to_right") {
+      failures.push({
+        rule: 0,
+        parameter_id: unitId,
+        field_path: `backward.output_error_signals.${unitId}.dual_form.product_order`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Unsupported product_order ${JSON.stringify(dual.product_order)} at ` +
+          `backward.output_error_signals.${unitId}.dual_form.product_order. ` +
+          `v0.5 reconciler accepts only 'left_to_right'.`,
+      })
+      continue
+    }
+
+    const terms = dual.jacobian_terms
+    if (!Array.isArray(terms) || terms.length === 0) {
+      failures.push({
+        rule: 0,
+        parameter_id: unitId,
+        field_path: `backward.output_error_signals.${unitId}.dual_form.jacobian_terms`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `backward.output_error_signals.${unitId}.dual_form.jacobian_terms is empty or ` +
+          `not an array. v0.5 schema requires minItems: 1.`,
+      })
+      continue
+    }
+
+    // 13a: per-term multiplication.
+    for (let j = 0; j < terms.length; j++) {
+      const term = terms[j]!
+      if (!Array.isArray(term.factors) || term.factors.length < 1) {
+        failures.push({
+          rule: 0,
+          parameter_id: unitId,
+          field_path: `backward.output_error_signals.${unitId}.dual_form.jacobian_terms[${j}].factors`,
+          stored: 0,
+          recomputed: 0,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `backward.output_error_signals.${unitId}.dual_form.jacobian_terms[${j}].factors ` +
+            `has ` +
+            (Array.isArray(term.factors) ? `${term.factors.length} entries` : `non-array type ${typeof term.factors}`) +
+            `. v0.5 schema requires minItems: 1 per Jacobian term.`,
+        })
+        continue
+      }
+      const product = multiplyFactorsLeftToRight(term.factors)
+      const stored = term.term_value
+      const fieldPath = `backward.output_error_signals.${unitId}.dual_form.jacobian_terms[${j}].term_value`
+      const check = applyToleranceCheck(product, stored, tolerance)
+      if (!check.isFinite) {
+        failures.push({
+          rule: 13,
+          parameter_id: unitId,
+          field_path: fieldPath,
+          stored,
+          recomputed: product,
+          delta: Number.NaN,
+          tolerance: 0,
+          factors: term.factors as NamedFactor[],
+          product_order: "left_to_right",
+          message: nonFiniteMessage(13, fieldPath, product, stored),
+        })
+        continue
+      }
+      if (!check.ok) {
+        failures.push({
+          rule: 13,
+          parameter_id: unitId,
+          field_path: fieldPath,
+          stored,
+          recomputed: product,
+          delta: check.delta,
+          tolerance: check.appliedTolerance,
+          factors: term.factors as NamedFactor[],
+          product_order: "left_to_right",
+          message:
+            `Rule 13a (dual-form term multiplication): jacobian_terms[${j}].term_value ` +
+            `disagrees with the product of its factors (left_to_right). target_unit='${term.target_unit}'.`,
+        })
+      }
+    }
+
+    // 13b: summation.
+    if (!Array.isArray(dual.summation_order)) {
+      failures.push({
+        rule: 0,
+        parameter_id: unitId,
+        field_path: `backward.output_error_signals.${unitId}.dual_form.summation_order`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `backward.output_error_signals.${unitId}.dual_form.summation_order is not an array.`,
+      })
+      continue
+    }
+    const dualSumRecomputed = sumInOrder(
+      terms,
+      dual.summation_order,
+      (t) => t.target_unit,
+      (t) => t.term_value,
+    )
+    const dualSumStored = dual.summed_value
+    const sumFieldPath = `backward.output_error_signals.${unitId}.dual_form.summed_value`
+    const sumCheck = applyToleranceCheck(dualSumRecomputed, dualSumStored, tolerance)
+    if (!sumCheck.isFinite) {
+      failures.push({
+        rule: 13,
+        parameter_id: unitId,
+        field_path: sumFieldPath,
+        stored: dualSumStored,
+        recomputed: dualSumRecomputed,
+        delta: Number.NaN,
+        tolerance: 0,
+        message: nonFiniteMessage(13, sumFieldPath, dualSumRecomputed, dualSumStored),
+      })
+    } else if (!sumCheck.ok) {
+      failures.push({
+        rule: 13,
+        parameter_id: unitId,
+        field_path: sumFieldPath,
+        stored: dualSumStored,
+        recomputed: dualSumRecomputed,
+        delta: sumCheck.delta,
+        tolerance: sumCheck.appliedTolerance,
+        message:
+          `Rule 13b (dual-form summation): summed_value disagrees with sum of jacobian_terms ` +
+          `in summation_order [${dual.summation_order.join(", ")}].`,
+      })
+    }
+
+    // 13c: collapsed-vs-dual cross-form check.
+    const collapsedStored = unit.signal_value
+    if (typeof collapsedStored === "number" && Number.isFinite(dualSumStored)) {
+      const crossFieldPath = `backward.output_error_signals.${unitId}.dual_form.summed_value`
+      const crossCheck = applyToleranceCheck(dualSumStored, collapsedStored, tolerance)
+      if (!crossCheck.isFinite) {
+        failures.push({
+          rule: 13,
+          parameter_id: unitId,
+          field_path: crossFieldPath,
+          stored: dualSumStored,
+          recomputed: collapsedStored,
+          delta: Number.NaN,
+          tolerance: 0,
+          message: nonFiniteMessage(13, crossFieldPath, collapsedStored, dualSumStored),
+        })
+      } else if (!crossCheck.ok) {
+        failures.push({
+          rule: 13,
+          parameter_id: unitId,
+          field_path: crossFieldPath,
+          stored: dualSumStored,
+          recomputed: collapsedStored,
+          delta: crossCheck.delta,
+          tolerance: crossCheck.appliedTolerance,
+          message:
+            `Rule 13c (collapsed-vs-dual): dual_form.summed_value (${dualSumStored}) disagrees ` +
+            `with OutputErrorSignal.signal_value (${collapsedStored}). The collapsed factors ` +
+            `and the dual-form Jacobian decomposition must agree at the sum level for ` +
+            `softmax+CE — one of them is wrong.`,
+        })
+      }
+    }
   }
 }

@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "softmax-ce.bad-prob-bound.meta",
+  "describes": "fixtures/bad/softmax-ce.bad-prob-bound.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/softmax-ce.golden.jsonl. Differs in the 3 fixture_status fields and the targeted v0.5 softmax+CE field(s) described below.",
+  "mutation": {
+    "field_path": "forward.o1.out",
+    "original": 0.417135813,
+    "mutated": -0.01,
+    "kind": "v0_5_softmax_ce_targeted_mutation",
+    "description": "Mutated forward.o1.out from 0.417135813 to -0.01 (outside the [0, 1] probability range). Under topology.activation_output='softmax', Rule 0.8 (probability bounds, a sub-check of Rule 0) fires on each output.out that falls outside [0, 1]. Rule 0 short-circuits, so this fires before any numeric rule (1-13) gets a chance to also fail."
+  },
+  "reconciliation_check_targeted_first": "Rule 0 (Rule 0.8 sub-check: softmax probability bounds): forward[output].out MUST be in [0, 1] when topology.activation_output === 'softmax'.",
+  "purpose": "Anti-circularity (Csmith/CompCert lineage) for the v0.5 softmax+CE reconciler additions (Rules 0.8 / 11 / 12 CE branch / 13 gated dual-form). Targeted mutation isolates the rule under test.",
+  "v0_5_note": "v0.5 ships the softmax+CE wave: schema v0.3.0 (additive), Rules 0.8/11/13 new, Rule 12 CE branch filled in. The 7-fixture plate exercises every new rule plus each sub-check of Rule 13."
+}

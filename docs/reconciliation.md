@@ -16,10 +16,11 @@ to have done actually add up?**
 If the answer is "no," the reconciler refuses to certify the receipt and
 the verifier fails closed.
 
-## Quick reference: the 10 rules
+## Quick reference: the 13 rules (+ Rule 0.8 structural sub-check)
 
 | # | Rule | Status |
 |---|------|--------|
+| 0.8 | Softmax probability bounds: when `topology.activation_output === "softmax"`, every `forward[output].out` MUST be in `[0, 1]` (Rule 0 sub-check; failure record uses `rule: 0` with "Rule 0.8" in message) | **implemented (v0.5)** |
 | 1 | Output error signal == product(factors) | **implemented (v0.2)** |
 | 2 | Backpropagated sum == sum(downstream contributions) AND contribution.value == downstream_signal * weight_value | **implemented (v0.2)** |
 | 3 | Hidden error signal == backprop_sum * activation_derivative | **implemented (v0.2)** |
@@ -30,23 +31,125 @@ the verifier fails closed.
 | 8 | Provenance reference (factor.from path) | **implemented (v0.2)** |
 | 9 | Multi-step parameter chain (`parameters_before[N]` equals prior `parameters_after[N-1]`) | **implemented (v0.3)** |
 | 10 | Multi-step trace identity (shared `trace_id` + sequential `step_index`) | **implemented (v0.3)** |
-| 11 | Softmax normalization (sum of softmax outputs equals 1) | reserved (v0.5) |
-| 12 | Loss formula consistency (`loss.per_output[u]` and `loss.total` match `topology.loss` formula) | **implemented (v0.4.2)** — half_squared_error branch; cross_entropy_softmax branch reserved for v0.5 |
-| 13 | Softmax+CE collapsed↔Jacobian agreement (gated by dual-form declaration) | reserved (v0.5) |
+| 11 | Softmax normalization (`sum(forward[output].out) == 1.0` when `topology.activation_output === "softmax"`) | **implemented (v0.5)** |
+| 12 | Loss formula consistency (`loss.per_output[u]` and `loss.total` match `topology.loss` formula) | **implemented** — half_squared_error (v0.4.2) + cross_entropy_softmax (v0.5) |
+| 13 | Softmax+CE collapsed↔Jacobian dual-form agreement (13a per-term mult, 13b summation, 13c collapsed-vs-dual); **GATED** — fires only when `OutputErrorSignal.dual_form` is present | **implemented (v0.5)** |
 
 Rules 1-8 ship in v0.2.0. Rules 9 + 10 ship in v0.3.0 and fire from the
 multi-record verify path (`bp verify multi <file.jsonl>` /
 `reconcileMultiStep(receipts)`), NOT from the single-record path. Rule 12
 ships in v0.4.2 as the loss-formula trust-gap closer — pre-v0.4.2, `loss.total`
 was schema-validated but never math-checked, so a corrupted `loss.total` would
-silently pass `reconcileReceipt`. Rules 11 and 13 are reserved for v0.5
-alongside the softmax + cross-entropy engine path; their numeric slot is
-locked here so v0.5's softmax wave doesn't renumber the rule set. Each shipped
-rule landed with a deliberately-broken bad-* fixture per the anti-circularity
-doctrine — bad receipts precede good receipts (Csmith / CompCert lineage; see
-"Academic lineage" below and `CONTRIBUTING.md`).
-Rules 9 + 10 ship with `fixtures/bad/multi-step.bad-chain.jsonl` and
-`fixtures/bad/multi-step.bad-trace-id.jsonl` respectively.
+silently pass `reconcileReceipt`. **v0.5** lands the softmax + cross-entropy
+wave: Rule 0.8 (probability bounds, a Rule 0 sub-check), Rule 11 (softmax
+normalization), Rule 12's `cross_entropy_softmax` branch, and Rule 13 (gated
+dual-form consistency with three sub-checks). Rule 13 is GATED — it fires
+only when the receipt carries an `OutputErrorSignal.dual_form` block; the
+engine emits dual_form for every softmax+CE receipt, but receipts authored
+from PyTorch / JAX / other frameworks may omit it and Rule 13 silently
+skips. This is the v0.5 consolidator's Q1 decision locked into the
+reconciler. Each shipped rule landed with a deliberately-broken bad-*
+fixture per the anti-circularity doctrine — bad receipts precede good
+receipts (Csmith / CompCert lineage; see "Academic lineage" below and
+`CONTRIBUTING.md`).
+
+v0.5 ships **eight new bad fixtures**: `fixtures/bad/softmax-ce.bad-{prob-bound,
+softmax-sum, ce-per-output, ce-total, dual-term, dual-sum, collapsed-vs-dual}.jsonl`
+covering Rules 0.8 / 11 / 12 (CE) / 13 (three sub-checks). Rules 9 + 10 ship
+with `fixtures/bad/multi-step.bad-{chain,trace-id}.jsonl` respectively.
+
+### v0.5 — Rule 0.8 (softmax probability bounds)
+
+When `topology.activation_output === "softmax"`, each output unit's
+`forward[u].out` is a probability and must satisfy `0 <= out <= 1` within
+the receipt's atol slack. The check fires inside `checkRule0Structural`
+(Phase 0) and SHORT-CIRCUITS the numeric rules — a Rule 0.8 violation
+returns from `reconcileReceipt` before Rules 1-13 get a chance to also
+fail. This keeps diagnostics focused: a corrupted probability is reported
+as a structural impossibility, not as a downstream cascade of math
+failures.
+
+The failure record uses `rule: 0` (the structural sentinel) with the
+message naming `"Rule 0.8 (probability bounds)"` so the doctrine ratchet
+test (which scans integer rule numbers) continues to work unchanged. The
+bad fixture `fixtures/bad/softmax-ce.bad-prob-bound.jsonl` mutates
+`forward.o1.out` to `-0.01` to exercise this path.
+
+### v0.5 — Rule 11 (softmax normalization)
+
+When `topology.activation_output === "softmax"`,
+`sum(forward[output_unit].out)` MUST equal `1.0` within
+`numeric_policy.tolerance`. The sum is computed left-to-right in
+`topology.unit_order.output` order so the floating-point sum is
+deterministic across reproductions.
+
+Independent of Rule 0.8: a receipt could pass 0.8 (every value in [0,1])
+while failing 11 (one value uniformly shrunk to make sum 0.99) and vice
+versa (`-0.5` paired with `1.5` sums to 1 but violates 0.8). The
+softmax+CE v0.5 numeric policy uses `{atol: 1e-11, rtol: 1e-7}` — softmax
+outputs sum to 1.0 within roughly 1-2 ULP, well under the tolerance.
+
+The bad fixture `fixtures/bad/softmax-ce.bad-softmax-sum.jsonl` mutates
+`forward.o2.out` by `+0.1` to make the sum ~1.1.
+
+### v0.5 — Rule 12 cross_entropy_softmax branch
+
+For receipts that declare `topology.loss === "cross_entropy_softmax"`:
+
+```
+loss.per_output[u] == (y_u == 0 ? 0 : -y_u * log(p_u))
+loss.total         == sum_u loss.per_output[u]
+```
+
+The `y_u === 0` short-circuit is mathematically faithful (the limit
+`y * log(p) → 0` as `y → 0` holds at any `p`, including `p === 0`) AND
+defensive against the `-0 * log(0) = NaN` JavaScript footgun. The engine
+applies the same short-circuit when emitting; the reconciler mirrors it
+exactly so a valid receipt with one-hot targets and any softmax
+distribution passes cleanly.
+
+The bad fixtures `fixtures/bad/softmax-ce.bad-ce-per-output.jsonl` and
+`fixtures/bad/softmax-ce.bad-ce-total.jsonl` mutate the two checked
+fields independently — Rule 12's per_output and total checks fire
+independently (the total is reconstructed from `forward + targets`, not
+from `loss.per_output`).
+
+### v0.5 — Rule 13 (gated dual-form consistency)
+
+When `backward.output_error_signals[u].dual_form` is present, Rule 13
+fires three sub-checks:
+
+**13a — per-term multiplication**: each `jacobian_terms[j].term_value`
+equals the left-to-right product of `jacobian_terms[j].factors`. The
+engine emits two factors per term: `y_j` (target value) and
+`delta_ju_minus_p_u` (the Kronecker delta minus the current unit's
+probability). Their product is `y_j * (delta_ju - p_u)`.
+
+**13b — summation**: `dual_form.summed_value` equals the sum of
+`jacobian_terms[*].term_value`, summed left-to-right in
+`dual_form.summation_order` order.
+
+**13c — collapsed-vs-dual**: `dual_form.summed_value` equals
+`OutputErrorSignal.signal_value` (the collapsed `y_u - p_u` form). This
+is the load-bearing cross-form check — if both the collapsed factor and
+the expanded Jacobian decomposition are emitted, they MUST agree at the
+sum level. A disagreement means either the collapsed factor lied or the
+dual decomposition is wrong.
+
+**GATED behavior**: Rule 13 silently skips when `dual_form` is absent.
+Mazur / XOR / iris / per-neuron-bias receipts have no dual_form and pass
+Rule 13 cleanly. The v0.5 consolidator locked this as Q1 = GATED (not
+mandatory) so receipts authored from other frameworks can omit dual_form
+without tripping the reconciler. Q2 = NO engine auto-synthesis: the
+engine emits dual_form when it generates softmax+CE receipts itself, but
+does NOT back-fill dual_form on receipts that lack it.
+
+The bad fixtures
+`fixtures/bad/softmax-ce.bad-{dual-term,dual-sum,collapsed-vs-dual}.jsonl`
+exercise the three sub-checks independently. The collapsed-vs-dual fixture
+is the most surgical: it mutates the dual_form self-consistently (terms
+still multiply correctly, sum still matches summed_value) so ONLY 13c
+fires — proving the cross-form check has independent diagnostic power.
 
 ## The eight rules
 

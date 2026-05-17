@@ -39,6 +39,23 @@
 export type ActivationName = "sigmoid" | "identity" | "relu";
 
 /**
+ * v0.5 extension — output-layer activation names.
+ *
+ * Superset of ActivationName. Adds "softmax" as a vector-valued output-only
+ * activation. Hidden layers are constrained to per-scalar activations
+ * (ActivationName); only the output layer may declare softmax.
+ *
+ * Softmax is deliberately NOT in ActivationName because the engine's
+ * `activate(name, x)` dispatcher is per-scalar (it takes one number and
+ * returns one number). Softmax operates on the whole logit vector at once
+ * (post-shift, post-exp, post-normalize), so it lives in `softmaxVector`
+ * and is dispatched at the engine level by checking
+ * `topology.activation_output === "softmax"` BEFORE entering the per-scalar
+ * `activate` call.
+ */
+export type OutputActivationName = ActivationName | "softmax";
+
+/**
  * Sigmoid activation: `1 / (1 + e^{-x})`.
  *
  * Single-branch form; valid input range is approximately `[-700, 700]`
@@ -103,6 +120,63 @@ export function relu(x: number): number {
  */
 export function reluDerivativeFromOut(out: number): number {
   return out > 0 ? 1 : 0;
+}
+
+/**
+ * v0.5 — softmax activation as a vector op.
+ *
+ * Implements the numerically stable log-sum-exp trick: subtract max(z)
+ * from every logit BEFORE exponentiating to bound exp() inputs at 0 from
+ * above, then divide by the sum. This is mathematically identical to the
+ * naive `exp(z_i) / sum(exp(z_j))` form but avoids Infinity for logits
+ * above ~700 and avoids underflow-to-zero for logits well below the max.
+ *
+ * Determinism contract: the engine emits softmax outputs in unit_order
+ * order, computed left-to-right via this function. Math.exp inherits the
+ * V8/Node 22.x ECMA-262 §21.3 implementation-defined precision caveat
+ * documented for sigmoid; the determinism canary in
+ * test/determinism.math-exp-canary.test.ts pins specific Math.exp values
+ * that the softmax fixtures depend on.
+ *
+ * The output vector sums to 1 within floating-point precision (Rule 11
+ * verifies this at the reconciliation boundary with a hybrid tolerance,
+ * typically {atol: 1e-11, rtol: 1e-7}).
+ *
+ * @param logits  The pre-softmax logit vector (z_1, ..., z_K). MUST be
+ *                non-empty. Inputs are NOT validated for finiteness — a
+ *                NaN/Infinity input propagates through exp/sum/divide and
+ *                surfaces downstream as a NaN-poisoning rule failure.
+ * @returns       The softmax probability vector (p_1, ..., p_K) in the
+ *                same order as `logits`. Each p_i ∈ [0, 1] within
+ *                floating-point precision; sum(p) === 1 within FP precision.
+ *
+ * @throws        Error if `logits.length === 0` — there is no defined
+ *                softmax over an empty vector.
+ */
+export function softmaxVector(logits: readonly number[]): number[] {
+  if (logits.length === 0) {
+    throw new Error(
+      "softmaxVector: logits vector is empty. Softmax is undefined over an empty input.",
+    );
+  }
+  // Stable LSE: subtract max before exp.
+  let maxZ = logits[0]!;
+  for (let i = 1; i < logits.length; i++) {
+    const z = logits[i]!;
+    if (z > maxZ) maxZ = z;
+  }
+  const exps: number[] = new Array(logits.length);
+  let sum = 0;
+  for (let i = 0; i < logits.length; i++) {
+    const e = Math.exp(logits[i]! - maxZ);
+    exps[i] = e;
+    sum = sum + e;
+  }
+  const out: number[] = new Array(logits.length);
+  for (let i = 0; i < logits.length; i++) {
+    out[i] = exps[i]! / sum;
+  }
+  return out;
 }
 
 /**

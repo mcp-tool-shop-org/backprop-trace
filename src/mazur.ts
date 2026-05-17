@@ -525,3 +525,133 @@ export const IRIS_INPUT: GeneralInput = {
     gradient_convention: "descent_direction",
   },
 };
+
+/**
+ * v0.5 — softmax+CE shared numeric policy.
+ *
+ * Widens the v0.3 tolerance from {atol: 1e-12, rtol: 1e-8} to
+ * {atol: 1e-11, rtol: 1e-7} to accommodate the softmax+CE compositions:
+ *   - softmax (subtract max, exp, sum, divide) — 4 FP operations per element
+ *   - log() in CE per-output — 1 transcendental per element
+ *   - dual_form Jacobian terms (y_j * (delta - p_u)) — 1 multiply + 1 subtract
+ *
+ * The chained relative error budget for these compositions is ~3e-8;
+ * rtol=1e-7 gives ~3x headroom while staying tight enough to flag the
+ * Csmith-style targeted drifts in the v0.5 bad-* fixtures (which use 1e-5
+ * or larger mutations). atol=1e-11 protects the near-zero regime that
+ * softmax can hit when one logit dominates (the other probabilities
+ * approach 0).
+ */
+export const SHARED_NUMERIC_POLICY_V05_SOFTMAX_CE: NumericPolicy = {
+  number_encoding: "decimal",
+  precision_significant_digits: 9,
+  rounding: "round_half_to_even",
+  tolerance: { atol: 1e-11, rtol: 1e-7 },
+  computation_order: "schema_defined",
+  byte_output: {
+    format: "jsonl",
+    json_key_order: "schema_defined",
+    trailing_zero_policy: "pad_to_significant_digits",
+    indent: "none",
+  },
+};
+
+/**
+ * v0.5 — softmax+CE 2-2-3 topology (3-class classifier).
+ *
+ * 2 inputs, 2 hidden sigmoid, 3 output softmax, cross_entropy_softmax loss.
+ * Per-layer biases (constant on step 1 — matches the Mazur/XOR/iris bias
+ * convention for the canonical first-run fixture).
+ *
+ * Unit ids: x1, x2 (inputs); h1, h2 (hidden); o1, o2, o3 (outputs — the
+ * three classes).
+ *
+ * Parameter -> unit map:
+ *   - w_x1_h1, w_x2_h1: input -> hidden h1
+ *   - w_x1_h2, w_x2_h2: input -> hidden h2
+ *   - w_h1_o1, w_h2_o1: hidden -> output o1
+ *   - w_h1_o2, w_h2_o2: hidden -> output o2
+ *   - w_h1_o3, w_h2_o3: hidden -> output o3
+ *   - b_hidden: hidden_bias applies to [h1, h2]
+ *   - b_output: output_bias applies to [o1, o2, o3]
+ *
+ * Initial weights are deterministic and chosen to produce a non-degenerate
+ * softmax distribution with a clear-but-not-saturated favorite (so the
+ * dual_form Jacobian terms span a meaningful range of values for Rule 13
+ * verification).
+ */
+export const SOFTMAX_CE_TOPOLOGY: Topology = {
+  layers: ["input", "hidden", "output"],
+  unit_order: {
+    input: ["x1", "x2"],
+    hidden: ["h1", "h2"],
+    output: ["o1", "o2", "o3"],
+  },
+  parameter_order: [
+    "w_x1_h1", "w_x2_h1", "w_x1_h2", "w_x2_h2",
+    "w_h1_o1", "w_h2_o1",
+    "w_h1_o2", "w_h2_o2",
+    "w_h1_o3", "w_h2_o3",
+    "b_hidden", "b_output",
+  ],
+  parameters: [
+    { id: "w_x1_h1", role: "input_to_hidden_weight", from_unit: "x1", to_unit: "h1" },
+    { id: "w_x2_h1", role: "input_to_hidden_weight", from_unit: "x2", to_unit: "h1" },
+    { id: "w_x1_h2", role: "input_to_hidden_weight", from_unit: "x1", to_unit: "h2" },
+    { id: "w_x2_h2", role: "input_to_hidden_weight", from_unit: "x2", to_unit: "h2" },
+    { id: "w_h1_o1", role: "hidden_to_output_weight", from_unit: "h1", to_unit: "o1" },
+    { id: "w_h2_o1", role: "hidden_to_output_weight", from_unit: "h2", to_unit: "o1" },
+    { id: "w_h1_o2", role: "hidden_to_output_weight", from_unit: "h1", to_unit: "o2" },
+    { id: "w_h2_o2", role: "hidden_to_output_weight", from_unit: "h2", to_unit: "o2" },
+    { id: "w_h1_o3", role: "hidden_to_output_weight", from_unit: "h1", to_unit: "o3" },
+    { id: "w_h2_o3", role: "hidden_to_output_weight", from_unit: "h2", to_unit: "o3" },
+    { id: "b_hidden", role: "hidden_bias", applies_to_units: ["h1", "h2"] },
+    { id: "b_output", role: "output_bias", applies_to_units: ["o1", "o2", "o3"] },
+  ],
+  activation_hidden: "sigmoid",
+  activation_output: "softmax",
+  loss: "cross_entropy_softmax",
+  bias_sharing: "per_layer",
+  input_size: 2,
+  hidden_size: 2,
+  output_size: 3,
+};
+
+/**
+ * v0.5 — softmax+CE canonical first-run input.
+ *
+ * Single sample x=(1.0, 0.5), one-hot target class o1 (y=(1, 0, 0)).
+ * Bias_policy mode is "constant" — biases pin at the initial values, no
+ * bias updates emitted (the Mazur convention preserved for v0.5).
+ *
+ * Hidden + output weights chosen so:
+ *   - Logits z_o1, z_o2, z_o3 are well-separated but not saturated
+ *   - Softmax outputs span a meaningful range (none collapse to 0 or 1)
+ *   - CE loss at step 1 is non-trivial (target class isn't already at p=1)
+ *
+ * Pinning rationale: these are the exact numeric values that produce the
+ * shipped fixtures/softmax-ce.golden.jsonl. Determinism canary in
+ * test/determinism.math-exp-canary.test.ts pins the Math.exp values that
+ * the softmax intermediate computations depend on.
+ */
+export const SOFTMAX_CE_INPUT: GeneralInput = {
+  topology: SOFTMAX_CE_TOPOLOGY,
+  learning_rate: 0.5,
+  inputs: { x1: 1.0, x2: 0.5 },
+  targets: { o1: 1, o2: 0, o3: 0 },
+  parameters_before: {
+    w_x1_h1: 0.10, w_x2_h1: 0.20, w_x1_h2: 0.30, w_x2_h2: 0.40,
+    w_h1_o1: 0.50, w_h2_o1: 0.60,
+    w_h1_o2: 0.10, w_h2_o2: 0.20,
+    w_h1_o3: 0.30, w_h2_o3: 0.40,
+    b_hidden: 0.10, b_output: 0.20,
+  },
+  numeric_policy: SHARED_NUMERIC_POLICY_V05_SOFTMAX_CE,
+  bias_policy: SHARED_BIAS_POLICY_V03,
+  fixture: "softmax-ce-engine-first-run",
+  metadata: {
+    source: "src/mazur.ts SOFTMAX_CE_INPUT (softmax+CE 2-2-3 engine first-run, one-hot class o1)",
+    url_reference: "https://www.deeplearningbook.org/contents/mlp.html",
+    gradient_convention: "descent_direction",
+  },
+};

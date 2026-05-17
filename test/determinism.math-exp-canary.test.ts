@@ -83,3 +83,67 @@ test("Math.tanh(0.1) === recorded-constant (V8 tanh drift canary)", () => {
       `landing (v0.5+).`,
   )
 })
+
+// =============================================================================
+// v0.5 — softmax+CE canary expansion.
+// =============================================================================
+//
+// The v0.5 softmax+CE engine path uses Math.exp + Math.log + softmax-stable
+// arithmetic (subtract max, exp each, sum, divide). The canary pins:
+//   - Math.exp(0.5) — a positive-side exp value (negative-side covered above
+//     by Math.exp(-0.5))
+//   - The exact exp values softmax computes on the SOFTMAX_CE_INPUT logit
+//     triple (z_o1=0.874615042, z_o2=0.386575513, z_o3=0.630595278) after
+//     subtracting max(z) = z_o1. These three exp() calls drive the softmax
+//     normalization that the golden fixture pins.
+//   - Math.log of p_o1 in the same fixture — the CE per_output[o1] formula
+//     value. If Math.log drifts at the softmax probability magnitude,
+//     loss.per_output.o1 + loss.total drift too.
+//
+// Captured 2026-05-17 on the same engine path that produced
+// fixtures/softmax-ce.golden.jsonl.
+
+test("Math.exp(0.5) === recorded-constant (softmax+CE positive-side canary)", () => {
+  const expected = 1.6487212707001282
+  const actual = Math.exp(0.5)
+  assert.strictEqual(
+    actual,
+    expected,
+    `Math.exp(0.5) drifted from the v0.5 canary value. Got ${actual}; ` +
+      `expected ${expected}. The softmax+CE engine path depends on this value via the ` +
+      `LSE-stable softmax intermediate computations. If this drifts, regenerate ALL ` +
+      `softmax+CE goldens and re-pin this canary in one synchronized commit.`,
+  )
+})
+
+test("softmax intermediate exp(z_o2 - z_max) === recorded-constant (softmax+CE LSE canary)", () => {
+  // SOFTMAX_CE_INPUT logits: z_o1=0.874615042 (max), z_o2=0.386575513, z_o3=0.630595278.
+  // softmax subtracts max(z) before exp; this is the o2 intermediate.
+  const expected = 0.6138286085321776
+  const actual = Math.exp(0.386575513 - 0.874615042)
+  assert.strictEqual(
+    actual,
+    expected,
+    `Softmax intermediate exp(z_o2 - z_max) drifted from the v0.5 canary value. ` +
+      `Got ${actual}; expected ${expected}. fixtures/softmax-ce.golden.jsonl pins ` +
+      `p_o2=0.256049895 which depends on this exp value. If this canary fires, ` +
+      `regenerate softmax-ce.golden.jsonl AND every fixtures/bad/softmax-ce.bad-*.jsonl ` +
+      `(via scripts/generate-softmax-ce-bad-fixtures.ts) in the same commit.`,
+  )
+})
+
+test("Math.log(p_o1=0.4171...) === recorded-constant (cross_entropy_softmax canary)", () => {
+  // p_o1 from fixtures/softmax-ce.golden.jsonl. CE loss formula evaluates
+  // -y_o1 * log(p_o1) at this exact magnitude. The golden's loss.total
+  // is the negation of this Math.log call (since y_o1=1, y_o2=y_o3=0).
+  const expected = -0.8743434200428728
+  const actual = Math.log(0.41713581279921863)
+  assert.strictEqual(
+    actual,
+    expected,
+    `Math.log at the softmax+CE probability magnitude drifted from the v0.5 canary. ` +
+      `Got ${actual}; expected ${expected}. fixtures/softmax-ce.golden.jsonl pins ` +
+      `loss.per_output.o1=0.874343420 and loss.total=0.874343420 which depend on this ` +
+      `Math.log value (formula: -y * log(p) with y_o1=1).`,
+  )
+})

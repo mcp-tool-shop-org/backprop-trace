@@ -39,16 +39,22 @@ import { dirname, resolve } from "node:path";
  * the package payload. The tuple is `as const` so SchemaVersion is the
  * union of string literals (not just `string`).
  *
- * v0.3 ships both:
+ * v0.5 ships three:
  *   - "0.1.0" — the Mazur-pinned single-topology schema (v0.1/v0.2 wave)
  *   - "0.2.0" — the generalized schema (REQUIRED unit_order + parameter_order,
- *     hybrid tolerance object form, optional trace_id/step_index for multi-step)
+ *     hybrid tolerance object form, optional trace_id/step_index for multi-step,
+ *     bias_sharing per_layer or per_neuron, half_squared_error loss only)
+ *   - "0.3.0" — v0.5 softmax+CE additive (topology.activation_output enum
+ *     extended with "softmax"; topology.loss enum extended with
+ *     "cross_entropy_softmax"; OutputErrorSignal gains optional dual_form
+ *     for Rule 13 gated dual-form consistency).
  *
  * Receipts that say `schema_version: "0.1.0"` continue to validate against
- * the v0.1.0 schema for byte-equal preservation; new generalized receipts
- * (XOR, iris, multi-step) declare `schema_version: "0.2.0"`.
+ * the v0.1.0 schema for byte-equal preservation. v0.3-onward generalized
+ * receipts (XOR, iris, multi-step, per-neuron-bias) declare "0.2.0".
+ * v0.5 softmax+CE receipts declare "0.3.0".
  */
-export const SCHEMA_VERSIONS = ["0.1.0", "0.2.0"] as const;
+export const SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0"] as const;
 
 /**
  * Union of currently-shipped receipt schema versions. Use this for any

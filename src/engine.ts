@@ -18,10 +18,35 @@ export type ForwardUnit = { net: number; out: number };
 
 export type NamedFactor = { name: string; from?: string; value: number };
 
+/**
+ * v0.5 — optional dual-form Jacobian decomposition emitted by the general
+ * engine for softmax+CE receipts. Mazur v0.1 receipts never carry this
+ * field; the additive shape preserves byte-equality for the Mazur golden
+ * (emit.ts emits the dual_form key only when present).
+ */
+export type JacobianTerm = {
+  target_unit: string;
+  factors: NamedFactor[];
+  term_value: number;
+};
+
+export type DualForm = {
+  jacobian_terms: JacobianTerm[];
+  product_order: "left_to_right";
+  summation_order: string[];
+  summed_value: number;
+};
+
 export type OutputErrorSignal = {
   factors: NamedFactor[];
   product_order: "left_to_right";
   signal_value: number;
+  /**
+   * v0.5: optional dual-form decomposition. Present for softmax+CE receipts
+   * emitted by the general engine; absent on Mazur v0.1 and all
+   * half_squared_error receipts (which keep their pinned byte shapes).
+   */
+  dual_form?: DualForm;
 };
 
 export type DownstreamContribution = {
