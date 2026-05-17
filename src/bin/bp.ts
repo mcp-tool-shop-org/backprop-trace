@@ -1851,14 +1851,43 @@ function runVerifyGeneral(opts: {
     throw err;
   }
 
+  // v0.5.1 — early dispatch for v0.1 Mazur receipts. The general engine
+  // requires unit_order + parameter_order, which v0.1 receipts don't
+  // carry; running this verifier on a v0.1 receipt would always fail at
+  // engine-reproduce with a cryptic schema-shape error. Redirect the
+  // operator to `bp verify mazur` with an explicit diagnostic before any
+  // schema validation runs. The dedicated `bp verify mazur` path handles
+  // v0.1 receipts including byte-equal-vs-golden and published-anchor
+  // drift checks that this verifier deliberately skips.
+  //
+  // Detection is purely string-level on the receipt's declared
+  // schema_version field — no Ajv invocation, no engine call. A receipt
+  // with no schema_version or a non-string value falls through to normal
+  // validation (which will report the missing/invalid field).
+  if (receipt !== null && typeof receipt === "object") {
+    const sv = (receipt as { schema_version?: unknown }).schema_version;
+    if (sv === "0.1.0") {
+      checks.push({
+        name: "schema-dispatch",
+        status: "fail",
+        message:
+          `Receipt declares schema_version "0.1.0" (the Mazur 2-2-2 pinned schema). ` +
+          `Use 'bp verify mazur ${opts.receiptPath}' instead — that verifier handles ` +
+          `v0.1 receipts including byte-equal-vs-golden + published-anchor drift checks. ` +
+          `'bp verify general' targets v0.2.0+ generalized receipts (XOR, iris, softmax+CE, ` +
+          `custom topologies) which carry topology.unit_order + topology.parameter_order ` +
+          `that the general engine requires.`,
+      });
+      return finalizeReport(checks, opts);
+    }
+  }
+
   // 2. Schema validation. Without an explicit version override the
   // validator dispatches on the receipt's declared schema_version
   // (Library agent's v0.3 work auto-routes "0.2.0" receipts to
-  // schemas/receipt.v0.2.0.json). A receipt that declares "0.1.0" still
-  // validates (the Mazur 8-rule subset) but the engine-reproduction
-  // check below will likely fail since v0.1 receipts don't carry the
-  // unit_order / parameter_order needed by the general engine — the
-  // operator is best served by routing v0.1 receipts to `bp verify mazur`.
+  // schemas/receipt.v0.2.0.json; v0.5 adds "0.3.0" for softmax+CE).
+  // The v0.1 redirect above means we only ever validate v0.2.0+ shapes
+  // here.
   const validation = validateReceiptSchema(receipt);
   if (validation.ok) {
     checks.push({ name: "schema", status: "pass" });

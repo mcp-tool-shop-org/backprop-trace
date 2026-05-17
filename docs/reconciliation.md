@@ -452,15 +452,62 @@ may.
 
 ```
 bp reconcile receipt <file>
-  Checks the eight rules above. Math only.
+  Checks Rules 0/0.8/1-8/11/12/13 per the receipt's topology declaration.
+  Single-record; multi-step rules 9/10 do not fire here.
   Exit 0 if all rules pass within tolerance.
   Exit nonzero with stderr describing failures otherwise.
 
-bp verify mazur
-  Full gate. Runs reconciliation + byte equality vs golden + fixture_status
-  + published-anchor drift. Defined only once the engine produces a real
-  golden (after promotion of the draft).
+bp verify mazur [<file>]
+  Full Mazur (v0.1.0) gate. Runs schema validation + reconciliation +
+  byte equality vs golden + fixture_status + published-anchor drift.
+  Defaults to fixtures/mazur.golden.jsonl when <file> is omitted.
+
+bp verify general <file>
+  Generalized verify gate. Runs schema validation + reconciliation +
+  engine-reproduction via runGeneralStep. Targets v0.2.0+ receipts (XOR,
+  iris, per-neuron-bias, softmax+CE, custom topologies). A v0.1.0 Mazur
+  receipt fed here exits 1 with a "use bp verify mazur" redirect — the
+  general engine requires unit_order + parameter_order that v0.1 receipts
+  don't carry.
+
+bp verify multi <file.jsonl>
+  Multi-record verifier. Runs per-record Rules 1-8/11/12/13 plus the
+  cross-step Rules 9 (parameter chain) and 10 (trace identity + sequential
+  step_index). Reads N JSONL records ordered by step_index 0..N-1, sharing
+  a single trace_id.
 ```
+
+### v0.5 — softmax+CE worked example (engine + CLI)
+
+```bash
+# Generate the canonical softmax+CE 2-2-3 first-run receipt (engine emits
+# schema_version: "0.3.0", including the dual_form Jacobian decomposition).
+node --import tsx -e "
+  import { runGeneralStep, emitGeneralReceipt, SOFTMAX_CE_INPUT }
+    from '@mcptoolshop/backprop-trace';
+  process.stdout.write(emitGeneralReceipt(runGeneralStep(SOFTMAX_CE_INPUT)));
+" > receipts/softmax-ce.jsonl
+
+# Schema-validate against v0.3.0 (validator auto-dispatches based on
+# the receipt's declared schema_version field):
+bp validate receipt receipts/softmax-ce.jsonl
+
+# Reconcile — runs Rule 0.8 (probability bounds), Rule 11 (softmax
+# normalization), Rule 12 cross_entropy_softmax branch, and Rule 13
+# (gated dual-form, fires because dual_form is present):
+bp reconcile receipt receipts/softmax-ce.jsonl
+
+# Full verify gate (schema + reconcile + engine-reproduce byte-equal):
+bp verify general receipts/softmax-ce.jsonl
+```
+
+For receipts that do NOT carry `dual_form` (e.g., a PyTorch / JAX trace
+re-formatted as a backprop-trace receipt), Rule 13 silently skips — the
+reconciler still verifies Rules 0.8 / 11 / 12 against the collapsed
+factors and probability outputs. This is the GATED behavior locked in
+the v0.5 consolidator decision: opt into dual-form verification by
+emitting `dual_form`; otherwise the collapsed form `factors=[{name:"target_minus_probability", value: y-p}]` + `signal_value=y-p` is sufficient
+for the reconciler to certify the math.
 
 The reconciler is testable in isolation before any engine code exists,
 using `fixtures/bad/mazur.bad-gradient.jsonl` as input. Implements the

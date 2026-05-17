@@ -1,7 +1,7 @@
 {
   "name": "@mcptoolshop/backprop-trace",
-  "version": "0.5.0",
-  "description": "Deterministic backprop training-trace engine — v0.5 adds softmax + cross-entropy support: schema v0.3.0, Rule 0.8 (probability bounds), Rule 11 (softmax normalization), Rule 12 cross_entropy_softmax branch, Rule 13 GATED dual-form consistency. Layered on the v0.4 authoring spine + v0.3 generalized N-input N-hidden N-output topology + hybrid tolerance + multi-step receipt spine.",
+  "version": "0.5.1",
+  "description": "Deterministic backprop training-trace engine — v0.5.1 ratchet on v0.5: bp verify general redirects v0.1 receipts to verify mazur; new XOR multi-step good golden; v0.5 surface re-exported from index (SOFTMAX_CE_INPUT, softmaxVector, DualForm, etc.) + softmax+CE worked example in docs. v0.5 added softmax + cross-entropy support: schema v0.3.0, Rule 0.8 (probability bounds), Rule 11 (softmax normalization), Rule 12 cross_entropy_softmax branch, Rule 13 GATED dual-form consistency. Layered on the v0.4 authoring spine + v0.3 generalized N-input N-hidden N-output topology + hybrid tolerance + multi-step receipt spine.",
   "type": "module",
   "license": "MIT",
   "author": "mcp-tool-shop <64996768+mcp-tool-shop@users.noreply.github.com>",

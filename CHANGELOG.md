@@ -14,6 +14,90 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.5.1] - 2026-05-17
+
+Focused ratchet on v0.5.0. No new math semantics. Closes the two v0.3-era
+carry-over skips, audits the v0.3.0 export surface, adds a softmax+CE
+worked example to docs + library JSDoc, and adds a generator script for
+the new XOR multi-step good golden so it's reproducible from clean.
+
+### Added
+
+- **`fixtures/xor.multi-step.jsonl`** — canonical 2-record multi-step
+  golden (XOR-sigmoid 2-2-1). Step 0 is the XOR_INPUT first run with
+  `trace_id` + `step_index=0`; step 1 reuses the same XOR sample with
+  `parameters_before` == step 0's `parameters_after` byte-for-byte. All
+  per-record rules pass AND Rules 9 (parameter chain) and 10 (trace
+  identity + sequential step_index) pass cleanly. Pairs with the existing
+  `fixtures/bad/multi-step.bad-{chain,trace-id}.jsonl` plate as the
+  "all-rules-pass" baseline.
+- **`scripts/generate-xor-multi-step-golden.ts`** — reproducible
+  generator for the multi-step golden. Reads no files; runs
+  `runGeneralStep` over `XOR_INPUT` twice with a pinned `trace_id` and
+  chains the parameters. Re-running it from clean produces byte-identical
+  output to the shipped golden.
+- **v0.5 surface re-exports** in `src/index.ts`:
+  - `SOFTMAX_CE_TOPOLOGY`, `SOFTMAX_CE_INPUT`, `SHARED_NUMERIC_POLICY_V05_SOFTMAX_CE` from `./mazur`.
+  - `softmaxVector` + `OutputActivationName` type from `./activations`.
+  - `DualForm` + `JacobianTerm` types from `./general-engine` (canonical declaration lives in `./engine` for emit-side type sharing).
+  - Updated quick-usage JSDoc with a softmax+CE worked example block (engine run, dual_form access, custom-topology authoring, Rule 13 gated-skip note).
+- **`bp verify general` v0.1 redirect** — when a receipt declares
+  `schema_version: "0.1.0"` (the Mazur 2-2-2 pinned schema), the verifier
+  early-exits with status 1 and a "use `bp verify mazur`" diagnostic on
+  the schema-dispatch check. Detection is purely string-level on the
+  `schema_version` field (no Ajv invocation, no engine call) so the
+  redirect is fast and decoupled from validator state. Receipts without
+  a `schema_version` field fall through to normal validation, which
+  reports the missing field through the schema check.
+- **Softmax+CE worked example** in `docs/reconciliation.md` "Command
+  surface" section. Shows the engine-run → validate → reconcile → verify
+  general pipeline, plus the GATED Rule 13 note (collapsed-only receipts
+  silently skip Rule 13).
+
+### Changed
+
+- `docs/reconciliation.md` "Command surface" expanded: `bp verify general`,
+  `bp verify multi`, and `bp reconcile receipt` now have full descriptions
+  including the v0.1 redirect, multi-record verification, and Rule
+  enumeration. The "eight rules" naming is preserved for back-compat with
+  v0.2 readers, but the section header was already "13 rules" since v0.5.
+
+### Tests
+
+- 322 total tests unchanged. 320 → 322 passing. 0 fail.
+  **Both carry-over skips closed** (2 → 0):
+  - `bp verify general on mazur (v0.1) — policy decision deferred`
+    replaced with an active test that asserts the v0.5.1 v0.1 redirect:
+    exit 1 + diagnostic naming `bp verify mazur` and the offending
+    `schema_version`.
+  - `bp verify multi <good multi-step file> exits 0` was previously
+    skipped because the fixture didn't exist. With
+    `fixtures/xor.multi-step.jsonl` now present, the test runs and
+    passes — per-record Rules 1-8/11/12/13 + cross-step Rules 9/10 all
+    green on the 2-record XOR multi-step run.
+- All v0.1-v0.5.0 fixtures byte-identical. Engine bytes unchanged.
+
+### Migration notes (v0.5.0 → v0.5.1)
+
+- Pure additive. No schema bump, no rule additions, no engine math
+  changes. All v0.5.0 receipts validate, reconcile, and emit byte-identically.
+- Consumers using `bp verify general` on v0.1.0 Mazur receipts (uncommon
+  — Mazur receipts should use `bp verify mazur`) now get an exit 1 with
+  a redirect message instead of a cryptic engine-reproduce schema error.
+  The shipped Mazur golden is the only v0.1.0 receipt in the repo; no
+  downstream consumer is known to call `bp verify general` on a v0.1
+  receipt.
+
+### Out of scope (deferred by standing constraint or intent)
+
+- v0.6 external trace ingestion (PyTorch / JAX collapsed-only softmax+CE
+  receipts) — the next study-swarm subject. Rule 13's GATED design was
+  built exactly to support that adoption path.
+- npm publish / git tag / `gh release create` — user-deferred.
+- Translations / landing / handbook / SHIP_GATE walkthrough — user-deferred.
+
+---
+
 ## [0.5.0] - 2026-05-17
 
 The softmax + cross-entropy wave. v0.4.2's Rule 12 polymorphic dispatcher

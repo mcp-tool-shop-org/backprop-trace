@@ -138,11 +138,37 @@ test("bp verify general fixtures/iris.golden.jsonl exits 0", {
   )
 })
 
-// TODO: bp verify general fixtures/mazur.golden.jsonl behavior is the CLI
-// agent's policy decision — either auto-reject v0.1 receipts with a "use
-// bp verify mazur" message (exit 1) or accept both schema versions
-// transparently. Test skipped until the policy is documented in
-// docs/cli.md and the CLI agent's commit message.
-test("bp verify general on mazur (v0.1) — policy decision deferred", { skip: true }, () => {
-  // intentional skip; see top-of-file note
+// v0.5.1 — policy decision LOCKED: `bp verify general` early-rejects
+// v0.1.0 receipts with a redirect to `bp verify mazur` BEFORE schema
+// validation runs. The general engine requires unit_order + parameter_order
+// which v0.1 receipts don't carry, so an explicit redirect is friendlier
+// than letting engine-reproduce fail with a cryptic shape error. The
+// dedicated `bp verify mazur` path handles v0.1 byte-equal-vs-golden +
+// published-anchor drift checks.
+test("bp verify general on mazur (v0.1) — exits 1 with bp-verify-mazur redirect", {
+  skip: !verifyGeneralIsWired(),
+}, () => {
+  const mazurGoldenPath = "fixtures/mazur.golden.jsonl"
+  // The shipped Mazur golden is v0.1.0 — verify the redirect fires on it.
+  const { status, stdout, stderr } = runBp([
+    "verify",
+    "general",
+    mazurGoldenPath,
+  ])
+  assert.strictEqual(
+    status,
+    1,
+    `bp verify general on v0.1 Mazur receipt must exit 1 (redirect to verify mazur); got ${status}\nstdout: ${stdout}\nstderr: ${stderr}`,
+  )
+  const combined = stdout + stderr
+  assert.match(
+    combined,
+    /bp verify mazur/,
+    `output must redirect to 'bp verify mazur'; got combined: ${combined}`,
+  )
+  assert.match(
+    combined,
+    /schema_version.*0\.1\.0/,
+    `output must name the schema_version that triggered the redirect; got: ${combined}`,
+  )
 })

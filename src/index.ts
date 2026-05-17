@@ -35,7 +35,7 @@
  *     ./parse-input for the new topology-input schema family
  *   - hashReceipt + HashAlgorithm from ./hash
  *   - getReceiptSchema + SCHEMA_VERSIONS + SchemaVersion from ./schema-loader
- *     (v0.3: SCHEMA_VERSIONS = ["0.1.0", "0.2.0"])
+ *     (v0.5: SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0"])
  *   - v0.4: getInputSchema + INPUT_SCHEMA_VERSIONS + InputSchemaVersion
  *     from ./schema-loader (INPUT_SCHEMA_VERSIONS = ["0.4.0"])
  *   - verifyEngineReproduces + VerifyEngineResult from ./verify-engine, plus
@@ -46,11 +46,15 @@
  *
  * The CLI lives in ./bin/bp and is exposed via package.json bin.
  *
- * Receipt schemas are shipped at schemas/receipt.v{0.1.0,0.2.0}.json
- * (importable via the "@mcptoolshop/backprop-trace/schema/0.1.0" and
- * "@mcptoolshop/backprop-trace/schema/0.2.0" subpath exports;
+ * Receipt schemas are shipped at schemas/receipt.v{0.1.0,0.2.0,0.3.0}.json
+ * (importable via the "@mcptoolshop/backprop-trace/schema/0.1.0",
+ * "@mcptoolshop/backprop-trace/schema/0.2.0", and
+ * "@mcptoolshop/backprop-trace/schema/0.3.0" subpath exports;
  * "@mcptoolshop/backprop-trace/schema" remains aliased to 0.1.0 for
- * back-compat with v0.1/v0.2 callers).
+ * back-compat with v0.1/v0.2 callers). v0.5 softmax+CE receipts declare
+ * schema_version: "0.3.0"; v0.2.0 (XOR/iris/per-neuron-bias) and v0.1.0
+ * (Mazur) receipts continue to validate against their respective schemas
+ * unchanged.
  *
  * Quick usage:
  *
@@ -89,6 +93,44 @@
  *   import { reconcileMultiStep } from "@mcptoolshop/backprop-trace";
  *   const multi = reconcileMultiStep([step0, step1, step2]);
  *   if (!multi.ok) console.error("rule 9 or 10 failed:", multi.failures);
+ *
+ *   // v0.5 path — run the generalized engine on a softmax+CE topology
+ *   // (2 inputs → 2 hidden sigmoid → 3 output softmax, one-hot target):
+ *   import {
+ *     runGeneralStep,
+ *     emitGeneralReceipt,
+ *     SOFTMAX_CE_INPUT,
+ *   } from "@mcptoolshop/backprop-trace";
+ *   const sm = runGeneralStep(SOFTMAX_CE_INPUT);
+ *   // sm.schema_version === "0.3.0"
+ *   // sm.backward.output_error_signals.o1.dual_form is populated
+ *   //   (collapsed signal_value = y_o1 - p_o1; dual_form decomposes it
+ *   //    as sum_j y_j * (delta_ju - p_u) for Rule 13 verification)
+ *   const smLine = emitGeneralReceipt(sm);
+ *
+ *   // Author a softmax+CE receipt from a custom topology:
+ *   import {
+ *     softmaxVector,
+ *     type Topology,
+ *     SHARED_NUMERIC_POLICY_V05_SOFTMAX_CE,
+ *   } from "@mcptoolshop/backprop-trace";
+ *   const myTopology: Topology = {
+ *     // ... your declaration; pair activation_output: "softmax" with
+ *     // loss: "cross_entropy_softmax" (the engine enforces the pairing
+ *     // at the boundary via assertTopologyValid)
+ *     // ...
+ *   } as Topology;
+ *   // softmaxVector is the LSE-stable vector op the engine uses
+ *   // internally for the forward output layer; exported for callers
+ *   // that want to compute probabilities outside an engine step.
+ *   const probs = softmaxVector([0.87, 0.39, 0.63]);
+ *
+ *   // Rule 13 is GATED — receipts without dual_form silently skip it.
+ *   // Authoring a collapsed-only softmax+CE receipt (e.g. from a
+ *   // PyTorch/JAX trace) is valid: emit the OutputErrorSignal with
+ *   // factors=[{name:"target_minus_probability", value: y-p}] and
+ *   // signal_value=y-p, omit dual_form, and reconcileReceipt will
+ *   // verify Rules 0.8/11/12 but skip Rule 13 silently.
  */
 
 // --- v0.1 / v0.2 reconciler surface (unchanged) ---
@@ -154,6 +196,11 @@ export type {
   BiasPolicy,
   ToleranceObject,
   ToleranceSpec,
+  // v0.5: dual-form Jacobian decomposition types for softmax+CE receipts.
+  // Surfaced here so external consumers authoring softmax+CE traces (or
+  // post-processing v0.5 receipts) can type-check the dual_form block.
+  DualForm,
+  JacobianTerm,
 } from "./general-engine.js"
 
 // --- v0.3 topology vocabulary ---
@@ -193,8 +240,19 @@ export {
   reluDerivativeFromOut,
   activate,
   activationDerivativeFromOut,
+  // v0.5: softmax as a vector op. Outside the per-scalar `activate()`
+  // dispatcher because softmax operates on the whole logit vector at
+  // once (subtract max, exp, sum, divide — LSE-stable).
+  softmaxVector,
 } from "./activations.js"
-export type { ActivationName } from "./activations.js"
+export type {
+  ActivationName,
+  // v0.5: OutputActivationName = ActivationName | "softmax". Used in the
+  // generalized Topology.activation_output slot (hidden layers stay
+  // narrow at ActivationName because softmax is a vector op meaningful
+  // only at the output layer).
+  OutputActivationName,
+} from "./activations.js"
 
 // --- Mazur input + v0.3 fixture inputs/topologies ---
 // MAZUR_INPUT + MazurInput preserved for v0.1/v0.2 callers. MAZUR_TOPOLOGY
@@ -215,6 +273,13 @@ export {
   // Engine agent. Re-exported here so external consumers can author
   // per-neuron-bias receipts without reaching into the ./mazur subpath.
   XOR_PER_NEURON_BIAS_INPUT,
+  // v0.5: softmax+CE canonical 2-2-3 first-run input + topology +
+  // dedicated numeric policy with widened tolerance ({atol:1e-11,
+  // rtol:1e-7}) for the softmax/exp/log composition headroom. Pairs
+  // with fixtures/softmax-ce.golden.jsonl.
+  SOFTMAX_CE_TOPOLOGY,
+  SOFTMAX_CE_INPUT,
+  SHARED_NUMERIC_POLICY_V05_SOFTMAX_CE,
 } from "./mazur.js"
 
 // --- Emit (v0.1 Mazur + v0.3 general) ---
