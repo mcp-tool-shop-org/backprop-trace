@@ -22,8 +22,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
+        # pnpm version comes from package.json `packageManager` field; do not
+        # also pass `version:` here — pnpm/action-setup rejects the duplicate
+        # spec with ERR_PNPM_BAD_PM_VERSION.
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
@@ -42,8 +43,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
+        # pnpm version comes from package.json `packageManager` field; do not
+        # also pass `version:` here — pnpm/action-setup rejects the duplicate
+        # spec with ERR_PNPM_BAD_PM_VERSION.
       - uses: actions/setup-node@v4
         with:
           node-version: '22.x'
