@@ -379,6 +379,20 @@ export type {
 } from "./import-pytorch.js"
 
 /**
+ * v0.6.1 — JAX sidecar importer. Same trust model + same observer-mode
+ * receipt as importPytorchSidecar; differs only in the
+ * `source_framework.name` discriminator ("jax" vs "pytorch") and the
+ * default extractor identity. The shared implementation lives in
+ * src/import-observer.ts and both per-framework wrappers delegate to it.
+ *
+ * Per-framework subcommand discipline: `importJaxSidecar` rejects sidecars
+ * whose `source_framework.name !== "jax"` (and vice versa for the PyTorch
+ * importer). Callers MUST name the framework explicitly.
+ */
+export { importJaxSidecar } from "./import-jax.js"
+export type { ImportJaxOptions, ImportJaxResult } from "./import-jax.js"
+
+/**
  * v0.6 — observer-mode receipt support types. SourceFramework + Attestor
  * (+ AttestorIdentity + ExternalTrustBasis) are the v0.4.0-schema-only
  * fields the importer adds to the receipt; consumers handling imported

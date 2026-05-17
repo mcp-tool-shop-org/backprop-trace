@@ -39,6 +39,7 @@ the subcommand-specific text.
 | `bp validate-input <file>` | Schema-validate a topology-input config without running the engine (v0.4+) | 0 / 1 |
 | `bp validate <file>` | Schema-only validation of a receipt; auto-detects v0.1.0 / v0.2.0 / v0.3.0 / v0.4.0 | 0 / 1 |
 | `bp import pytorch <sidecar.jsonl> [--out F]` | Convert a framework-trace.v0.1.0 PyTorch sidecar to an observer-mode v0.4.0 receipt (v0.6+) | 0 / 1 / 2 / 4 |
+| `bp import jax <sidecar.jsonl> [--out F]` | Same as `bp import pytorch` but accepts `source_framework.name == "jax"` sidecars (v0.6.1+) | 0 / 1 / 2 / 4 |
 
 All subcommands accept `-` as the file argument to read from stdin
 (except `generate mazur / xor / iris`, which write rather than read, and
@@ -113,13 +114,41 @@ bp import pytorch trace.jsonl --json
 | Subcommand | Status |
 |---|---|
 | `bp import pytorch <file>` | **Shipped in v0.6.0** |
-| `bp import jax <file>` | Planned for v0.6.x patch |
+| `bp import jax <file>` | **Shipped in v0.6.1** |
 | `bp import tensorflow <file>` | Planned for v0.6.x patch |
 
 The CLI does **not** auto-detect framework from file contents — name it
 explicitly. This is a deliberate choice per the v0.6 study consolidator
 (Agent 3 finding, mirrors SARIF Multitool `-tool <name>` discipline):
 silent misdetection in a verifier defeats the purpose of the verifier.
+
+**Per-framework subcommand discipline at the library layer**: `importJaxSidecar`
+rejects sidecars whose `source_framework.name !== "jax"` even if they
+otherwise pass schema validation. Same for `importPytorchSidecar` and
+"pytorch". You cannot accidentally feed a JAX sidecar to the PyTorch
+importer or vice versa — the dispatch is explicit.
+
+### JAX-specific authoring notes (v0.6.1)
+
+`bp import jax` shares 100% of the trust model with `bp import pytorch`.
+The differences are extractor-side (user's Python helper that emits the
+sidecar):
+
+- **Pytree flattening**: JAX users iterate parameters via
+  `jax.tree_util.tree_flatten`, which produces a stable but non-obvious
+  order. The user's helper MUST pair flattened values with their
+  `parameter_id`s correctly; a swap surfaces as Rule 14 disagreement
+  (covered by `fixtures/bad/jax.bad-pytree-flatten-order.jsonl`).
+- **float32 vs binary64**: JAX runs in float32 by default; the engine
+  runs in Node binary64. Default `attestor.differential_tolerance`
+  `{atol:1e-6, rtol:1e-4}` absorbs cross-precision drift for small
+  networks. Larger networks may need looser per-receipt tolerance —
+  the receipt declares its own, so the verifier knows what's claimed.
+- **JIT / XLA op fusion**: changes intermediate FP roundings; final
+  scalar values agree within tolerance for deterministic ops.
+- **vmap / scan / pmap**: produce batched values, not single-step
+  scalars. Emit one sidecar per step; schema validation rejects extra
+  dimensions at the wire layer.
 
 ## Subcommand: `bp reconcile receipt`
 

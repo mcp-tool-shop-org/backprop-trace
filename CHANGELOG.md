@@ -14,6 +14,103 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.6.1] - 2026-05-17
+
+The JAX adapter pressure test on the v0.6 pattern. v0.6.0 shipped PyTorch
+ingestion; v0.6.1 adds JAX with **no new trust model, no schema drift,
+no new rule** — confirming the v0.6 framework-trace pattern generalizes.
+
+### Added
+
+- **`importJaxSidecar`** library API (`src/import-jax.ts`). Per-framework
+  wrapper that rejects sidecars whose `source_framework.name !== "jax"`.
+  Same `ObserverImportOptions` / `ObserverImportResult` shape as PyTorch.
+- **`bp import jax <sidecar.jsonl> [--out <file>] [--json]`** CLI subcommand.
+  Identical ergonomics + exit codes to `bp import pytorch`; only the
+  per-framework `source_framework.name` discriminator differs.
+- **`src/import-observer.ts`** — shared `buildObserverReceiptFromSidecar`
+  core extracted from the v0.6.0 PyTorch importer. Both per-framework
+  importers (Pytorch + JAX, future TensorFlow) delegate to this. Three
+  framework-specific arguments: `expectedFrameworkName`, `defaultExtractorIdentity`,
+  `callerLabel`. ~30 lines per new adapter going forward.
+- **`fixtures/external/jax.softmax-ce.sidecar.jsonl`** — canonical JAX
+  framework-trace sidecar. Different weights + sample (x1=0.5, x2=1.0,
+  one-hot target class o2) + learning_rate (0.25) than the PyTorch fixture
+  so the JAX golden is byte-distinct.
+- **`fixtures/external/jax.softmax-ce.golden.jsonl`** — v0.4.0 observer-mode
+  receipt produced by `bp import jax`. Reproducible via
+  `scripts/generate-jax-softmax-ce-fixtures.ts`.
+- **`fixtures/bad/jax.bad-pytree-flatten-order.jsonl`** — single JAX-specific
+  bad fixture. Swaps `parameters_before.{w_x1_h1, w_x2_h1}` to mimic an
+  extractor that flattened `jax.tree_util.tree_flatten(params)` in the
+  wrong order. Rule 14 (engine recompute) fires on `forward.h1.net` because
+  swapped weights propagate; Rule 7 (parameters_after consistency) also
+  fires because the original (correct) updates don't reconcile with the
+  swapped parameters_before. No new rule needed — Rule 14's differential
+  catches the new mistake class.
+- **`scripts/generate-jax-softmax-ce-fixtures.ts`** + **`scripts/generate-jax-bad-fixtures.ts`** — reproducible generators.
+- **Library re-exports**: `importJaxSidecar`, `ImportJaxOptions`, `ImportJaxResult` from package root + `./import-jax` subpath. New `./import-observer` subpath for consumers building additional adapters.
+
+### Changed
+
+- **`src/import-pytorch.ts`** reduced to a thin wrapper over the shared core. Public API + observable behavior unchanged from v0.6.0; the PyTorch golden reproduces byte-identically through the refactored path (verified before commit).
+- **`src/bin/bp.ts`** `runImportFramework` extracted as the shared CLI runner; `runImportPytorch` + new `runImportJax` are 1-line delegates. `bp import jax` now exits 0/1/2/3 (real import), no longer exits 4 (the v0.6.0 "planned for v0.6.x" stub). TensorFlow remains the exit-4 stub.
+- **`bp import` overview help** + `bp import jax --help` text added.
+- **`docs/cli.md`** — `bp import jax` row added to the subcommands table + JAX-specific authoring notes (pytree flatten, float32 drift, JIT fusion, vmap/scan/pmap) added under the import section.
+- **Doctrine ratchet test** (`test/reconcile.doctrine.test.ts`) — `FILENAME_KIND_TO_RULE` gains `bad-pytree-flatten-order → 14`.
+- **`package.json`** — version 0.6.1; new subpath exports for `./import-jax` and `./import-observer`.
+
+### Tests
+
+- 345 → 359 total (+14 v0.6.1 tests across `test/import-jax.test.ts` and `test/reconcile.bad-jax.test.ts`). 359 pass / 0 fail / 0 skip.
+- New test categories:
+  - JAX importer round-trip byte-equality vs `jax.softmax-ce.golden.jsonl`
+  - Schema-validation + reconciliation on the JAX observer-mode receipt
+  - Per-framework subcommand discipline at the library layer (`importJaxSidecar` rejects pytorch sidecars and vice versa)
+  - `bp import jax` CLI end-to-end (succeeds on JAX sidecar; rejects PyTorch sidecar with exit 2)
+  - `jax.bad-pytree-flatten-order` fires Rule 14 specifically on `forward.h1.net` + Rule 7 on the chain
+- One test relabel: the v0.6.0 `bp import jax exits 4` assertion is updated to `bp import tensorflow exits 4` (tensorflow is the remaining unimplemented framework in v0.6.1).
+- All v0.1-v0.6.0 fixtures byte-identical. Importer refactor preserves the v0.6.0 PyTorch golden through the new shared path (verified BEFORE commit; verifier identity stays at `backprop-trace-engine@0.6.0` because engine semantics are unchanged — engine identity is the semantic version of the deterministic verifier, NOT the npm package version).
+
+### Migration notes (v0.6.0 → v0.6.1)
+
+- **Pure additive on engine semantics.** Engine code unchanged. All
+  engine-authored receipts byte-identical. PyTorch importer's public API
+  + observable output byte-identical (the refactor's purpose was to share
+  the import body with JAX without changing it).
+- **`importPytorchSidecar` still exported under its v0.6.0 name** + type
+  aliases (`ImportPytorchOptions`, `ImportPytorchResult`, `FrameworkTraceSidecar`)
+  preserved. v0.6.0 consumers importing from `"@mcptoolshop/backprop-trace"`
+  or `"@mcptoolshop/backprop-trace/import-pytorch"` continue to compile
+  unchanged.
+- **New optional `./import-jax` + `./import-observer` subpaths.** Consumers
+  building additional adapters (e.g., a third-party `import-flax` package)
+  can import `buildObserverReceiptFromSidecar` directly.
+- **`bp import jax`** now ships (exit 0 on success, no longer exit 4).
+  Consumers that previously hard-coded "`bp import jax` exits 4" should
+  update.
+- **No reconciler changes.** Rules 1-16 unchanged. JAX-specific extractor
+  mistakes surface as existing-rule firings (Rule 14 catches pytree
+  flatten swaps; Rule 7 catches downstream consistency; Rule 0.8 catches
+  probability bound violations regardless of framework). The pressure
+  test confirmed: v0.6 generalizes without weakening any defense.
+
+### Out of scope (deferred by standing constraint or intent)
+
+- **TensorFlow adapter** (`bp import tensorflow`) — planned for v0.6.x.
+  Pattern is now proven by JAX; TensorFlow follows as another ~30-line
+  wrapper.
+- **Python helpers as separate npm packages** — v0.6.1 keeps the helper
+  scripts documented (planned location: `scripts/python-helpers/dump_{pytorch,jax}_trace.py`).
+  Promotion to separate npm scoped packages (`@mcptoolshop/backprop-trace-import-pytorch`,
+  etc.) follows when user demand justifies the split.
+- **Multi-step observer-mode receipts** — v0.6.1 still ships single-step
+  only.
+- npm publish / git tag / `gh release create` — user-deferred.
+- Translations / landing / handbook — user-deferred.
+
+---
+
 ## [0.6.0] - 2026-05-17
 
 The external trace ingestion wave. Observer-mode receipts let foreign

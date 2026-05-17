@@ -1,7 +1,7 @@
 {
   "name": "@mcptoolshop/backprop-trace",
-  "version": "0.6.0",
-  "description": "Deterministic backprop training-trace engine — v0.6 ships external trace ingestion: bp import pytorch <sidecar.jsonl> produces observer-mode v0.4.0 receipts with attestor + source_framework + Rule 14 engine-recompute differential as the load-bearing trust gate. Rule 15 (skip-basis required) + Rule 16 (gated attestation digest binding) close the laundering attack surface. Foreign PyTorch / JAX traces become evidence sources without becoming trusted authorities — the engine remains the verifier, not a framework wrapper. Layered on v0.5 softmax+CE, v0.4 authoring spine, v0.3 generalized topology + hybrid tolerance + multi-step receipts.",
+  "version": "0.6.1",
+  "description": "Deterministic backprop training-trace engine — v0.6.1 adds JAX adapter (bp import jax) alongside the v0.6.0 PyTorch path. Both use the same framework-trace.v0.1.0 sidecar schema + observer-mode v0.4.0 receipt + Rule 14 differential. Shared core in src/import-observer.ts; per-framework wrappers preserve subcommand discipline at the library layer (importPytorchSidecar rejects JAX sidecars and vice versa). Pressure test confirmed: v0.6 generalizes to a second adapter with NO schema drift, NO new trust model, NO new rule. JAX-specific extractor mistakes (pytree flatten order, float32 drift, vmap leak) all surface as Rule 14 firings — existing-rule firings on a new adapter, not new attack classes. Layered on v0.6.0 external ingestion, v0.5 softmax+CE, v0.4 authoring spine, v0.3 generalized topology.",
   "type": "module",
   "license": "MIT",
   "author": "mcp-tool-shop <64996768+mcp-tool-shop@users.noreply.github.com>",
@@ -117,6 +117,14 @@
     "./import-pytorch": {
       "import": "./dist/import-pytorch.js",
       "types": "./dist/import-pytorch.d.ts"
+    },
+    "./import-jax": {
+      "import": "./dist/import-jax.js",
+      "types": "./dist/import-jax.d.ts"
+    },
+    "./import-observer": {
+      "import": "./dist/import-observer.js",
+      "types": "./dist/import-observer.d.ts"
     },
     "./schema": "./schemas/receipt.v0.1.0.json",
     "./schema/0.1.0": "./schemas/receipt.v0.1.0.json",

@@ -168,6 +168,11 @@ const FILENAME_KIND_TO_RULE: Record<string, number> = {
   "trusted-source-bad-math": 0,
   "bad-engine-reproduce-disagrees": 14,
   "engine-reproduce-disagrees": 14,
+  // v0.6.1 JAX-specific bad fixture (pytree-flatten-order swap; Rule 14
+  // catches via differential, Rule 7 catches via final-state — both
+  // fire on the same fixture).
+  "bad-pytree-flatten-order": 14,
+  "pytree-flatten-order": 14,
 };
 
 /**

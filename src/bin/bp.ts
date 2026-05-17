@@ -903,11 +903,51 @@ function importUsageText(): string {
     "  re-run the verification.",
     "",
     "  Frameworks (per-framework subcommands; no auto-detection):",
-    "    bp import pytorch <sidecar.jsonl>",
-    "    bp import jax        — planned for v0.6.x",
-    "    bp import tensorflow — planned for v0.6.x",
+    "    bp import pytorch <sidecar.jsonl>     — shipped v0.6.0",
+    "    bp import jax     <sidecar.jsonl>     — shipped v0.6.1",
+    "    bp import tensorflow                  — planned for v0.6.x",
     "",
-    "  Run `bp import pytorch --help` for the PyTorch-specific surface.",
+    "  Run `bp import <framework> --help` for framework-specific details.",
+    "",
+  ].join("\n");
+}
+
+function importJaxUsageText(): string {
+  return [
+    "Usage: bp import jax <sidecar.jsonl> [--out <file>] [--json]",
+    "",
+    "  Convert a framework-trace.v0.1.0 sidecar (emitted by a JAX",
+    "  training-loop helper) into an observer-mode v0.4.0 receipt.",
+    "",
+    "  Same trust model as bp import pytorch: foreign claims become the",
+    "  canonical fields, the backprop-trace engine runs differentially",
+    "  as witness, Rule 14 enforces agreement within",
+    "  attestor.differential_tolerance at reconcile time.",
+    "",
+    "  <sidecar.jsonl>  Path to a framework-trace.v0.1.0 sidecar JSON file.",
+    "                   The file must declare source_framework.name == 'jax'.",
+    "                   Use '-' to read from stdin.",
+    "",
+    "  Options:",
+    "    --out <file>   Write the receipt to <file> instead of stdout.",
+    "    --json         Emit machine-readable JSON summary with the",
+    "                    import result + differential check outcome.",
+    "    --verbose, -V  Diagnostic stderr.",
+    "",
+    "  JAX-specific authoring notes (extractor side, not importer):",
+    "    - Flatten jax.tree_util.tree_flatten(params) to a {param_id: value}",
+    "      dict. A flatten-order swap surfaces as Rule 14 disagreement.",
+    "    - JAX float32 default vs Node binary64: default differential_tolerance",
+    "      {atol:1e-6, rtol:1e-4} absorbs cross-precision drift for small",
+    "      networks. Larger networks may need looser per-receipt tolerance.",
+    "    - vmap/scan/pmap produce batched values; emit one sidecar per step,",
+    "      not one per batch. Schema validation rejects extra dimensions.",
+    "",
+    "  Exit codes (identical to bp import pytorch):",
+    "    0  Import succeeded AND engine-recompute differential agreed.",
+    "    1  Import succeeded but differential check DISAGREED.",
+    "    2  Usage / I/O / schema-validation error.",
+    "    3  Invalid CLI argument.",
     "",
   ].join("\n");
 }
@@ -1884,27 +1924,35 @@ function runValidateInput(file: string): void {
 }
 
 // =============================================================================
-// import pytorch (v0.6)
+// import <framework> (v0.6 PyTorch / v0.6.1 JAX)
 // =============================================================================
 
 /**
- * Read sidecar bytes from the named file (or stdin if file === "-"), parse
- * via importPytorchSidecar, and emit the resulting v0.4.0 observer-mode
- * receipt to stdout (or --out file).
+ * Shared CLI runner for `bp import <framework>`. Reads sidecar bytes,
+ * dispatches to the named library import function, writes the resulting
+ * receipt to stdout (or --out file), reports the differential outcome,
+ * and exits with the documented per-importer exit codes.
  *
- * Exit codes:
+ * Per-framework dispatch is at the bp.ts top level (the `if (framework ===
+ * "pytorch")` / "jax" branches above). This runner is the common machinery
+ * — it takes the resolved per-framework library export name and calls it
+ * via requireLibExport so the bp binary stays free of compile-time imports
+ * from the library.
+ *
+ * Exit codes (identical across frameworks):
  *   0  — Import succeeded; differential check agreed within tolerance.
  *   1  — Import succeeded; differential check DISAGREED. Receipt still
  *         emitted so the operator can audit the disagreement.
  *   2  — Sidecar invalid or I/O error.
  */
-function runImportPytorch(file: string): void {
-  // Resolve --out (file path) value. valueFlag is already defined above.
+function runImportFramework(
+  file: string,
+  libExportName: "importPytorchSidecar" | "importJaxSidecar",
+  callerLabel: string,
+): void {
   const outPath = valueFlag("--out");
 
-  // Lazy-resolve importPytorchSidecar from the library exports. Same
-  // pattern used by validate-input etc.
-  const importPytorchSidecar = requireLibExport<
+  const importSidecar = requireLibExport<
     (
       sidecarBytes: string,
       opts?: {
@@ -1922,16 +1970,15 @@ function runImportPytorch(file: string): void {
         appliedTolerance: number;
       }>;
     }
-  >("importPytorchSidecar");
+  >(libExportName);
 
-  verboseLog(`importing ${file === "-" ? "<stdin>" : file}`);
+  verboseLog(`importing ${file === "-" ? "<stdin>" : file} via ${callerLabel}`);
 
-  // Read sidecar bytes. Use the same stdin-aware reader as validate-input.
   const sidecarBytes = readInputConfigText(file);
 
-  let result: ReturnType<typeof importPytorchSidecar>;
+  let result: ReturnType<typeof importSidecar>;
   try {
-    result = importPytorchSidecar(sidecarBytes);
+    result = importSidecar(sidecarBytes);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (jsonMode) {
@@ -1951,7 +1998,6 @@ function runImportPytorch(file: string): void {
     process.exit(2);
   }
 
-  // Write the receipt bytes.
   if (outPath !== undefined && outPath.length > 0) {
     const { writeFileSync } = require("node:fs") as typeof import("node:fs");
     writeFileSync(outPath, result.emittedBytes);
@@ -2018,6 +2064,24 @@ function runImportPytorch(file: string): void {
   }
   process.stderr.write("\n");
   process.exit(1);
+}
+
+/**
+ * Per-framework thin wrapper for PyTorch. v0.6.0 shipped this as
+ * runImportPytorch; v0.6.1 refactored the body into runImportFramework
+ * so JAX (and future TensorFlow) share the same CLI machinery.
+ */
+function runImportPytorch(file: string): void {
+  runImportFramework(file, "importPytorchSidecar", "bp import pytorch");
+}
+
+/**
+ * Per-framework thin wrapper for JAX (v0.6.1). Same CLI ergonomics as
+ * runImportPytorch; same observer-mode pipeline; only the library export
+ * name differs ("importJaxSidecar").
+ */
+function runImportJax(file: string): void {
+  runImportFramework(file, "importJaxSidecar", "bp import jax");
 }
 
 // =============================================================================
@@ -2915,11 +2979,42 @@ if (argv[0] === "import") {
     runImportPytorch(file);
   }
 
-  // Future: bp import jax / bp import tensorflow follow here.
-  if (framework === "jax" || framework === "tensorflow") {
+  // v0.6.1: bp import jax — thin wrapper over the same observer-mode
+  // pipeline as bp import pytorch. Same trust model, same Rule 14, same
+  // observer-mode v0.4.0 receipt; only the source_framework name +
+  // extractor identity differ.
+  if (framework === "jax") {
+    const file = argv[2];
+    if (typeof file !== "string" || file.length === 0) {
+      if (jsonMode) {
+        exitWithUsageError(
+          "missing required argument <sidecar-file> for 'import jax'. Run 'bp import jax --help' for usage.",
+          "MISSING_FILE_ARG",
+        );
+      }
+      process.stderr.write(importJaxUsageText());
+      process.exit(2);
+    }
+    if (file === "--help" || file === "-h") {
+      process.stdout.write(importJaxUsageText());
+      process.exit(0);
+    }
+    if (file.startsWith("-") && file !== "-" && file !== "--") {
+      exitWithUsageError(
+        `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
+          `Use 'bp import jax --help' for usage.`,
+        "INVALID_FILE_ARG",
+        3,
+      );
+    }
+    runImportJax(file);
+  }
+
+  // TensorFlow follows as v0.6.x patch.
+  if (framework === "tensorflow") {
     exitWithUsageError(
-      `'bp import ${framework}' is not implemented in v0.6.0. v0.6.0 ships PyTorch ingestion only; ` +
-        `${framework} adapter is planned for a v0.6.x patch. ` +
+      `'bp import tensorflow' is not implemented in v0.6.1. v0.6.0 shipped PyTorch ingestion; ` +
+        `v0.6.1 added JAX. TensorFlow adapter is planned for a v0.6.x patch. ` +
         `Run 'bp import --help' for the current import surface.`,
       "FRAMEWORK_NOT_IMPLEMENTED",
       4,
@@ -2927,7 +3022,7 @@ if (argv[0] === "import") {
   }
 
   // Unknown framework.
-  const knownFrameworks = ["pytorch", "jax (planned)", "tensorflow (planned)"];
+  const knownFrameworks = ["pytorch", "jax", "tensorflow (planned)"];
   exitWithUsageError(
     `unknown framework '${framework}' for 'bp import'. Known: ${knownFrameworks.join(", ")}. ` +
       `bp does NOT auto-detect framework from file contents — name it explicitly. ` +
