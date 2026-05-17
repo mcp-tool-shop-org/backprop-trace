@@ -216,9 +216,13 @@ const argv = stripFlags(rawArgv);
 
 function shouldUseColor(stream: NodeJS.WriteStream): boolean {
   if (jsonMode) return false; // JSON output is never colorized.
-  if (process.env.NO_COLOR !== undefined) return false;
-  if (colorOpt === "never") return false;
+  // Explicit user flag wins over environment. --color=always is treated as
+  // "I really want color even if NO_COLOR is set in the env" (matches
+  // ripgrep/fd/git's convention — NO_COLOR is for "no color by default,"
+  // explicit flags override it).
   if (colorOpt === "always") return true;
+  if (colorOpt === "never") return false;
+  if (process.env.NO_COLOR !== undefined) return false;
   // auto / undefined: only when destination is a TTY.
   return Boolean(stream.isTTY);
 }
