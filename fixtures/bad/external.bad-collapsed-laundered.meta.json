@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "external.bad-collapsed-laundered.meta",
+  "describes": "fixtures/bad/external.bad-collapsed-laundered.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.softmax-ce.golden.jsonl. Differs in fixture_status (deliberately_corrupted / expected_to_fail_reconciliation) and the targeted v0.6 external-ingestion field(s) described below.",
+  "mutation": {
+    "field_path": "backward.output_error_signals.o1.signal_value",
+    "original": 0.582864187,
+    "mutated": 1.082864187,
+    "kind": "v0_6_external_ingestion_targeted_mutation",
+    "description": "Sidecar carries collapsed-only softmax+CE (no dual_form). signal_value at o1 is mutated by +0.5. Rule 13 is GATED on dual_form — without it, Rule 13c does not fire. But Rule 14 (engine-recompute differential) independently recomputes signal_value from forward+targets and catches the disagreement. This is the load-bearing defense against collapsed-trace laundering — Rule 14 closes the gap Rule 13's GATED design opens."
+  },
+  "reconciliation_check_targeted_first": "Rule 14: Sidecar carries collapsed-only softmax+CE (no dual_form).",
+  "purpose": "Anti-circularity (Csmith/CompCert lineage) for the v0.6 external trace ingestion: observer-mode receipts cannot launder bad math by virtue of being imported. Rule 14 (engine-recompute differential) is the load-bearing defense; Rules 0.8/11/12 still fire on observer receipts; Rules 15/16 enforce skip-basis and digest-binding integrity. This fixture isolates the targeted rule as far as the ingest-path interleaving allows.",
+  "v0_6_note": "v0.6 ships external trace ingestion: schema v0.4.0 additive (source_framework + attestor + extended fixture_status enums), Rules 14/15/16 new, `bp import pytorch` CLI subcommand. The 8-fixture plate exercises every new rule plus the doctrine ratchet against trust-laundering attack classes."
+}

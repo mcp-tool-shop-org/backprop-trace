@@ -149,6 +149,25 @@ const FILENAME_KIND_TO_RULE: Record<string, number> = {
   "dual-sum": 13,
   "bad-collapsed-vs-dual": 13,
   "collapsed-vs-dual": 13,
+  // v0.6 external trace ingestion (Rules 14/15/16).
+  // Rule 0.8 still fires on framework-spoof/trusted-source-bad-math (rule: 0).
+  // Rule 7 is the catchall for partial-tamper (existing rule, on the ingest path).
+  "bad-shape-not-math": 12,
+  "shape-not-math": 12,
+  "bad-framework-spoof": 0,
+  "framework-spoof": 0,
+  "bad-collapsed-laundered": 14,
+  "collapsed-laundered": 14,
+  "bad-skip-without-basis": 15,
+  "skip-without-basis": 15,
+  "bad-attested-mutated-after": 16,
+  "attested-mutated-after": 16,
+  "bad-partial-tamper-internally-consistent": 7,
+  "partial-tamper-internally-consistent": 7,
+  "bad-trusted-source-bad-math": 0,
+  "trusted-source-bad-math": 0,
+  "bad-engine-reproduce-disagrees": 14,
+  "engine-reproduce-disagrees": 14,
 };
 
 /**
@@ -260,19 +279,22 @@ test(
 );
 
 test(
-  "T-A-009: v0.5 reconciler implements Rules 1-13 (1-8 per-receipt, 9-10 multi-step, 11 softmax-norm, 12 loss formula (both branches), 13 gated dual-form)",
+  "T-A-009: v0.6 reconciler implements Rules 1-16 (1-8 per-receipt, 9-10 multi-step, 11 softmax-norm, 12 loss formula, 13 gated dual-form, 14 engine-recompute differential, 15 skip-basis required, 16 gated digest binding)",
   () => {
     const implemented = extractImplementedRules();
     assert.deepStrictEqual(
       Array.from(implemented).sort((a, b) => a - b),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
-      "v0.5 reconciler scope: Rules 1-8 (per-receipt math), 9-10 (multi-step), 11 (softmax " +
-        "normalization — sum(forward[output].out) == 1.0), 12 (loss formula consistency — " +
-        "both half_squared_error and cross_entropy_softmax branches), 13 (GATED dual-form " +
-        "consistency for softmax+CE — fires only when OutputErrorSignal.dual_form is " +
-        "present). Rule 0.8 (probability bounds for softmax outputs) is a Rule 0 sub-check, " +
-        "not a separate integer rule. When a future version adds a new rule, update this " +
-        "expected list AND ship a sibling bad-* fixture; the doctrine ratchet fails loudly " +
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+      "v0.6 reconciler scope: Rules 1-8 (per-receipt math), 9-10 (multi-step), 11 (softmax " +
+        "normalization), 12 (loss formula — both half_squared_error and cross_entropy_softmax " +
+        "branches), 13 (GATED dual-form consistency for softmax+CE), 14 (engine-recompute " +
+        "differential — MANDATORY for fixture_status.authoring_state === 'external_imported'; " +
+        "no-op for engine-authored receipts), 15 (skip-basis required — when verification_state " +
+        "is 'engine_recompute_skipped_with_basis', attestor.skip_basis must be in the closed " +
+        "EXTERNAL_TRUST_BASIS enum), 16 (attestation digest binding — GATED on " +
+        "attestor.signed_subject_digest presence). Rule 0.8 (probability bounds) remains a Rule 0 " +
+        "sub-check, not a separate integer rule. When a future version adds a new rule, update " +
+        "this expected list AND ship a sibling bad-* fixture; the doctrine ratchet fails loudly " +
         "if a rule lands without its paired fixture.",
     );
   },

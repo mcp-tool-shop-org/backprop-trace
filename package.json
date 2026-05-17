@@ -1,7 +1,7 @@
 {
   "name": "@mcptoolshop/backprop-trace",
-  "version": "0.5.1",
-  "description": "Deterministic backprop training-trace engine — v0.5.1 ratchet on v0.5: bp verify general redirects v0.1 receipts to verify mazur; new XOR multi-step good golden; v0.5 surface re-exported from index (SOFTMAX_CE_INPUT, softmaxVector, DualForm, etc.) + softmax+CE worked example in docs. v0.5 added softmax + cross-entropy support: schema v0.3.0, Rule 0.8 (probability bounds), Rule 11 (softmax normalization), Rule 12 cross_entropy_softmax branch, Rule 13 GATED dual-form consistency. Layered on the v0.4 authoring spine + v0.3 generalized N-input N-hidden N-output topology + hybrid tolerance + multi-step receipt spine.",
+  "version": "0.6.0",
+  "description": "Deterministic backprop training-trace engine — v0.6 ships external trace ingestion: bp import pytorch <sidecar.jsonl> produces observer-mode v0.4.0 receipts with attestor + source_framework + Rule 14 engine-recompute differential as the load-bearing trust gate. Rule 15 (skip-basis required) + Rule 16 (gated attestation digest binding) close the laundering attack surface. Foreign PyTorch / JAX traces become evidence sources without becoming trusted authorities — the engine remains the verifier, not a framework wrapper. Layered on v0.5 softmax+CE, v0.4 authoring spine, v0.3 generalized topology + hybrid tolerance + multi-step receipts.",
   "type": "module",
   "license": "MIT",
   "author": "mcp-tool-shop <64996768+mcp-tool-shop@users.noreply.github.com>",
@@ -34,7 +34,14 @@
     "softmax",
     "cross-entropy",
     "log-sum-exp",
-    "dual-form-verification"
+    "dual-form-verification",
+    "pytorch-import",
+    "external-trace-ingestion",
+    "observer-mode-receipts",
+    "attestor",
+    "differential-check",
+    "in-toto",
+    "slsa"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -107,11 +114,17 @@
       "import": "./dist/extract.js",
       "types": "./dist/extract.d.ts"
     },
+    "./import-pytorch": {
+      "import": "./dist/import-pytorch.js",
+      "types": "./dist/import-pytorch.d.ts"
+    },
     "./schema": "./schemas/receipt.v0.1.0.json",
     "./schema/0.1.0": "./schemas/receipt.v0.1.0.json",
     "./schema/0.2.0": "./schemas/receipt.v0.2.0.json",
     "./schema/0.3.0": "./schemas/receipt.v0.3.0.json",
+    "./schema/receipt-0.4.0": "./schemas/receipt.v0.4.0.json",
     "./schema/0.4.0": "./schemas/topology-input.v0.4.0.json",
+    "./schema/framework-trace-0.1.0": "./schemas/framework-trace.v0.1.0.json",
     "./package.json": "./package.json"
   },
   "bin": {

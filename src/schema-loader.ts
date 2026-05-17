@@ -39,7 +39,7 @@ import { dirname, resolve } from "node:path";
  * the package payload. The tuple is `as const` so SchemaVersion is the
  * union of string literals (not just `string`).
  *
- * v0.5 ships three:
+ * v0.6 ships four:
  *   - "0.1.0" — the Mazur-pinned single-topology schema (v0.1/v0.2 wave)
  *   - "0.2.0" — the generalized schema (REQUIRED unit_order + parameter_order,
  *     hybrid tolerance object form, optional trace_id/step_index for multi-step,
@@ -48,13 +48,18 @@ import { dirname, resolve } from "node:path";
  *     extended with "softmax"; topology.loss enum extended with
  *     "cross_entropy_softmax"; OutputErrorSignal gains optional dual_form
  *     for Rule 13 gated dual-form consistency).
+ *   - "0.4.0" — v0.6 external ingestion additive (top-level optional
+ *     source_framework + attestor blocks for observer-mode receipts;
+ *     fixture_status.authoring_state enum gains "external_imported";
+ *     fixture_status.verification_state enum gains three external states).
  *
  * Receipts that say `schema_version: "0.1.0"` continue to validate against
  * the v0.1.0 schema for byte-equal preservation. v0.3-onward generalized
  * receipts (XOR, iris, multi-step, per-neuron-bias) declare "0.2.0".
- * v0.5 softmax+CE receipts declare "0.3.0".
+ * v0.5 softmax+CE receipts declare "0.3.0". v0.6 external observer-mode
+ * receipts (output of `bp import pytorch`) declare "0.4.0".
  */
-export const SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0"] as const;
+export const SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0"] as const;
 
 /**
  * Union of currently-shipped receipt schema versions. Use this for any
@@ -122,6 +127,12 @@ export function getReceiptSchema(version: SchemaVersion = "0.1.0"): object {
  * receipt-schema bump (e.g. v0.2.0 → v0.3.0) does NOT force an input
  * schema bump, and vice versa. Both families coexist in the same
  * `schemas/` directory but on disjoint version tuples.
+ *
+ * Note: v0.6 adds a SEPARATE input-schema family for external trace
+ * ingestion (`framework-trace.v0.1.0.json`) consumed by `bp import`.
+ * That family lives in its own tuple (FRAMEWORK_TRACE_SCHEMA_VERSIONS)
+ * because its purpose is different — it describes foreign-framework
+ * sidecars, not topology authoring inputs.
  */
 export const INPUT_SCHEMA_VERSIONS = ["0.4.0"] as const;
 
@@ -168,5 +179,68 @@ export function getInputSchema(
   );
   const loaded = JSON.parse(readFileSync(schemaPath, "utf-8")) as object;
   inputSchemaCache.set(version, loaded);
+  return loaded;
+}
+
+// --- v0.6 framework-trace sidecar schema family --------------------------
+
+/**
+ * Tuple of all framework-trace sidecar schema versions this package ships.
+ * The sidecar is the input format consumed by `bp import <framework>` —
+ * a USER-AUTHORED JSON capture of a foreign framework's per-step training
+ * trace (forward / loss / backward / updates / parameters_after). It is
+ * distinct from the topology-input schema family: topology-input describes
+ * what the user authors BEFORE the engine runs; framework-trace describes
+ * what a foreign framework computed AFTER its engine ran. The two have
+ * different fields, different consumers, and different version lineages.
+ *
+ * v0.6 ships:
+ *   - "0.1.0" — initial PyTorch/JAX-shaped single-step sidecar. Carries
+ *     topology + inputs + targets + parameters_before + claimed forward
+ *     + claimed loss + claimed backward + claimed updates + claimed
+ *     parameters_after. The importer adds source_framework + attestor +
+ *     fixture_status and runs runGeneralStep as the differential witness.
+ */
+export const FRAMEWORK_TRACE_SCHEMA_VERSIONS = ["0.1.0"] as const;
+
+/**
+ * Union of currently-shipped framework-trace sidecar schema versions.
+ */
+export type FrameworkTraceSchemaVersion =
+  (typeof FRAMEWORK_TRACE_SCHEMA_VERSIONS)[number];
+
+const frameworkTraceSchemaCache = new Map<string, object>();
+
+/**
+ * Load and return the parsed framework-trace sidecar schema for the given
+ * version. Cached on first read; subsequent calls return the same instance.
+ *
+ * Parallels getReceiptSchema + getInputSchema. Reads from
+ * `schemas/framework-trace.v<version>.json`.
+ *
+ * @param version  Schema version to load. Defaults to "0.1.0" (the only
+ *                 shipped framework-trace schema as of v0.6).
+ * @throws         Error if `version` is not in
+ *                 FRAMEWORK_TRACE_SCHEMA_VERSIONS or the file is missing.
+ */
+export function getFrameworkTraceSchema(
+  version: FrameworkTraceSchemaVersion = "0.1.0",
+): object {
+  const cached = frameworkTraceSchemaCache.get(version);
+  if (cached) return cached;
+  if (!FRAMEWORK_TRACE_SCHEMA_VERSIONS.includes(version)) {
+    throw new Error(
+      `Unknown framework-trace schema version: ${JSON.stringify(version)}. ` +
+        `Known versions: ${FRAMEWORK_TRACE_SCHEMA_VERSIONS.join(", ")}.`,
+    );
+  }
+  const schemaPath = resolve(
+    __dirname,
+    "..",
+    "schemas",
+    `framework-trace.v${version}.json`,
+  );
+  const loaded = JSON.parse(readFileSync(schemaPath, "utf-8")) as object;
+  frameworkTraceSchemaCache.set(version, loaded);
   return loaded;
 }

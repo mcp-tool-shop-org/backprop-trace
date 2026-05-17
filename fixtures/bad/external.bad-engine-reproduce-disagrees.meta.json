@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "external.bad-engine-reproduce-disagrees.meta",
+  "describes": "fixtures/bad/external.bad-engine-reproduce-disagrees.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.softmax-ce.golden.jsonl. Differs in fixture_status (deliberately_corrupted / expected_to_fail_reconciliation) and the targeted v0.6 external-ingestion field(s) described below.",
+  "mutation": {
+    "field_path": "forward.o1.out (drift outside differential_tolerance)",
+    "original": 0.417135813,
+    "mutated": 0.418135813,
+    "kind": "v0_6_external_ingestion_targeted_mutation",
+    "description": "Sidecar carries forward.o1.out drifted by +0.0001 from what the engine would compute (within [0,1] so Rule 0.8 passes; sum still ≈ 1.0 within tolerance so Rule 11 passes). But the differential tolerance is {atol:1e-6, rtol:1e-4}, so the 1e-4 drift beyond engine recompute fires Rule 14. Catches genuine cross-impl disagreement (foreign framework's FP precision drifted vs backprop-trace engine)."
+  },
+  "reconciliation_check_targeted_first": "Rule 14: Sidecar carries forward.",
+  "purpose": "Anti-circularity (Csmith/CompCert lineage) for the v0.6 external trace ingestion: observer-mode receipts cannot launder bad math by virtue of being imported. Rule 14 (engine-recompute differential) is the load-bearing defense; Rules 0.8/11/12 still fire on observer receipts; Rules 15/16 enforce skip-basis and digest-binding integrity. This fixture isolates the targeted rule as far as the ingest-path interleaving allows.",
+  "v0_6_note": "v0.6 ships external trace ingestion: schema v0.4.0 additive (source_framework + attestor + extended fixture_status enums), Rules 14/15/16 new, `bp import pytorch` CLI subcommand. The 8-fixture plate exercises every new rule plus the doctrine ratchet against trust-laundering attack classes."
+}

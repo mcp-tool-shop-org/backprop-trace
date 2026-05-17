@@ -348,3 +348,71 @@ export { formatNumberForEngine, scientificToPlain } from "./runtime-format.js"
 
 export { formatDecimalStringForFixture, FormatPolicyError } from "./format.js"
 export type { FormatErrorKind } from "./format.js"
+
+// --- v0.6 external trace ingestion ---------------------------------------
+
+/**
+ * v0.6 — `bp import pytorch` entry point. Converts a
+ * framework-trace.v0.1.0 sidecar to an observer-mode v0.4.0 receipt with
+ * attestor + source_framework + differential-check result. The receipt's
+ * canonical fields carry the foreign framework's CLAIMED math; the engine
+ * is the differential witness, not the producer.
+ *
+ * Standing constraints (carried forward from v0.6 study lock):
+ *   - No live PyTorch runtime dependency on the bp core; the sidecar is
+ *     user-authored JSON (no pickle, no protobuf, no binary).
+ *   - No auto-detection of framework from file contents — per-framework
+ *     subcommand discipline (Agent 3, SARIF Multitool / HF Optimum
+ *     precedent).
+ *   - No engine auto-synthesis of fields the sidecar didn't carry
+ *     (dual_form, etc.) — Q2 from v0.5 study consolidator.
+ *   - Rule 14 (engine-recompute differential) is the load-bearing check.
+ *     The importer runs it once at ingest; `bp verify general` re-runs
+ *     it on every reconcile — the producer's claim is not the verifier's
+ *     truth (Reproducible Builds discipline).
+ */
+export { importPytorchSidecar } from "./import-pytorch.js"
+export type {
+  FrameworkTraceSidecar,
+  ImportPytorchOptions,
+  ImportPytorchResult,
+} from "./import-pytorch.js"
+
+/**
+ * v0.6 — observer-mode receipt support types. SourceFramework + Attestor
+ * (+ AttestorIdentity + ExternalTrustBasis) are the v0.4.0-schema-only
+ * fields the importer adds to the receipt; consumers handling imported
+ * receipts can import these for type-checked field access.
+ */
+export type {
+  SourceFramework,
+  Attestor,
+  AttestorIdentity,
+  ExternalTrustBasis,
+} from "./general-engine.js"
+export { EXTERNAL_TRUST_BASIS } from "./general-engine.js"
+
+/**
+ * v0.6 — framework-trace sidecar schema accessors. Mirrors getReceiptSchema +
+ * getInputSchema for the third schema family (the sidecar input format
+ * consumed by `bp import`).
+ */
+export {
+  getFrameworkTraceSchema,
+  FRAMEWORK_TRACE_SCHEMA_VERSIONS,
+} from "./schema-loader.js"
+export type { FrameworkTraceSchemaVersion } from "./schema-loader.js"
+
+/**
+ * v0.6 — framework-trace sidecar validator. validateFrameworkTraceSidecar
+ * + validateFrameworkTraceSidecarOrThrow parallel validateReceiptSchema
+ * and validateTopologyInput for the v0.6 sidecar input family.
+ */
+export {
+  validateFrameworkTraceSidecar,
+  validateFrameworkTraceSidecarOrThrow,
+} from "./validate.js"
+export type {
+  FrameworkTraceValidationResult,
+  ValidateFrameworkTraceOptions,
+} from "./validate.js"

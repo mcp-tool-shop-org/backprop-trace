@@ -131,6 +131,9 @@ const RULE_LABELS: Record<number, string> = {
   11: "softmax normalization violation (sum(forward[output].out) != 1.0)",
   12: "loss formula consistency violation (loss.per_output[u] or loss.total disagrees with topology.loss formula)",
   13: "dual-form consistency violation (jacobian_terms multiplication / summation / collapsed-vs-dual)",
+  14: "engine-recompute differential (observer-mode receipt's foreign claim disagrees with backprop-trace engine recomputation)",
+  15: "skip-basis required (engine_recompute_skipped_with_basis verification_state needs attestor.skip_basis from closed enum)",
+  16: "attestation digest binding (attestor.signed_subject_digest does not match recomputed canonical-byte digest)",
 };
 
 // =============================================================================
@@ -888,6 +891,63 @@ function validateInputUsageText(): string {
   ].join("\n");
 }
 
+function importUsageText(): string {
+  return [
+    "Usage: bp import <framework> <sidecar-file> [--out <file>]",
+    "",
+    "  Convert a framework-trace sidecar (JSONL) into an observer-mode",
+    "  v0.4.0 receipt. The sidecar carries the foreign framework's",
+    "  claimed math; the importer adds attestor + source_framework +",
+    "  fixture_status and runs the backprop-trace engine as differential",
+    "  witness. Use `bp verify general <out>` afterward to independently",
+    "  re-run the verification.",
+    "",
+    "  Frameworks (per-framework subcommands; no auto-detection):",
+    "    bp import pytorch <sidecar.jsonl>",
+    "    bp import jax        — planned for v0.6.x",
+    "    bp import tensorflow — planned for v0.6.x",
+    "",
+    "  Run `bp import pytorch --help` for the PyTorch-specific surface.",
+    "",
+  ].join("\n");
+}
+
+function importPytorchUsageText(): string {
+  return [
+    "Usage: bp import pytorch <sidecar.jsonl> [--out <file>] [--json]",
+    "",
+    "  Convert a framework-trace.v0.1.0 sidecar (emitted by a PyTorch",
+    "  training-loop helper) into an observer-mode v0.4.0 receipt.",
+    "",
+    "  The receipt carries the foreign framework's claimed forward / loss /",
+    "  backward / updates / parameters_after as canonical fields, plus an",
+    "  attestor block recording the import provenance + differential",
+    "  tolerance. Rule 14 (engine-recompute differential) fires when the",
+    "  resulting receipt is reconciled.",
+    "",
+    "  <sidecar.jsonl>  Path to a framework-trace.v0.1.0 sidecar JSON file.",
+    "                   The file must declare source_framework.name == 'pytorch'.",
+    "                   Use '-' to read from stdin.",
+    "",
+    "  Options:",
+    "    --out <file>   Write the receipt to <file> instead of stdout.",
+    "    --json         Emit machine-readable JSON summary with the",
+    "                    import result + differential check outcome.",
+    "    --verbose, -V  Diagnostic stderr.",
+    "",
+    "  Exit codes:",
+    "    0  Import succeeded AND engine-recompute differential agreed",
+    "         within attestor.differential_tolerance.",
+    "    1  Import succeeded but differential check DISAGREED. Receipt is",
+    "         still produced (verification_state == 'engine_recompute_disagreed')",
+    "         for audit, but the verifier-side gate has flagged it.",
+    "    2  Usage / I/O / schema-validation error.",
+    "    3  Invalid CLI argument.",
+    "    4  Framework adapter not implemented (e.g., 'bp import jax' in v0.6.0).",
+    "",
+  ].join("\n");
+}
+
 /**
  * Levenshtein-light suggestion for unknown top-level subcommand. Hand-
  * rolled because the v0.3 surface still has only four real top-level
@@ -906,6 +966,7 @@ function suggestSubcommand(unknown: string): string | null {
     { verb: "reconcile", example: "bp reconcile receipt <file>" },
     { verb: "verify", example: "bp verify mazur | general <file> | multi <file.jsonl>" },
     { verb: "generate", example: "bp generate mazur | xor | iris | from-config <file>" },
+    { verb: "import", example: "bp import pytorch <sidecar.jsonl>" },
     { verb: "scaffold", example: "bp scaffold topology --topology mazur|xor|iris" },
     { verb: "validate-input", example: "bp validate-input <file>" },
     { verb: "validate", example: "bp validate <file>" },
@@ -1823,6 +1884,143 @@ function runValidateInput(file: string): void {
 }
 
 // =============================================================================
+// import pytorch (v0.6)
+// =============================================================================
+
+/**
+ * Read sidecar bytes from the named file (or stdin if file === "-"), parse
+ * via importPytorchSidecar, and emit the resulting v0.4.0 observer-mode
+ * receipt to stdout (or --out file).
+ *
+ * Exit codes:
+ *   0  — Import succeeded; differential check agreed within tolerance.
+ *   1  — Import succeeded; differential check DISAGREED. Receipt still
+ *         emitted so the operator can audit the disagreement.
+ *   2  — Sidecar invalid or I/O error.
+ */
+function runImportPytorch(file: string): void {
+  // Resolve --out (file path) value. valueFlag is already defined above.
+  const outPath = valueFlag("--out");
+
+  // Lazy-resolve importPytorchSidecar from the library exports. Same
+  // pattern used by validate-input etc.
+  const importPytorchSidecar = requireLibExport<
+    (
+      sidecarBytes: string,
+      opts?: {
+        differentialTolerance?: { atol: number; rtol: number };
+        extractorIdentity?: string;
+        importTimestamp?: string;
+        fixtureLabel?: string;
+      },
+    ) => {
+      emittedBytes: string;
+      differentialPassed: boolean;
+      differentialDisagreements: Array<{
+        fieldPath: string;
+        delta: number;
+        appliedTolerance: number;
+      }>;
+    }
+  >("importPytorchSidecar");
+
+  verboseLog(`importing ${file === "-" ? "<stdin>" : file}`);
+
+  // Read sidecar bytes. Use the same stdin-aware reader as validate-input.
+  const sidecarBytes = readInputConfigText(file);
+
+  let result: ReturnType<typeof importPytorchSidecar>;
+  try {
+    result = importPytorchSidecar(sidecarBytes);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (jsonMode) {
+      process.stdout.write(
+        `${JSON.stringify({
+          ok: false,
+          error: { kind: "IMPORT_FAILED", message },
+        })}\n`,
+      );
+      process.exit(2);
+    }
+    const useColor = shouldUseColor(process.stderr);
+    process.stderr.write(
+      `${color("import failed", `${BOLD}${RED}`, useColor)}\n\n`,
+    );
+    process.stderr.write(`  ${message}\n\n`);
+    process.exit(2);
+  }
+
+  // Write the receipt bytes.
+  if (outPath !== undefined && outPath.length > 0) {
+    const { writeFileSync } = require("node:fs") as typeof import("node:fs");
+    writeFileSync(outPath, result.emittedBytes);
+    verboseLog(`wrote ${outPath}`);
+  } else {
+    process.stdout.write(result.emittedBytes);
+  }
+
+  if (result.differentialPassed) {
+    if (jsonMode) {
+      process.stderr.write(
+        `${JSON.stringify({
+          ok: true,
+          differential: { passed: true, disagreements: [] },
+        })}\n`,
+      );
+    } else if (outPath !== undefined) {
+      const useColor = shouldUseColor(process.stderr);
+      process.stderr.write(
+        `${color(
+          "import ok",
+          GREEN,
+          useColor,
+        )}: differential check passed; wrote ${outPath}\n`,
+      );
+    }
+    process.exit(0);
+  }
+
+  if (jsonMode) {
+    process.stdout.write(
+      `${JSON.stringify({
+        ok: false,
+        differential: {
+          passed: false,
+          disagreements: result.differentialDisagreements,
+        },
+      })}\n`,
+    );
+    process.exit(1);
+  }
+  const useColor = shouldUseColor(process.stderr);
+  process.stderr.write(
+    `${color(
+      "import warning",
+      `${BOLD}${RED}`,
+      useColor,
+    )}: engine-recompute differential DISAGREED on ${
+      result.differentialDisagreements.length
+    } field(s).\n`,
+  );
+  process.stderr.write(
+    "  The receipt was still emitted with verification_state='engine_recompute_disagreed' for audit.\n",
+  );
+  for (const d of result.differentialDisagreements.slice(0, 10)) {
+    process.stderr.write(
+      `  ${color("disagree", RED, useColor)} ${d.fieldPath}: delta=${d.delta} (tolerance=${d.appliedTolerance})\n`,
+    );
+  }
+  if (result.differentialDisagreements.length > 10) {
+    process.stderr.write(
+      `  ... and ${result.differentialDisagreements.length - 10} more.\n`,
+    );
+  }
+  process.stderr.write("\n");
+  process.exit(1);
+}
+
+// =============================================================================
 // verify general (v0.3, FT-C-005)
 // =============================================================================
 
@@ -2666,6 +2864,77 @@ if (argv[0] === "validate-input") {
     );
   }
   runValidateInput(file);
+}
+
+// -----------------------------------------------------------------------------
+// bp import <framework> <file> (v0.6 external trace ingestion)
+// -----------------------------------------------------------------------------
+//
+// Per-framework subcommands (Agent 3 finding, SARIF Multitool / HF Optimum
+// precedent), not auto-detection. v0.6.0 ships pytorch only; jax / tensorflow
+// follow as patch releases with the same shape.
+//
+// `bp import pytorch <sidecar.jsonl> [--out <file>]` produces an observer-mode
+// v0.4.0 receipt that carries the foreign framework's claimed math as
+// canonical fields + attestor + source_framework blocks. The differential
+// engine check runs at import time AND again on `bp verify general` of the
+// produced receipt (Reproducible Builds discipline — producer's claim is
+// not the verifier's truth).
+
+if (argv[0] === "import") {
+  const framework = argv[1];
+  if (framework === undefined || framework === "--help" || framework === "-h") {
+    process.stdout.write(importUsageText());
+    process.exit(framework === undefined ? 2 : 0);
+  }
+
+  if (framework === "pytorch") {
+    const file = argv[2];
+    if (typeof file !== "string" || file.length === 0) {
+      if (jsonMode) {
+        exitWithUsageError(
+          "missing required argument <sidecar-file> for 'import pytorch'. Run 'bp import pytorch --help' for usage.",
+          "MISSING_FILE_ARG",
+        );
+      }
+      process.stderr.write(importPytorchUsageText());
+      process.exit(2);
+    }
+    if (file === "--help" || file === "-h") {
+      process.stdout.write(importPytorchUsageText());
+      process.exit(0);
+    }
+    if (file.startsWith("-") && file !== "-" && file !== "--") {
+      exitWithUsageError(
+        `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
+          `Use 'bp import pytorch --help' for usage.`,
+        "INVALID_FILE_ARG",
+        3,
+      );
+    }
+    runImportPytorch(file);
+  }
+
+  // Future: bp import jax / bp import tensorflow follow here.
+  if (framework === "jax" || framework === "tensorflow") {
+    exitWithUsageError(
+      `'bp import ${framework}' is not implemented in v0.6.0. v0.6.0 ships PyTorch ingestion only; ` +
+        `${framework} adapter is planned for a v0.6.x patch. ` +
+        `Run 'bp import --help' for the current import surface.`,
+      "FRAMEWORK_NOT_IMPLEMENTED",
+      4,
+    );
+  }
+
+  // Unknown framework.
+  const knownFrameworks = ["pytorch", "jax (planned)", "tensorflow (planned)"];
+  exitWithUsageError(
+    `unknown framework '${framework}' for 'bp import'. Known: ${knownFrameworks.join(", ")}. ` +
+      `bp does NOT auto-detect framework from file contents — name it explicitly. ` +
+      `Run 'bp import --help' for the current import surface.`,
+    "UNKNOWN_FRAMEWORK",
+    2,
+  );
 }
 
 // -----------------------------------------------------------------------------

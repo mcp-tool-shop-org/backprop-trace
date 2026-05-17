@@ -271,16 +271,103 @@ export type FixtureStatus = {
  *     not the fixed Mazur key set.
  *   - Optional trace_id / step_index for multi-step overlay.
  */
+/**
+ * v0.6 — source-framework identity for observer-mode receipts.
+ *
+ * Closed enum on `name` for the trust vocabulary (mirrors SARIF
+ * tool.driver.name discipline). `extractor` separately identifies the
+ * adapter (e.g. bp-import-pytorch) that produced the sidecar — distinct
+ * from the framework that produced the math.
+ *
+ * Engine-authored receipts never carry source_framework. Observer-mode
+ * receipts (output of `bp import pytorch` etc.) REQUIRE it.
+ */
+export type SourceFramework = {
+  name: "pytorch" | "jax" | "tensorflow" | "hand_derived" | "backprop_trace_engine"
+  version: string
+  information_uri?: string
+  extractor?: { name: string; version: string }
+}
+
+/**
+ * v0.6 — attestor identity for in-toto-style trust accounting.
+ *
+ * `kind` is the closed trust class; `identity` is the free-form
+ * identifier (URN, framework@version, etc.).
+ */
+export type AttestorIdentity = {
+  kind: "framework" | "engine" | "hand_derivation"
+  identity: string
+}
+
+/**
+ * v0.6 — closed enum of skip-basis values for Rule 15.
+ *
+ * When `fixture_status.verification_state === "engine_recompute_skipped_with_basis"`,
+ * `attestor.skip_basis` MUST be one of these four values. Empty / missing
+ * / out-of-enum → Rule 15 failure. The closed enum makes "the operator
+ * named the reason on the record" a structural requirement (Leroy's
+ * verified-vs-trusted discipline).
+ */
+export const EXTERNAL_TRUST_BASIS = [
+  "hardware_nondeterminism",
+  "framework_op_unsupported",
+  "distributed_only_field",
+  "attested_third_party",
+] as const
+export type ExternalTrustBasis = (typeof EXTERNAL_TRUST_BASIS)[number]
+
+/**
+ * v0.6 — attestor block for observer-mode receipts.
+ *
+ * `computed_by`: who produced the math (the foreign framework).
+ * `verified_by`: who re-ran it as differential witness (the backprop-trace engine).
+ * `differential_tolerance`: hybrid tolerance applied to Rule 14.
+ * `import_provenance`: optional bookkeeping for the import event.
+ * `skip_basis`: optional; required by Rule 15 only when verification_state demands it.
+ * `signed_subject_digest`: optional; Rule 16 fires only when present.
+ *
+ * computed_by !== verified_by is the load-bearing invariant. Engine-
+ * authored receipts have neither (they ARE the producer); observer-mode
+ * receipts have both.
+ */
+export type Attestor = {
+  computed_by: AttestorIdentity
+  verified_by: AttestorIdentity
+  differential_tolerance: { atol: number; rtol: number }
+  import_provenance?: {
+    source_format: string
+    source_hash: string
+    import_timestamp?: string
+  }
+  skip_basis?: ExternalTrustBasis
+  signed_subject_digest?: string
+}
+
 export type GeneralReceipt = {
-  // v0.5: schema_version is "0.2.0" for half_squared_error receipts (byte-
-  // identical to v0.3/v0.4 fixtures) and "0.3.0" for cross_entropy_softmax
-  // receipts (the v0.5 additive-schema path). The engine picks the version
-  // based on topology.loss inside runGeneralStep so legacy callers don't
-  // need to pass it explicitly.
-  schema_version: "0.2.0" | "0.3.0"
+  // v0.6: schema_version is "0.2.0" for half_squared_error receipts (byte-
+  // identical to v0.3/v0.4 fixtures), "0.3.0" for cross_entropy_softmax
+  // receipts (v0.5 additive-schema path), and "0.4.0" for observer-mode
+  // receipts that carry source_framework + attestor (v0.6 external
+  // ingestion). The engine picks the version based on topology.loss +
+  // (source_framework presence) inside runGeneralStep so legacy callers
+  // don't need to pass it explicitly.
+  schema_version: "0.2.0" | "0.3.0" | "0.4.0"
   fixture: string
   step: 1
   fixture_status: FixtureStatus
+  /**
+   * v0.6: identifies the framework that produced the math. REQUIRED
+   * (semantically) when fixture_status.authoring_state === "external_imported";
+   * the schema makes it optional so engine-authored receipts can omit it
+   * cleanly. The reconciler's Rule 0 sub-check enforces the pairing.
+   */
+  source_framework?: SourceFramework
+  /**
+   * v0.6: attestor block (computed_by + verified_by + differential_tolerance).
+   * REQUIRED for observer-mode receipts. Engine-authored receipts omit it.
+   */
+  attestor?: Attestor
   metadata: GeneralMetadata
   numeric_policy: NumericPolicy
   bias_policy: BiasPolicy

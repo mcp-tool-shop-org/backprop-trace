@@ -16,7 +16,7 @@ to have done actually add up?**
 If the answer is "no," the reconciler refuses to certify the receipt and
 the verifier fails closed.
 
-## Quick reference: the 13 rules (+ Rule 0.8 structural sub-check)
+## Quick reference: the 16 rules (+ Rule 0.8 structural sub-check)
 
 | # | Rule | Status |
 |---|------|--------|
@@ -34,6 +34,9 @@ the verifier fails closed.
 | 11 | Softmax normalization (`sum(forward[output].out) == 1.0` when `topology.activation_output === "softmax"`) | **implemented (v0.5)** |
 | 12 | Loss formula consistency (`loss.per_output[u]` and `loss.total` match `topology.loss` formula) | **implemented** — half_squared_error (v0.4.2) + cross_entropy_softmax (v0.5) |
 | 13 | Softmax+CE collapsed↔Jacobian dual-form agreement (13a per-term mult, 13b summation, 13c collapsed-vs-dual); **GATED** — fires only when `OutputErrorSignal.dual_form` is present | **implemented (v0.5)** |
+| 14 | Engine-recompute differential (observer-mode receipts only): re-run `runGeneralStep` from receipt inputs; assert engine output agrees with foreign claims within `attestor.differential_tolerance`. **MANDATORY** for `external_imported` receipts; no-op for engine-authored. | **implemented (v0.6)** |
+| 15 | Skip-basis required: when `verification_state === "engine_recompute_skipped_with_basis"`, `attestor.skip_basis` MUST be in the closed enum `EXTERNAL_TRUST_BASIS` | **implemented (v0.6)** |
+| 16 | Attestation digest binding: when `attestor.signed_subject_digest` is present, the digest MUST match the recomputed canonical-byte hash of the receipt (with the digest field stripped). **GATED** on `signed_subject_digest` presence | **implemented (v0.6)** |
 
 Rules 1-8 ship in v0.2.0. Rules 9 + 10 ship in v0.3.0 and fire from the
 multi-record verify path (`bp verify multi <file.jsonl>` /
@@ -150,6 +153,97 @@ exercise the three sub-checks independently. The collapsed-vs-dual fixture
 is the most surgical: it mutates the dual_form self-consistently (terms
 still multiply correctly, sum still matches summed_value) so ONLY 13c
 fires — proving the cross-form check has independent diagnostic power.
+
+### v0.6 — Rule 14 (engine-recompute differential, observer-mode)
+
+The load-bearing defense against external-trace laundering. Fires only when
+`fixture_status.authoring_state === "external_imported"` AND
+`verification_state !== "engine_recompute_skipped_with_basis"`.
+
+For observer-mode receipts (output of `bp import pytorch` etc.), the
+reconciler re-runs the deterministic engine via `runGeneralStep` on the
+receipt's own `parameters_before + inputs + targets + topology + policies`,
+then compares the engine's recomputed output to the receipt's CLAIMED
+forward / loss / backward / updates / parameters_after field-by-field
+within `attestor.differential_tolerance` (default `{atol: 1e-6, rtol: 1e-4}`).
+
+Each per-field disagreement is a Rule 14 failure with the specific
+`field_path`. This catches the collapsed-laundering attack class: a
+mutated `signal_value` on a collapsed-only receipt (where Rule 13 is
+GATED-silent) is independently recomputed by the engine and the
+disagreement surfaces. The defense doesn't require ungating Rule 13.
+
+**No-op on engine-authored receipts.** Rule 14 short-circuits when
+`authoring_state` is `engine_generated` / `engine_generated_general` /
+`hand_derived` — engine-authored receipts ARE the byte-equal source; a
+second-witness check is meaningless. This means all v0.1–v0.5 fixtures
+continue to reconcile cleanly under v0.6 without changes.
+
+The bad fixtures
+`fixtures/bad/external.bad-{collapsed-laundered,engine-reproduce-disagrees}.jsonl`
+isolate Rule 14. The cross-fire fixtures
+`external.bad-{shape-not-math,partial-tamper-internally-consistent}`
+demonstrate Rule 14 firing alongside existing rules (Rules 12, 7) — the
+existing rules apply on the ingest path AND the differential check
+independently confirms the disagreement.
+
+### v0.6 — Rule 15 (skip-basis required)
+
+Fires when `verification_state === "engine_recompute_skipped_with_basis"`
+AND `attestor.skip_basis` is missing or not in the closed enum
+`EXTERNAL_TRUST_BASIS = { hardware_nondeterminism, framework_op_unsupported,
+distributed_only_field, attested_third_party }`.
+
+Leroy's verified-vs-trusted discipline (CompCert 2009) applied to the
+ingest path: skipping the math gate requires naming the basis on the
+record. Silent skipping is rejected. The closed enum keeps the
+"skip-reason" vocabulary disciplined — extending it requires a coordinated
+source-code change, not a one-off field value.
+
+When the basis IS present and valid, Rule 14 short-circuits (the operator
+declared the recompute is deliberately not run) and Rule 15 passes. The
+combination `verification_state: "engine_recompute_skipped_with_basis" +
+attestor.skip_basis: "hardware_nondeterminism"` is a structurally-valid
+observer receipt that crosses no math gate — its trust derives entirely
+from the named basis, which is on the record for downstream audit.
+
+The bad fixture `fixtures/bad/external.bad-skip-without-basis.jsonl`
+declares the skip verification_state without the basis; Rule 15 fires
+ALONE (no Rule 14 because the skip short-circuits it).
+
+### v0.6 — Rule 16 (attestation digest binding, gated)
+
+Fires only when `attestor.signed_subject_digest` is present. When
+present, the reconciler:
+
+1. Deep-clones the receipt.
+2. Strips `attestor.signed_subject_digest` from the clone.
+3. Canonical-byte-emits the stripped clone via `emitGeneralReceipt`.
+4. Hashes via `hashReceipt(canonicalBytes)`.
+5. Asserts the recomputed `sha256:<hex>` digest matches the declared
+   `attestor.signed_subject_digest`.
+
+Catches SolarWinds-style "signed-but-substituted" attacks where a valid
+signature is bound to mutated bytes — the digest still has cryptographic
+weight, but the bytes the signer attested are no longer the bytes in the
+receipt.
+
+**Important scope limit**: Rule 16 only checks digest-binding integrity
+WITHIN the receipt itself. Signature *validity* (cosign verification of
+a cryptographic signature over the digest) is OUT of scope for the
+reconciler — that's a CI-side concern handled by Sigstore / Rekor / etc.
+The reconciler asks the narrower question: "If you claim this digest was
+the digest of these bytes, are these still those bytes?"
+
+**GATED behavior**: silently skips when `signed_subject_digest` is absent.
+Most observer receipts won't carry a signed digest (the importer doesn't
+add one by default); Rule 16 is opt-in for production attestation pipelines.
+
+The bad fixture `fixtures/bad/external.bad-attested-mutated-after.jsonl`
+pins a `signed_subject_digest` computed on the clean receipt bytes, then
+mutates `parameters_after.w_x1_h1`. Rule 16 fires (the digest no longer
+binds). Cross-fires with Rule 7 (final-state consistency) and Rule 14
+(differential) because the mutation also breaks those independently.
 
 ## The eight rules
 

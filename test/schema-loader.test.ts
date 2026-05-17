@@ -52,13 +52,15 @@ test('getReceiptSchema throws on an unknown version', () => {
   );
 });
 
-test("SCHEMA_VERSIONS = ['0.1.0', '0.2.0', '0.3.0'] in v0.5 (extended from v0.3's '0.1.0' + '0.2.0')", () => {
+test("SCHEMA_VERSIONS = ['0.1.0', '0.2.0', '0.3.0', '0.4.0'] in v0.6 (extended from v0.5's three with the external-ingestion additive bump)", () => {
   assert.deepStrictEqual(
     Array.from(SCHEMA_VERSIONS).sort(),
-    ["0.1.0", "0.2.0", "0.3.0"],
-    "SCHEMA_VERSIONS must include '0.1.0' (Mazur-pinned), '0.2.0' (generalized), and " +
-      "'0.3.0' (v0.5 softmax+CE additive). When v0.5+ adds a new schema version, update " +
-      "this expected list AND drop the schemas/receipt.v<version>.json file alongside it.",
+    ["0.1.0", "0.2.0", "0.3.0", "0.4.0"],
+    "SCHEMA_VERSIONS must include '0.1.0' (Mazur-pinned), '0.2.0' (generalized), " +
+      "'0.3.0' (v0.5 softmax+CE additive), and '0.4.0' (v0.6 external observer-mode " +
+      "additive: source_framework + attestor + extended fixture_status enums). When v0.7+ " +
+      "adds a new schema version, update this expected list AND drop the " +
+      "schemas/receipt.v<version>.json file alongside it.",
   );
 });
 

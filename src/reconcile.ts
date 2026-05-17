@@ -66,6 +66,16 @@
  */
 
 import type { NamedFactor } from "./engine.js"
+// v0.6 — Rule 14 (engine-recompute differential) needs to invoke the
+// generalized engine on external_imported receipts. Importing inside the
+// reconciler creates a deliberate coupling: the reconciler IS the second
+// independent witness on observer-mode receipts; without that coupling
+// the trust model collapses. Engine-authored receipts skip Rule 14 so
+// the import has no runtime cost on the v0.1-v0.5 paths.
+import { runGeneralStep, type GeneralInput, type GeneralReceipt } from "./general-engine.js"
+import type { Topology } from "./topology.js"
+import { emitGeneralReceipt } from "./emit.js"
+import { hashReceipt } from "./hash.js"
 
 /**
  * Tolerance policy — supports both v0.1 scalar form and v0.2+ object form.
@@ -249,6 +259,9 @@ export const RULE_DESCRIPTIONS: Record<number, string> = {
   11: "Softmax normalization: when topology.activation_output === 'softmax', sum(forward[output_unit].out) == 1.0 within tolerance. Fires for v0.5 softmax+CE receipts.",
   12: "Loss formula consistency: loss.per_output[u] and loss.total match the formula declared by topology.loss (v0.4.2: half_squared_error; v0.5: cross_entropy_softmax). Independent of backward — closes a real v0.4.1 trust gap surfaced by the v0.5 study.",
   13: "Gated dual-form consistency (softmax+CE): when OutputErrorSignal.dual_form is present, 13a each jacobian_term.term_value == product(jacobian_term.factors), 13b dual_form.summed_value == sum(jacobian_terms.term_value) in summation_order, 13c dual_form.summed_value == OutputErrorSignal.signal_value. Skipped silently when dual_form is absent — the GATED behavior locked in the v0.5 consolidator Q1 decision.",
+  14: "Engine-recompute differential (observer-mode): when fixture_status.authoring_state === 'external_imported', re-run runGeneralStep from parameters_before + inputs + targets + topology and assert engine output agrees with the receipt's claimed forward/loss/backward/updates/parameters_after within attestor.differential_tolerance. Catches the collapsed-laundering attack class (foreign claims diverge from independent engine recomputation). No-op when authoring_state !== 'external_imported'.",
+  15: "Skip-basis required (observer-mode): when fixture_status.verification_state === 'engine_recompute_skipped_with_basis', attestor.skip_basis MUST be present AND in the closed enum EXTERNAL_TRUST_BASIS = {hardware_nondeterminism, framework_op_unsupported, distributed_only_field, attested_third_party}. Empty/missing/out-of-enum fires Rule 15. Leroy's verified-vs-trusted discipline applied: skipping the math gate requires naming the reason on the record.",
+  16: "Attestation digest binding (gated): when attestor.signed_subject_digest is present, the digest MUST equal hashReceipt(receipt with attestor.signed_subject_digest stripped). Catches SolarWinds-style 'signed-but-substituted' attacks where a valid signature is bound to mutated bytes. Signature *validity* (cosign verification) is OUT of scope for the reconciler — Rule 16 only checks digest-binding integrity. Silently skips when signed_subject_digest is absent — the GATED behavior consistent with Rule 13.",
 }
 
 type Factor = { name: string; from?: string; value: number }
@@ -283,6 +296,7 @@ type TopologyShape = {
   hidden_size?: number
   output_size?: number
   unit_order?: { input?: string[]; hidden?: string[]; output?: string[] }
+  parameter_order?: string[]
   parameters?: TopologyParameter[]
   bias_sharing?: "per_layer" | "per_neuron"
   loss?: "half_squared_error" | "cross_entropy_softmax"
@@ -292,6 +306,12 @@ type TopologyShape = {
    * forward outputs.
    */
   activation_output?: "sigmoid" | "identity" | "relu" | "softmax"
+  /**
+   * v0.6: optional hidden-layer activation (needed when Rule 14 reconstructs
+   * a Topology for engine recomputation on observer-mode receipts).
+   */
+  activation_hidden?: "sigmoid" | "identity" | "relu"
+  layers?: string[]
 }
 
 type ForwardUnit = {
@@ -348,7 +368,44 @@ type HiddenErrorSignalShape = {
   signal_value: number
 }
 
+/**
+ * v0.6 — closed enum of skip-basis values for Rule 15. Mirrors the
+ * src/general-engine.ts EXTERNAL_TRUST_BASIS constant; duplicated here
+ * (rather than imported as a value) because the reconciler MUST stay
+ * self-contained for the value check — a future engine refactor that
+ * deletes or renames the enum would silently weaken Rule 15.
+ */
+export const EXTERNAL_TRUST_BASIS_RECONCILER = [
+  "hardware_nondeterminism",
+  "framework_op_unsupported",
+  "distributed_only_field",
+  "attested_third_party",
+] as const
+type ExternalTrustBasisReconciler =
+  (typeof EXTERNAL_TRUST_BASIS_RECONCILER)[number]
+
+type AttestorShape = {
+  computed_by?: { kind?: string; identity?: string }
+  verified_by?: { kind?: string; identity?: string }
+  differential_tolerance?: { atol?: number; rtol?: number }
+  import_provenance?: {
+    source_format?: string
+    source_hash?: string
+    import_timestamp?: string
+  }
+  skip_basis?: string
+  signed_subject_digest?: string
+}
+
+type SourceFrameworkShape = {
+  name?: string
+  version?: string
+  information_uri?: string
+  extractor?: { name?: string; version?: string }
+}
+
 type Receipt = {
+  schema_version?: string
   numeric_policy: { tolerance: TolerancePolicy }
   bias_policy?: { mode?: string }
   updates: Update[]
@@ -365,6 +422,13 @@ type Receipt = {
   }
   trace_id?: string
   step_index?: number
+  fixture_status?: {
+    authoring_state?: string
+    verification_state?: string
+  }
+  learning_rate?: number
+  source_framework?: SourceFrameworkShape
+  attestor?: AttestorShape
 }
 
 /**
@@ -789,6 +853,23 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
   // (the engine emits dual_form when authoring softmax+CE; it does NOT
   // back-fill dual_form on receipts that lack it).
   checkRule13GatedDualForm(r, tolerance, failures)
+
+  // --- Rule 14: engine-recompute differential (observer-mode only) -----
+  // Fires when fixture_status.authoring_state === "external_imported".
+  // No-op for engine-authored receipts (the engine IS the producer, no
+  // second-witness needed). Catches the collapsed-laundering attack class.
+  checkRule14EngineRecomputeDifferential(r, failures)
+
+  // --- Rule 15: skip-basis required (observer-mode) --------------------
+  // Fires when verification_state === "engine_recompute_skipped_with_basis"
+  // AND attestor.skip_basis is missing or not in EXTERNAL_TRUST_BASIS.
+  checkRule15SkipBasis(r, failures)
+
+  // --- Rule 16: attestation digest binding (gated on signed_subject_digest)
+  // Fires when attestor.signed_subject_digest is present AND the
+  // recomputed canonical-byte digest of the receipt (with the digest field
+  // stripped) does not match. Silently skips when absent.
+  checkRule16AttestationBinding(receipt, r, failures)
 
   if (failures.length === 0) {
     return { ok: true }
@@ -2587,5 +2668,417 @@ function checkRule13GatedDualForm(
         })
       }
     }
+  }
+}
+
+// ============================================================================
+// v0.6 — Rules 14 / 15 / 16 (external trace ingestion)
+//
+// These rules fire on observer-mode receipts (fixture_status.authoring_state
+// === "external_imported"). Rules 14 + 15 are mandatory for observer
+// receipts; Rule 16 is GATED on attestor.signed_subject_digest presence.
+// All three are no-ops for engine-authored receipts so the v0.1-v0.5
+// reconciliation paths are unchanged.
+// ============================================================================
+
+/**
+ * Rule 14 (v0.6): engine-recompute differential.
+ *
+ * For observer-mode receipts (authoring_state === "external_imported"),
+ * re-run runGeneralStep from `parameters_before + inputs + targets +
+ * topology + learning_rate + numeric_policy + bias_policy` (everything
+ * the engine needs to deterministically produce a step). Compare the
+ * engine's output against the receipt's claimed forward / loss /
+ * backward / updates / parameters_after within `attestor.differential_
+ * tolerance` (defaults to {atol: 1e-6, rtol: 1e-4} if absent).
+ *
+ * Each per-field disagreement is a Rule 14 failure with the specific
+ * field_path. This catches the collapsed-laundering attack class: a
+ * mutated `signal_value` or `loss.total` that's internally consistent
+ * within the receipt but disagrees with what the engine produces from
+ * the same inputs.
+ *
+ * Skip conditions:
+ *   - authoring_state !== "external_imported" → no-op (engine-authored
+ *     receipts ARE the byte-equal source; differential is meaningless)
+ *   - verification_state === "engine_recompute_skipped_with_basis" →
+ *     no-op (the receipt declares recompute was deliberately skipped;
+ *     Rule 15 enforces the basis-naming requirement instead)
+ *   - Required engine inputs (parameters_before, inputs, targets,
+ *     learning_rate, topology) are missing → no-op (schema validation
+ *     catches malformed observer receipts; Rule 14 doesn't double-report)
+ *
+ * On engine-throw (e.g., topology cross-reference invalid), Rule 14
+ * emits ONE failure naming the throw site rather than letting the
+ * reconciler crash.
+ */
+function checkRule14EngineRecomputeDifferential(
+  r: Receipt,
+  failures: ReconciliationFailure[],
+): void {
+  const authoringState = r.fixture_status?.authoring_state
+  if (authoringState !== "external_imported") return
+  const verificationState = r.fixture_status?.verification_state
+  if (verificationState === "engine_recompute_skipped_with_basis") return
+
+  // Resolve differential tolerance: attestor.differential_tolerance preferred;
+  // fall back to a permissive default if absent (Agent 2's "looser than
+  // engine-authored" guidance — foreign FP precision drifts across CUDA /
+  // JIT / vector instructions).
+  const at = r.attestor
+  const diffTol: TolerancePolicy =
+    at?.differential_tolerance &&
+    typeof at.differential_tolerance.atol === "number" &&
+    typeof at.differential_tolerance.rtol === "number"
+      ? { atol: at.differential_tolerance.atol, rtol: at.differential_tolerance.rtol }
+      : { atol: 1e-6, rtol: 1e-4 }
+
+  // Required engine inputs.
+  const topo = r.topology
+  if (!topo || !topo.unit_order || !topo.parameter_order || !topo.parameters) {
+    return // schema-level structural issue; not Rule 14's domain
+  }
+  if (
+    typeof r.learning_rate !== "number" ||
+    !r.inputs ||
+    !r.targets ||
+    !r.parameters_before
+  ) {
+    return
+  }
+  if (!r.bias_policy?.mode) return
+  if (!r.numeric_policy?.tolerance) return
+
+  // Build a GeneralInput from the receipt's parameters_before + inputs +
+  // targets + topology + policies. The shape mirrors what bp.ts builds
+  // when running runGeneralStep on an engine-authored input.
+  let engineReceipt: Awaited<ReturnType<typeof runGeneralStep>>
+  try {
+    const input: GeneralInput = {
+      topology: topo as unknown as Topology,
+      learning_rate: r.learning_rate,
+      inputs: r.inputs,
+      targets: r.targets,
+      parameters_before: r.parameters_before,
+      numeric_policy: r.numeric_policy as unknown as GeneralInput["numeric_policy"],
+      bias_policy: r.bias_policy as unknown as GeneralInput["bias_policy"],
+    }
+    engineReceipt = runGeneralStep(input)
+  } catch (err) {
+    failures.push({
+      rule: 14,
+      field_path: "engine_recompute",
+      stored: 0,
+      recomputed: 0,
+      delta: 0,
+      tolerance: 0,
+      message:
+        `Rule 14 (engine-recompute differential): engine threw while recomputing the receipt ` +
+        `for observer-mode validation: ${err instanceof Error ? err.message : String(err)}. ` +
+        `Check topology cross-references and finite-input invariants.`,
+    })
+    return
+  }
+
+  // Compare engine output to receipt's claimed values, field by field.
+  // Each disagreement is a separate Rule 14 failure with the field path.
+  const compareScalar = (
+    fieldPath: string,
+    engineVal: number,
+    receiptVal: number | undefined,
+  ): void => {
+    if (typeof receiptVal !== "number") return // schema-level; not Rule 14's domain
+    const check = applyToleranceCheck(engineVal, receiptVal, diffTol)
+    if (!check.isFinite) {
+      failures.push({
+        rule: 14,
+        field_path: fieldPath,
+        stored: receiptVal,
+        recomputed: engineVal,
+        delta: Number.NaN,
+        tolerance: 0,
+        message:
+          `Rule 14 (engine-recompute differential): non-finite arithmetic at ${fieldPath}. ` +
+          `Engine recomputed ${String(engineVal)}; receipt claimed ${String(receiptVal)}.`,
+      })
+      return
+    }
+    if (!check.ok) {
+      failures.push({
+        rule: 14,
+        field_path: fieldPath,
+        stored: receiptVal,
+        recomputed: engineVal,
+        delta: check.delta,
+        tolerance: check.appliedTolerance,
+        message:
+          `Rule 14 (engine-recompute differential): foreign claim at ${fieldPath} ` +
+          `(${receiptVal}) disagrees with engine recomputation (${engineVal}) beyond ` +
+          `differential_tolerance (atol=${typeof diffTol === "number" ? diffTol : diffTol.atol}, ` +
+          `rtol=${typeof diffTol === "number" ? 0 : diffTol.rtol}).`,
+      })
+    }
+  }
+
+  // forward[*].{net, out}
+  for (const uId of Object.keys(engineReceipt.forward)) {
+    const eUnit = engineReceipt.forward[uId]
+    const rUnit = r.forward?.[uId]
+    if (!eUnit || !rUnit) continue
+    compareScalar(`forward.${uId}.net`, eUnit.net, rUnit.net)
+    compareScalar(`forward.${uId}.out`, eUnit.out, rUnit.out)
+  }
+
+  // loss.per_output[*] and loss.total
+  for (const uId of Object.keys(engineReceipt.loss.per_output)) {
+    compareScalar(
+      `loss.per_output.${uId}`,
+      engineReceipt.loss.per_output[uId]!,
+      r.loss?.per_output?.[uId],
+    )
+  }
+  compareScalar("loss.total", engineReceipt.loss.total, r.loss?.total)
+
+  // backward.output_error_signals[*].signal_value
+  for (const uId of Object.keys(engineReceipt.backward.output_error_signals)) {
+    const eSig = engineReceipt.backward.output_error_signals[uId]!
+    const rSig = r.backward?.output_error_signals?.[uId]
+    if (!rSig) continue
+    compareScalar(
+      `backward.output_error_signals.${uId}.signal_value`,
+      eSig.signal_value,
+      rSig.signal_value,
+    )
+  }
+
+  // backward.hidden_error_signals[*].{backpropagated_sum, activation_derivative, signal_value}
+  for (const uId of Object.keys(engineReceipt.backward.hidden_error_signals)) {
+    const eSig = engineReceipt.backward.hidden_error_signals[uId]!
+    const rSig = r.backward?.hidden_error_signals?.[uId]
+    if (!rSig) continue
+    compareScalar(
+      `backward.hidden_error_signals.${uId}.backpropagated_sum`,
+      eSig.backpropagated_sum,
+      rSig.backpropagated_sum,
+    )
+    compareScalar(
+      `backward.hidden_error_signals.${uId}.activation_derivative`,
+      eSig.activation_derivative,
+      rSig.activation_derivative,
+    )
+    compareScalar(
+      `backward.hidden_error_signals.${uId}.signal_value`,
+      eSig.signal_value,
+      rSig.signal_value,
+    )
+  }
+
+  // updates[*].{gradient, update, weight_after}
+  const rUpdatesByParam = new Map<string, Update>()
+  for (const u of r.updates) rUpdatesByParam.set(u.parameter_id, u)
+  for (const eUpdate of engineReceipt.updates) {
+    const rUpdate = rUpdatesByParam.get(eUpdate.parameter_id)
+    if (!rUpdate) continue
+    compareScalar(
+      `updates[${eUpdate.parameter_id}].gradient`,
+      eUpdate.gradient,
+      rUpdate.gradient,
+    )
+    compareScalar(
+      `updates[${eUpdate.parameter_id}].update`,
+      eUpdate.update,
+      rUpdate.update,
+    )
+    compareScalar(
+      `updates[${eUpdate.parameter_id}].weight_after`,
+      eUpdate.weight_after,
+      rUpdate.weight_after,
+    )
+  }
+
+  // parameters_after[*]
+  for (const pid of Object.keys(engineReceipt.parameters_after)) {
+    compareScalar(
+      `parameters_after.${pid}`,
+      engineReceipt.parameters_after[pid]!,
+      r.parameters_after?.[pid],
+    )
+  }
+}
+
+/**
+ * Rule 15 (v0.6): skip-basis required when recompute is skipped.
+ *
+ * When fixture_status.verification_state === "engine_recompute_skipped_
+ * with_basis", attestor.skip_basis MUST be present AND in the closed
+ * enum EXTERNAL_TRUST_BASIS_RECONCILER. Empty / missing / out-of-enum
+ * fires Rule 15.
+ *
+ * Closed enum (mirrors src/general-engine.ts EXTERNAL_TRUST_BASIS):
+ *   - hardware_nondeterminism
+ *   - framework_op_unsupported
+ *   - distributed_only_field
+ *   - attested_third_party
+ *
+ * Leroy's verified-vs-trusted discipline applied: skipping the math gate
+ * requires naming the reason on the record. Silent skipping is rejected.
+ */
+function checkRule15SkipBasis(
+  r: Receipt,
+  failures: ReconciliationFailure[],
+): void {
+  const verificationState = r.fixture_status?.verification_state
+  if (verificationState !== "engine_recompute_skipped_with_basis") return
+
+  const skipBasis = r.attestor?.skip_basis
+  if (typeof skipBasis !== "string" || skipBasis.length === 0) {
+    failures.push({
+      rule: 15,
+      field_path: "attestor.skip_basis",
+      stored: 0,
+      recomputed: 0,
+      delta: 0,
+      tolerance: 0,
+      message:
+        `Rule 15 (skip-basis required): fixture_status.verification_state is ` +
+        `"engine_recompute_skipped_with_basis" but attestor.skip_basis is ` +
+        (skipBasis === undefined ? "absent" : `empty (${JSON.stringify(skipBasis)})`) +
+        `. Operator must name the basis from the closed enum ` +
+        `EXTERNAL_TRUST_BASIS = [${EXTERNAL_TRUST_BASIS_RECONCILER.join(", ")}] on the record. ` +
+        `Silent skipping is rejected — Leroy's verified-vs-trusted discipline.`,
+    })
+    return
+  }
+  if (
+    !(EXTERNAL_TRUST_BASIS_RECONCILER as readonly string[]).includes(skipBasis)
+  ) {
+    failures.push({
+      rule: 15,
+      field_path: "attestor.skip_basis",
+      stored: 0,
+      recomputed: 0,
+      delta: 0,
+      tolerance: 0,
+      message:
+        `Rule 15 (skip-basis required): attestor.skip_basis=${JSON.stringify(skipBasis)} ` +
+        `is not in the closed enum EXTERNAL_TRUST_BASIS = ` +
+        `[${EXTERNAL_TRUST_BASIS_RECONCILER.join(", ")}]. Extending the vocabulary requires ` +
+        `a coordinated source-code change — silent additions are rejected.`,
+    })
+  }
+}
+
+/**
+ * Rule 16 (v0.6): attestation digest binding (gated).
+ *
+ * Fires ONLY when attestor.signed_subject_digest is present. When present,
+ * recompute the canonical-byte hash of the receipt (with the
+ * signed_subject_digest field stripped from the attestor block) and
+ * assert it matches the declared digest.
+ *
+ * Catches SolarWinds-style "signed-but-substituted" attacks where a
+ * valid signature is bound to mutated bytes. Signature *validity* (e.g.,
+ * cosign verification of a cryptographic signature over the digest) is
+ * OUT of scope for the reconciler — that's a CI-side concern. Rule 16
+ * only checks the digest-binding integrity within the receipt itself.
+ *
+ * Silently skips when signed_subject_digest is absent — consistent with
+ * Rule 13's GATED behavior.
+ *
+ * Format: "sha256:<64-hex>" (matches the schema's pattern constraint).
+ *
+ * @param rawReceipt  The original unknown receipt value (for canonical-
+ *                    byte hashing — must be the JSON-parsed object, not
+ *                    the narrowed Receipt type, because hashReceipt
+ *                    re-emits via the canonical emitter and needs the
+ *                    full object).
+ */
+function checkRule16AttestationBinding(
+  rawReceipt: unknown,
+  r: Receipt,
+  failures: ReconciliationFailure[],
+): void {
+  const digest = r.attestor?.signed_subject_digest
+  if (typeof digest !== "string" || digest.length === 0) return // GATED
+
+  // Validate digest format BEFORE recomputing — saves a hash call on
+  // structurally-broken receipts.
+  const match = digest.match(/^sha256:([0-9a-f]{64})$/)
+  if (!match) {
+    failures.push({
+      rule: 16,
+      field_path: "attestor.signed_subject_digest",
+      stored: 0,
+      recomputed: 0,
+      delta: 0,
+      tolerance: 0,
+      message:
+        `Rule 16 (attestation digest binding): attestor.signed_subject_digest ` +
+        `${JSON.stringify(digest)} is not in the expected "sha256:<64-hex>" format.`,
+    })
+    return
+  }
+
+  // Build a copy of the receipt with the digest field stripped, then
+  // hash it via the canonical-byte hasher.
+  let stripped: unknown
+  try {
+    stripped = JSON.parse(JSON.stringify(rawReceipt)) // deep clone
+    const sAttestor = (stripped as { attestor?: { signed_subject_digest?: unknown } }).attestor
+    if (sAttestor) delete sAttestor.signed_subject_digest
+  } catch (err) {
+    failures.push({
+      rule: 16,
+      field_path: "attestor.signed_subject_digest",
+      stored: 0,
+      recomputed: 0,
+      delta: 0,
+      tolerance: 0,
+      message:
+        `Rule 16 (attestation digest binding): could not deep-clone receipt for digest ` +
+        `recomputation: ${err instanceof Error ? err.message : String(err)}.`,
+    })
+    return
+  }
+
+  let recomputedDigest: string
+  try {
+    // Canonicalize via the generalized emitter, then hash the canonical
+    // byte stream. emitGeneralReceipt produces deterministic byte output
+    // matching the schema's x-order — the same bytes any other consumer
+    // would derive from the same logical receipt. Pass the bytes string
+    // directly to hashReceipt's string-input overload.
+    const canonicalBytes = emitGeneralReceipt(stripped as unknown as GeneralReceipt)
+    recomputedDigest = `sha256:${hashReceipt(canonicalBytes)}`
+  } catch (err) {
+    failures.push({
+      rule: 16,
+      field_path: "attestor.signed_subject_digest",
+      stored: 0,
+      recomputed: 0,
+      delta: 0,
+      tolerance: 0,
+      message:
+        `Rule 16 (attestation digest binding): canonical-emit/hash threw on the stripped receipt: ` +
+        `${err instanceof Error ? err.message : String(err)}.`,
+    })
+    return
+  }
+
+  if (recomputedDigest !== digest) {
+    failures.push({
+      rule: 16,
+      field_path: "attestor.signed_subject_digest",
+      stored: 0,
+      recomputed: 0,
+      delta: 0,
+      tolerance: 0,
+      message:
+        `Rule 16 (attestation digest binding): declared digest ${digest} does not match ` +
+        `recomputed digest ${recomputedDigest}. The receipt bytes have been mutated after ` +
+        `the digest was bound — SolarWinds-style "signed-but-substituted" attack signature. ` +
+        `Signature validity (cosign verification) is out of scope for the reconciler; this ` +
+        `check only catches digest-binding integrity within the receipt itself.`,
+    })
   }
 }

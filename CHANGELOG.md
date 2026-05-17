@@ -14,6 +14,148 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.6.0] - 2026-05-17
+
+The external trace ingestion wave. Observer-mode receipts let foreign
+frameworks (PyTorch / JAX / TensorFlow) become **evidence sources**
+without becoming **trusted authorities**. The engine remains the verifier,
+not a framework wrapper. v0.6.0 ships PyTorch ingestion; JAX + TensorFlow
+follow as v0.6.x patches with the same shape.
+
+Design decisions locked by the v0.6 study consolidator (5-agent dispatch
++ user greenlight before any code landed):
+- **Trust model**: Rule 14 (engine-recompute differential) is **MANDATORY**
+  for `external_imported` receipts, no-op for engine-authored. This is
+  the load-bearing defense against collapsed-trace laundering. The
+  importer's claim is not the verifier's truth — `bp verify general`
+  re-runs the differential check independently.
+- **Schema strategy**: bump to receipt **v0.4.0** (additive over v0.3.0).
+  `source_framework` + `attestor` + extended `fixture_status` enums sit
+  in receipt truth, not in a separate imported-receipt family. v0.3.0
+  softmax+CE receipts continue to validate against v0.3.0 unchanged.
+- **CLI shape**: per-framework subcommands (`bp import pytorch <file>`),
+  NO auto-detection from file contents. SARIF Multitool / HF Optimum
+  precedent — silent misdetection in a verifier defeats the purpose.
+- **No live runtime dependency**: `bp` core does NOT import PyTorch / JAX
+  / TensorFlow. The sidecar is plain JSON (no pickle, no protobuf, no
+  binary). A Python helper for emitting sidecars from a PyTorch training
+  loop is documented as a script, not shipped as a peer dep.
+
+### Added
+
+- **Schema `receipt.v0.4.0.json`** (additive over v0.3.0):
+  - Optional top-level `source_framework` block: `{name (closed enum: pytorch | jax | tensorflow | hand_derived | backprop_trace_engine), version, information_uri?, extractor?}`.
+  - Optional top-level `attestor` block: `{computed_by, verified_by, differential_tolerance, import_provenance?, skip_basis?, signed_subject_digest?}`. `computed_by` and `verified_by` are typed `AttestorIdentity` (`{kind: framework | engine | hand_derivation, identity}`) — the kind enum is the trust class, identity is the free-form URN/framework@version string.
+  - `fixture_status.authoring_state` enum extended with `"external_imported"`.
+  - `fixture_status.verification_state` enum extended with three external states: `"engine_recompute_matched_within_tolerance"`, `"engine_recompute_disagreed"`, `"engine_recompute_skipped_with_basis"`.
+  - Receipt schema_version: `"0.4.0"`. v0.3.0 softmax+CE receipts continue to validate against v0.3.0 unchanged.
+
+- **Schema `framework-trace.v0.1.0.json`** (NEW input-schema family — separate from receipt + topology-input):
+  - The user-authored JSONL sidecar contract consumed by `bp import <framework>`. Carries `format` discriminator, `source_framework`, `topology`, `learning_rate`, optional `numeric_policy`/`bias_policy`, `inputs`, `targets`, `parameters_before`, claimed `forward`/`loss`/`backward`/`updates`/`parameters_after`, optional `post_update_*`.
+  - Three schema families coexist: `receipt.v<N>.json` (output of engine/import), `topology-input.v<N>.json` (input to `bp generate from-config`), `framework-trace.v<N>.json` (input to `bp import`).
+
+- **Rule 14 — Engine-recompute differential** (`src/reconcile.ts`):
+  - Fires when `fixture_status.authoring_state === "external_imported"` AND `verification_state !== "engine_recompute_skipped_with_basis"`.
+  - Re-runs `runGeneralStep` from the receipt's `parameters_before` + `inputs` + `targets` + `topology` + policies. Compares engine output to foreign claims (forward, loss, backward, updates, parameters_after) field-by-field within `attestor.differential_tolerance` (default `{atol: 1e-6, rtol: 1e-4}` — looser than engine-authored to accommodate cross-framework FP precision drift).
+  - No-op for engine-authored receipts. All v0.1-v0.5 fixtures unchanged.
+  - The load-bearing defense against the collapsed-trace laundering attack: a mutated `signal_value` on a collapsed-only sidecar (where Rule 13 is GATED-silent) is independently recomputed by the engine and the disagreement surfaces. The defense doesn't require ungating Rule 13.
+
+- **Rule 15 — Skip-basis required** (`src/reconcile.ts`):
+  - Fires when `verification_state === "engine_recompute_skipped_with_basis"` AND `attestor.skip_basis` is absent or not in the closed enum `EXTERNAL_TRUST_BASIS = { hardware_nondeterminism, framework_op_unsupported, distributed_only_field, attested_third_party }`.
+  - Leroy's verified-vs-trusted discipline applied: skipping the math gate requires naming the basis on the record. Silent skipping is rejected.
+
+- **Rule 16 — Attestation digest binding (GATED)** (`src/reconcile.ts`):
+  - Fires only when `attestor.signed_subject_digest` is present. Recomputes the canonical-byte hash of the receipt (with the digest field stripped) via `emitGeneralReceipt + hashReceipt` and asserts it matches the declared `sha256:<hex>` digest.
+  - Catches SolarWinds-style "signed-but-substituted" attacks. Signature *validity* (cosign verification) is OUT of scope — Rule 16 only checks digest-binding integrity.
+
+- **`EXTERNAL_TRUST_BASIS` closed enum** (`src/general-engine.ts` + mirrored in `src/reconcile.ts`):
+  - 4 values: `hardware_nondeterminism`, `framework_op_unsupported`, `distributed_only_field`, `attested_third_party`. Snapshot-asserted (matches v0.5's RECOVERY_ACTIONS pattern); additions force a deliberate edit.
+
+- **`SourceFramework`, `Attestor`, `AttestorIdentity`, `ExternalTrustBasis`** TypeScript types (`src/general-engine.ts`):
+  - Re-exported from package root for consumers handling imported receipts.
+
+- **`bp import pytorch <sidecar.jsonl> [--out <file>] [--json]`** CLI subcommand:
+  - Per-framework subcommand discipline (Agent 3 finding, SARIF Multitool precedent).
+  - Reads `framework-trace.v0.1.0` sidecar, runs the differential check via `runGeneralStep`, emits a v0.4.0 observer-mode receipt with `attestor + source_framework + fixture_status`.
+  - Exit codes: 0 (success + differential passed), 1 (success but differential disagreed; receipt still emitted for audit), 2 (sidecar invalid), 3 (CLI arg invalid), 4 (framework adapter not implemented — e.g., `bp import jax` in v0.6.0).
+  - JAX + TensorFlow subcommands return exit 4 with a planned-for-v0.6.x message. No auto-detection from file contents — unknown framework names exit 2.
+
+- **`importPytorchSidecar(sidecarBytes, opts?)`** library API (`src/import-pytorch.ts`):
+  - Programmatic ingestion. Returns `{receipt, emittedBytes, differentialPassed, differentialDisagreements[]}`.
+  - Hashes the raw sidecar bytes (SHA-256) for `attestor.import_provenance.source_hash` BEFORE parsing. Validates against framework-trace.v0.1.0. Rejects sidecars whose `source_framework.name !== "pytorch"` (per-framework subcommand contract enforced at the library level too).
+  - Optional overrides: `differentialTolerance`, `extractorIdentity`, `importTimestamp` (mainly for fixture authoring with pinned timestamps), `fixtureLabel`.
+
+- **`scripts/generate-pytorch-softmax-ce-fixtures.ts`** — reproducible generator for the good fixture pair:
+  - `fixtures/external/pytorch.softmax-ce.sidecar.jsonl` (framework-trace.v0.1.0)
+  - `fixtures/external/pytorch.softmax-ce.golden.jsonl` (observer-mode v0.4.0 receipt)
+  - The sidecar's claimed math is byte-identical to what `runGeneralStep(SOFTMAX_CE_INPUT)` produces (v0.6.0 doesn't yet have PyTorch in CI; the canonical fixture demonstrates shape correctness). A real-PyTorch-authored sidecar would carry minor FP drift within `attestor.differential_tolerance`.
+
+- **`scripts/generate-external-bad-fixtures.ts`** — reproducible generator for the 8 bad-external fixtures.
+
+- **8 bad fixtures** under `fixtures/bad/external.bad-*.jsonl` (paired with `.meta.json`):
+  - `bad-shape-not-math` — Rule 12 (CE per_output mutated; schema validates)
+  - `bad-framework-spoof` — Rule 0.8 (out > 1.0; source_framework cannot mute math gate)
+  - `bad-collapsed-laundered` — Rule 14 (mutated signal_value on collapsed-only; Rule 13 GATED-silent; Rule 14 catches via differential)
+  - `bad-skip-without-basis` — Rule 15 ALONE (skip declared without attestor.skip_basis)
+  - `bad-attested-mutated-after` — Rule 16 (signed digest no longer binds; cross-fires Rule 7 + Rule 14)
+  - `bad-partial-tamper-internally-consistent` — Rule 7 + Rule 14 (parameters_after mutated; existing rule fires on ingest path; differential confirms)
+  - `bad-trusted-source-bad-math` — Rule 0.8 (information_uri claims hub; identity does not mute math)
+  - `bad-engine-reproduce-disagrees` — Rule 14 (forward drift beyond differential_tolerance; sum still ≈ 1.0)
+
+- **Subpath exports** (`package.json`):
+  - `./schema/receipt-0.4.0` → `schemas/receipt.v0.4.0.json`
+  - `./schema/framework-trace-0.1.0` → `schemas/framework-trace.v0.1.0.json`
+  - `./import-pytorch` → `dist/import-pytorch.js` (library API entry point)
+
+- **Library re-exports** (`src/index.ts`):
+  - `importPytorchSidecar`, `FrameworkTraceSidecar`, `ImportPytorchOptions`, `ImportPytorchResult`
+  - `SourceFramework`, `Attestor`, `AttestorIdentity`, `ExternalTrustBasis` + the value `EXTERNAL_TRUST_BASIS`
+  - `getFrameworkTraceSchema`, `FRAMEWORK_TRACE_SCHEMA_VERSIONS`, `FrameworkTraceSchemaVersion`
+  - `validateFrameworkTraceSidecar`, `validateFrameworkTraceSidecarOrThrow`
+
+### Changed
+
+- **`SCHEMA_VERSIONS`** extended to `["0.1.0", "0.2.0", "0.3.0", "0.4.0"]`. v0.3.0 softmax+CE receipts validate against v0.3.0 unchanged.
+- **`RULE_DESCRIPTIONS[14|15|16]`** added with explicit observer-mode semantics + GATED notes.
+- **`bp` CLI `RULE_LABELS[14|15|16]`** added.
+- **`bp` CLI `--help` text** + `suggestSubcommand` updated to include `import`.
+- **Doctrine ratchet test** updated: implemented-rules expectation is now `[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]`. `FILENAME_KIND_TO_RULE` map gains entries for all 8 v0.6 bad fixtures.
+- **`docs/reconciliation.md`** — Rules 14/15/16 sections added with attack-class descriptions, fixture cross-references, and the GATED scope-limit on Rule 16 (digest-binding-integrity only; signature validity is out of scope).
+- **`docs/cli.md`** — `bp import pytorch` subcommand documented with trust-boundary explanation, exit codes, examples, and the per-framework / no-auto-detection discipline.
+- **`Receipt`** + **`TopologyShape`** + new `AttestorShape` + `SourceFrameworkShape` types in `src/reconcile.ts` widened additively.
+- **`OutputErrorSignal`** in `src/engine.ts` already widened with optional `dual_form` in v0.5; v0.6 doesn't change it.
+- **`emit.ts`** emits the optional `source_framework` + `attestor` blocks only when present (preserves byte-equality for all v0.1-v0.5 receipts). Two new helpers: `emitSourceFramework`, `emitAttestor`.
+- **`general-engine.ts`** `GeneralReceipt.schema_version` widened from `"0.2.0" | "0.3.0"` to `"0.2.0" | "0.3.0" | "0.4.0"`. `runGeneralStep` itself does NOT produce v0.4.0 receipts — observer-mode receipts come from `importPytorchSidecar`, not the engine first-run path.
+- **`validate.ts`** registers `framework-trace.v0.1.0` validator on the shared Ajv instance. New `x-purpose` annotation registered as no-op for Ajv strict mode (alongside existing `x-order`, `x-rule`, `x-changes-from-*` strip).
+
+### Tests
+
+- 322 → 345 total (+23 v0.6 tests). 345 pass / 0 fail / 0 skip.
+- New test files:
+  - `test/import-pytorch.test.ts` — importer round-trip (sidecar → byte-equal golden), schema validation, reconcile cleanly, per-framework subcommand enforcement, malformed-input rejection, bp CLI end-to-end (4 subprocess tests: import + help + missing-framework + unknown-framework + unimplemented-framework).
+  - `test/reconcile.bad-external.test.ts` — Rule 14 isolation (collapsed-laundered + engine-reproduce-disagrees), Rule 15 alone (skip-without-basis), Rule 16 (attested-mutated-after with cross-fire), cross-fire fixtures (shape-not-math, framework-spoof, partial-tamper, trusted-source-bad-math), Rules 14/15/16 no-op on engine-authored fixtures.
+- All v0.1-v0.5.1 fixtures byte-identical. Engine bytes unchanged. The Mazur / XOR / iris / per-neuron-bias / softmax+CE goldens reconcile cleanly under the v0.6 reconciler (Rules 14/15/16 no-op on them per the authoring_state check).
+
+### Migration notes (v0.5.1 → v0.6.0)
+
+- Pure additive on engine-authored receipts. v0.1-v0.5.1 receipts validate, reconcile, and emit byte-identically. The engine's `runGeneralStep` path is unchanged — it still produces v0.2.0 or v0.3.0 receipts depending on topology.loss.
+- New schema version `0.4.0` is RESERVED for observer-mode receipts. Engine-authored receipts MUST NOT declare it (and the engine never emits it).
+- Consumers iterating `result.failures[*].rule` should be prepared for `rule: 14`, `rule: 15`, and `rule: 16` entries. All three are no-ops on engine-authored receipts so existing consumers' rule-handling switches don't need updates unless they handle observer-mode receipts.
+- `fixture_status.authoring_state` and `fixture_status.verification_state` enums extended. Schema validators pinned to v0.3.0 (or earlier) will REJECT observer-mode receipts — that's the correct failure mode (Confluent schema-evolution discipline). Consumers that need to handle observer receipts should bump to v0.4.0.
+- Topology-input schema (v0.4.0) is UNCHANGED — it remains the input contract for `bp generate from-config`. The new `framework-trace.v0.1.0` schema is a SEPARATE family for `bp import <framework>`.
+
+### Out of scope (deferred by standing constraint or intent)
+
+- **JAX + TensorFlow adapters** (`bp import jax` / `bp import tensorflow`) — planned for v0.6.x patch releases. Same schema, same Rule 14/15/16, same CLI pattern, different sidecar emitter.
+- **Python helper as separate npm package** (e.g., `@mcptoolshop/backprop-trace-import-pytorch`) — v0.6.0 ships the helper as a documented script (planned location: `scripts/python-helpers/dump_pytorch_trace.py`). Promotion to a separate package follows when user demand justifies the split.
+- **Signature validity verification** (cosign / Sigstore Rekor inclusion proofs) — out of scope for the reconciler. Rule 16 only checks digest-binding integrity within the receipt. CI-side signature verification is a separate layer.
+- **`@dual_form` auto-synthesis on import** — explicitly rejected per the v0.5 consolidator Q2 decision, carried forward unchanged.
+- **Multi-step observer-mode receipts** — v0.6.0 ships single-step only. Multi-step (`trace_id` + `step_index` carried through observer receipts) follows in a v0.6.x patch.
+- npm publish / git tag / `gh release create` — user-deferred (commit + push only this wave).
+- Translations / landing / handbook / SHIP_GATE walkthrough — user-deferred.
+
+---
+
 ## [0.5.1] - 2026-05-17
 
 Focused ratchet on v0.5.0. No new math semantics. Closes the two v0.3-era

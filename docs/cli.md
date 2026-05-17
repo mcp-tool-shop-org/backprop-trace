@@ -1,12 +1,13 @@
 # `bp` CLI reference
 
 The `bp` binary is the user-facing entry point for `@mcptoolshop/backprop-trace`.
-It exposes 13 subcommands that compose the library's primitives into the
-common verification and authoring flows:
+It exposes subcommands that compose the library's primitives into the
+common verification, authoring, and ingestion flows:
 
-- **reconcile** (per-record math check against the 10 rules)
+- **reconcile** (per-record math check against Rules 0/0.8/1-16)
 - **verify** (full gate; Mazur / general / multi-step)
 - **generate** (Mazur / XOR / iris / from-config)
+- **import** (v0.6+ external trace ingestion; per-framework subcommands)
 - **scaffold topology** (write a starter input file; v0.4+)
 - **validate-input** (schema-validate a topology input config; v0.4+)
 - **validate** (schema-validate a receipt)
@@ -36,11 +37,89 @@ the subcommand-specific text.
 | `bp generate from-config <file> [--out F] [--check]` | Read a topology+input JSON, emit a canonical receipt (v0.4+) | 0 / 1 |
 | `bp scaffold topology --topology mazur\|xor\|iris [--out F]` | Write a sample input file to bootstrap a new topology (v0.4+) | 0 / 1 |
 | `bp validate-input <file>` | Schema-validate a topology-input config without running the engine (v0.4+) | 0 / 1 |
-| `bp validate <file>` | Schema-only validation of a receipt; auto-detects v0.1.0 vs v0.2.0 | 0 / 1 |
+| `bp validate <file>` | Schema-only validation of a receipt; auto-detects v0.1.0 / v0.2.0 / v0.3.0 / v0.4.0 | 0 / 1 |
+| `bp import pytorch <sidecar.jsonl> [--out F]` | Convert a framework-trace.v0.1.0 PyTorch sidecar to an observer-mode v0.4.0 receipt (v0.6+) | 0 / 1 / 2 / 4 |
 
 All subcommands accept `-` as the file argument to read from stdin
 (except `generate mazur / xor / iris`, which write rather than read, and
 `scaffold topology`, which writes but takes no file input).
+
+## Subcommand: `bp import pytorch` (v0.6+)
+
+```
+bp import pytorch <sidecar.jsonl> [--out <file>] [--json] [--verbose]
+```
+
+Convert a `framework-trace.v0.1.0` sidecar (emitted by a PyTorch training
+loop via a ~30 LOC user-authored Python helper, or hand-authored for
+fixture work) into a canonical observer-mode v0.4.0 receipt.
+
+**The trust boundary.** The sidecar carries the foreign framework's
+claimed forward / loss / backward / updates / parameters_after as
+canonical fields. The importer:
+
+1. Schema-validates the sidecar against `framework-trace.v0.1.0.json`.
+2. Computes `sha256` of the raw sidecar bytes for `attestor.import_provenance.source_hash`.
+3. Runs the backprop-trace engine differentially via `runGeneralStep` on
+   the same inputs (`parameters_before` + `inputs` + `targets` + topology).
+4. Compares engine output to foreign claims field-by-field within
+   `attestor.differential_tolerance` (default `{atol: 1e-6, rtol: 1e-4}`).
+5. Emits a v0.4.0 receipt with:
+   - `fixture_status.authoring_state: "external_imported"`.
+   - `fixture_status.verification_state` = either
+     `"engine_recompute_matched_within_tolerance"` or
+     `"engine_recompute_disagreed"` depending on the differential outcome.
+   - `source_framework.{name, version, extractor}` naming the producer.
+   - `attestor.{computed_by, verified_by, differential_tolerance, import_provenance}`.
+
+**Critically:** the importer does NOT execute foreign code. It does NOT
+read pickle / `torch.save` / `.pt` files — only plain-JSON sidecars. The
+`bp` core takes NO runtime dependency on PyTorch / JAX / TensorFlow.
+
+The differential check runs at import time AND again on
+`bp verify general` of the produced receipt (Reproducible Builds discipline:
+the producer's claim is not the verifier's truth). Rule 14 fires in both
+contexts and is the load-bearing defense against collapsed-trace laundering.
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| 0 | Import succeeded; engine-recompute differential agreed within tolerance |
+| 1 | Import succeeded; differential check DISAGREED. Receipt still emitted (verification_state = `engine_recompute_disagreed`) for audit |
+| 2 | Sidecar invalid / I/O error / schema validation failed |
+| 3 | Invalid CLI argument |
+| 4 | Framework adapter not implemented (e.g., `bp import jax` in v0.6.0) |
+
+**Examples:**
+
+```bash
+# Import a PyTorch sidecar to stdout
+bp import pytorch trace.jsonl > receipt.jsonl
+
+# Import to a file
+bp import pytorch trace.jsonl --out receipt.jsonl
+
+# Then re-verify independently
+bp verify general receipt.jsonl
+
+# Machine-readable summary
+bp import pytorch trace.jsonl --json
+# → {"ok":true,"differential":{"passed":true,"disagreements":[]}}
+```
+
+**Frameworks (per-framework subcommands, no auto-detection):**
+
+| Subcommand | Status |
+|---|---|
+| `bp import pytorch <file>` | **Shipped in v0.6.0** |
+| `bp import jax <file>` | Planned for v0.6.x patch |
+| `bp import tensorflow <file>` | Planned for v0.6.x patch |
+
+The CLI does **not** auto-detect framework from file contents — name it
+explicitly. This is a deliberate choice per the v0.6 study consolidator
+(Agent 3 finding, mirrors SARIF Multitool `-tool <name>` discipline):
+silent misdetection in a verifier defeats the purpose of the verifier.
 
 ## Subcommand: `bp reconcile receipt`
 

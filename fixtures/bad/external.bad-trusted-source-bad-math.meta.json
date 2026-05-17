@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "external.bad-trusted-source-bad-math.meta",
+  "describes": "fixtures/bad/external.bad-trusted-source-bad-math.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.softmax-ce.golden.jsonl. Differs in fixture_status (deliberately_corrupted / expected_to_fail_reconciliation) and the targeted v0.6 external-ingestion field(s) described below.",
+  "mutation": {
+    "field_path": "forward.o1.out",
+    "original": 0.417135813,
+    "mutated": 1.05,
+    "kind": "v0_6_external_ingestion_targeted_mutation",
+    "description": "Receipt's source_framework.information_uri claims a trusted hub URL ('https://hub.example.com/trusted-models/foo'); forward.o1.out is mutated to 1.05 (outside [0,1]). Rule 0.8 fires anyway. Identity metadata (provenance URLs, framework names, etc.) CANNOT short-circuit math gates. This fixture exists specifically so a future refactor that adds a 'trusted_sources allowlist short-circuit' fails at PR-review."
+  },
+  "reconciliation_check_targeted_first": "Rule 0 (Rule 0.8 probability-bounds sub-check): forward[output].out MUST be in [0, 1] when topology.activation_output === 'softmax' — identity claims (source_framework, information_uri) cannot mute the math gate.",
+  "purpose": "Anti-circularity (Csmith/CompCert lineage) for the v0.6 external trace ingestion: observer-mode receipts cannot launder bad math by virtue of being imported. Rule 14 (engine-recompute differential) is the load-bearing defense; Rules 0.8/11/12 still fire on observer receipts; Rules 15/16 enforce skip-basis and digest-binding integrity. This fixture isolates the targeted rule as far as the ingest-path interleaving allows.",
+  "v0_6_note": "v0.6 ships external trace ingestion: schema v0.4.0 additive (source_framework + attestor + extended fixture_status enums), Rules 14/15/16 new, `bp import pytorch` CLI subcommand. The 8-fixture plate exercises every new rule plus the doctrine ratchet against trust-laundering attack classes."
+}

@@ -1,0 +1,570 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mcp-tool-shop-org/backprop-trace/schemas/receipt.v0.4.0.json",
+  "title": "backprop-trace canonical receipt schema v0.4.0",
+  "description": "v0.6 external trace ingestion. Additive over v0.3.0: adds top-level source_framework + attestor blocks for observer-mode receipts (foreign frameworks computed the math; backprop-trace engine re-ran it as differential witness), extends fixture_status enums with external_imported authoring + engine_recompute_* verification values. v0.3.0 softmax+CE receipts continue to validate against v0.3.0 schema unchanged.",
+  "type": "object",
+  "x-changes-from-v0.3.0": [
+    "schema_version const bumped 0.3.0 -> 0.4.0",
+    "NEW optional top-level source_framework: when authoring_state === 'external_imported', describes which framework produced the math (name, version, optional extractor identifying the adapter that wrote the sidecar)",
+    "NEW optional top-level attestor: when authoring_state === 'external_imported', carries computed_by (the framework) + verified_by (the backprop-trace engine) + differential_tolerance (looser than engine-authored receipts because foreign FP precision drifts) + optional import_provenance (source hash + timestamp) + optional skip_basis (closed enum for engine_recompute_skipped_with_basis verification state) + optional signed_subject_digest (Rule 16 gating)",
+    "fixture_status.authoring_state enum widened: existing [hand_derived, engine_generated, engine_generated_general, deliberately_corrupted] + 'external_imported' (foreign framework produced the math; backprop-trace ingested via bp import)",
+    "fixture_status.verification_state enum widened: existing [pending_engine_reproduction, engine_reproduced_byte_equal, expected_to_fail_reconciliation] + three external states: 'engine_recompute_matched_within_tolerance' (Rule 14 differential check passed), 'engine_recompute_disagreed' (Rule 14 fired; receipt retained for audit), 'engine_recompute_skipped_with_basis' (recompute deliberately skipped; attestor.skip_basis names the reason)",
+    "NO removed fields. NO renamed fields. NO breaking changes to forward / loss / backward / updates / parameters_after / post_update_forward / post_update_loss — those are byte-identical shape to v0.3.0. v0.3.0 softmax+CE receipts validate against v0.3.0 schema unchanged; v0.6 observer-mode receipts declare schema_version: '0.4.0'."
+  ],
+  "x-order": [
+    "schema_version",
+    "fixture",
+    "step",
+    "fixture_status",
+    "source_framework",
+    "attestor",
+    "metadata",
+    "numeric_policy",
+    "bias_policy",
+    "topology",
+    "learning_rate",
+    "trace_id",
+    "step_index",
+    "inputs",
+    "targets",
+    "parameters_before",
+    "forward",
+    "loss",
+    "backward",
+    "updates",
+    "parameters_after",
+    "post_update_forward",
+    "post_update_loss"
+  ],
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fixture",
+    "step",
+    "fixture_status",
+    "numeric_policy",
+    "bias_policy",
+    "topology",
+    "learning_rate",
+    "inputs",
+    "targets",
+    "parameters_before",
+    "forward",
+    "loss",
+    "backward",
+    "updates",
+    "parameters_after"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.4.0" },
+    "fixture": { "type": "string" },
+    "step": { "type": "integer", "minimum": 1 },
+    "fixture_status": { "$ref": "#/$defs/FixtureStatus" },
+    "source_framework": {
+      "description": "OPTIONAL. REQUIRED at the reconciler boundary (Rule 0 sub-check) when fixture_status.authoring_state === 'external_imported'. Describes which framework computed the math. Engine-authored receipts (authoring_state in {engine_generated, engine_generated_general, hand_derived}) MUST omit this block.",
+      "$ref": "#/$defs/SourceFramework"
+    },
+    "attestor": {
+      "description": "OPTIONAL. REQUIRED at the reconciler boundary when fixture_status.authoring_state === 'external_imported'. Carries the verifier identity (the backprop-trace engine that re-ran the math), the producer identity (the foreign framework), the differential tolerance bounds, and optional provenance/skip-basis/signature-digest sub-blocks for Rules 14/15/16.",
+      "$ref": "#/$defs/Attestor"
+    },
+    "metadata": {
+      "description": "Free-form provenance and authoring notes.",
+      "type": "object"
+    },
+    "numeric_policy": { "$ref": "#/$defs/NumericPolicy" },
+    "bias_policy": { "$ref": "#/$defs/BiasPolicy" },
+    "topology": { "$ref": "#/$defs/Topology" },
+    "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
+    "trace_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "step_index": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "inputs": { "$ref": "#/$defs/UnitNumberMap" },
+    "targets": { "$ref": "#/$defs/UnitNumberMap" },
+    "parameters_before": { "$ref": "#/$defs/ParameterMap" },
+    "forward": { "$ref": "#/$defs/ForwardMap" },
+    "loss": { "$ref": "#/$defs/Loss" },
+    "backward": { "$ref": "#/$defs/Backward" },
+    "updates": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Update" }
+    },
+    "parameters_after": { "$ref": "#/$defs/ParameterMap" },
+    "post_update_forward": { "$ref": "#/$defs/PostUpdateForward" },
+    "post_update_loss": { "$ref": "#/$defs/PostUpdateLoss" }
+  },
+  "allOf": [
+    {
+      "anyOf": [
+        { "not": { "required": ["step_index"] } },
+        { "required": ["trace_id"] }
+      ]
+    },
+    {
+      "anyOf": [
+        { "not": { "required": ["trace_id"] } },
+        { "required": ["step_index"] }
+      ]
+    }
+  ],
+  "$defs": {
+    "UnitOrder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input", "hidden", "output"],
+      "properties": {
+        "input": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } },
+        "hidden": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } },
+        "output": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } }
+      }
+    },
+    "ParameterOrder": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" }
+    },
+    "FixtureStatus": {
+      "type": "object",
+      "x-order": ["authoring_state", "verification_state", "canonical", "promote_to", "describes_in", "blockers_to_promotion"],
+      "additionalProperties": false,
+      "required": ["authoring_state", "verification_state", "canonical"],
+      "properties": {
+        "authoring_state": {
+          "enum": [
+            "hand_derived",
+            "engine_generated",
+            "engine_generated_general",
+            "deliberately_corrupted",
+            "external_imported"
+          ]
+        },
+        "verification_state": {
+          "enum": [
+            "pending_engine_reproduction",
+            "engine_reproduced_byte_equal",
+            "expected_to_fail_reconciliation",
+            "engine_recompute_matched_within_tolerance",
+            "engine_recompute_disagreed",
+            "engine_recompute_skipped_with_basis"
+          ]
+        },
+        "canonical": { "type": "boolean" },
+        "promote_to": { "type": "string" },
+        "describes_in": { "type": "string" },
+        "blockers_to_promotion": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "SourceFramework": {
+      "description": "Identifies the framework that produced the math (PyTorch / JAX / TensorFlow / etc.). Modeled on SARIF tool.driver + OpenTelemetry resource.service.name precedent: producer identity at the root, not buried in metadata.",
+      "type": "object",
+      "x-order": ["name", "version", "information_uri", "extractor"],
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "description": "Closed enum of recognized producer frameworks. 'backprop_trace_engine' is reserved for engine-authored receipts that opt into the source_framework block for cross-reference (typically only used when re-deriving a foreign trace).",
+          "enum": [
+            "pytorch",
+            "jax",
+            "tensorflow",
+            "hand_derived",
+            "backprop_trace_engine"
+          ]
+        },
+        "version": {
+          "description": "Semver string of the producer framework. Free-form to accommodate non-semver versions (e.g. 'nightly-20260517').",
+          "type": "string",
+          "minLength": 1
+        },
+        "information_uri": {
+          "description": "Optional URI to the framework's home page or release notes. SARIF tool.driver.informationUri analogue. (No JSON-Schema format=uri constraint — Ajv strict mode rejects unknown formats; URI well-formedness is the caller's responsibility.)",
+          "type": "string",
+          "minLength": 1
+        },
+        "extractor": {
+          "description": "Optional. Identifies the adapter that produced the receipt from the framework's native output. Separating producer (the framework) from extractor (the adapter) follows OpenTelemetry semconv precedent: service.name vs telemetry.sdk.name. Conflating them loses ability to debug 'did PyTorch produce wrong numbers, or did our adapter mis-transcribe them?'.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "Attestor": {
+      "description": "Identifies the producer (who computed the math) and verifier (the backprop-trace engine that re-ran it), the differential tolerance bounds, and optional provenance / skip-basis / signature-digest sub-blocks. Modeled on in-toto v1 Statement (subject vs predicate vs predicateType) + SLSA Provenance v1.0 builder.id pattern + Sigstore fail-closed discipline.",
+      "type": "object",
+      "x-order": ["computed_by", "verified_by", "differential_tolerance", "import_provenance", "skip_basis", "signed_subject_digest"],
+      "additionalProperties": false,
+      "required": ["computed_by", "verified_by", "differential_tolerance"],
+      "properties": {
+        "computed_by": {
+          "description": "Who produced the math. For observer-mode receipts this is the foreign framework. computed_by.kind is the trust class.",
+          "$ref": "#/$defs/AttestorIdentity"
+        },
+        "verified_by": {
+          "description": "Who re-ran the math as differential witness. For observer-mode receipts this is the backprop-trace engine. computed_by !== verified_by is the load-bearing invariant: a receipt where the producer also self-witnesses is structurally identical to producer-mode and should declare authoring_state accordingly.",
+          "$ref": "#/$defs/AttestorIdentity"
+        },
+        "differential_tolerance": {
+          "description": "Hybrid tolerance applied to Rule 14 (engine-recompute differential). Looser than engine-authored receipt tolerance because foreign FP precision drifts across CUDA kernels, JIT compilers, vector instructions. Each receipt declares its own tolerance so the verifier knows what claim is being made.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["atol", "rtol"],
+          "properties": {
+            "atol": { "type": "number", "minimum": 0 },
+            "rtol": { "type": "number", "minimum": 0 }
+          }
+        },
+        "import_provenance": {
+          "description": "OPTIONAL. Provenance bookkeeping for the import event: where the sidecar came from and when it was ingested. SARIF §3.22 conversion block precedent — when a tool transforms native output, the conversion record MUST exist.",
+          "type": "object",
+          "x-order": ["source_format", "source_hash", "import_timestamp"],
+          "additionalProperties": false,
+          "required": ["source_format", "source_hash"],
+          "properties": {
+            "source_format": {
+              "description": "Canonical name + version of the input sidecar format. v0.6 ships framework-trace.v0.1.0; future input formats register here.",
+              "type": "string",
+              "minLength": 1
+            },
+            "source_hash": {
+              "description": "SHA-256 hex of the input sidecar bytes (the exact bytes bp import consumed). 'sha256:<hex>' format.",
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "import_timestamp": {
+              "description": "RFC 3339 timestamp at which the importer produced this receipt. (No JSON-Schema format=date-time constraint — Ajv strict mode rejects unknown formats; timestamp well-formedness is the caller's responsibility.)",
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "skip_basis": {
+          "description": "REQUIRED at the reconciler boundary (Rule 15) when fixture_status.verification_state === 'engine_recompute_skipped_with_basis'. Closed enum naming the reason recompute was deliberately not run. Operator must name the basis on the record — silent skipping is rejected (Leroy's verified-vs-trusted discipline applied).",
+          "enum": [
+            "hardware_nondeterminism",
+            "framework_op_unsupported",
+            "distributed_only_field",
+            "attested_third_party"
+          ]
+        },
+        "signed_subject_digest": {
+          "description": "OPTIONAL. SHA-256 hex of the canonical-byte hash of the receipt (computed by hashReceipt with this attestor.signed_subject_digest field stripped before hashing). Rule 16 is GATED on this field's presence: when present, the reconciler recomputes the digest and asserts it matches. Catches SolarWinds-style 'signed-but-substituted' attacks where a valid signature is bound to mutated bytes. Signature *validity* (cosign verification of the signature itself) is out of scope for the reconciler — that's a CI-side concern. Rule 16 only checks digest-binding integrity. 'sha256:<hex>' format.",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "AttestorIdentity": {
+      "description": "Identity of an actor in the attestation chain. Closed enum 'kind' for trust-relevant classification; free-form 'identity' for the actual identity string (URN, framework@version, etc.).",
+      "type": "object",
+      "x-order": ["kind", "identity"],
+      "additionalProperties": false,
+      "required": ["kind", "identity"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "framework",
+            "engine",
+            "hand_derivation"
+          ]
+        },
+        "identity": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "NumericPolicy": {
+      "type": "object",
+      "x-order": ["number_encoding", "precision_significant_digits", "rounding", "tolerance", "computation_order", "byte_output"],
+      "additionalProperties": false,
+      "required": ["number_encoding", "precision_significant_digits", "rounding", "tolerance"],
+      "properties": {
+        "number_encoding": { "const": "decimal" },
+        "precision_significant_digits": { "type": "integer", "minimum": 1 },
+        "rounding": { "const": "round_half_to_even" },
+        "tolerance": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["atol", "rtol"],
+              "additionalProperties": false,
+              "properties": {
+                "atol": { "type": "number", "minimum": 0 },
+                "rtol": { "type": "number", "minimum": 0 }
+              }
+            },
+            { "type": "number", "minimum": 0 }
+          ]
+        },
+        "computation_order": { "const": "schema_defined" },
+        "byte_output": {
+          "type": "object",
+          "x-order": ["format", "json_key_order", "trailing_zero_policy", "indent"],
+          "additionalProperties": false,
+          "properties": {
+            "format": { "const": "jsonl" },
+            "json_key_order": { "const": "schema_defined" },
+            "trailing_zero_policy": { "const": "pad_to_significant_digits" },
+            "indent": { "const": "none" }
+          }
+        }
+      }
+    },
+    "BiasPolicy": {
+      "type": "object",
+      "x-order": ["mode", "reason", "updated_in_step", "reconciliation"],
+      "additionalProperties": false,
+      "required": ["mode", "updated_in_step"],
+      "properties": {
+        "mode": { "enum": ["constant", "sgd"] },
+        "reason": { "type": "string" },
+        "updated_in_step": { "type": "boolean" },
+        "reconciliation": { "type": "string" }
+      }
+    },
+    "Topology": {
+      "type": "object",
+      "x-order": ["layers", "input_size", "hidden_size", "output_size", "unit_order", "parameter_order", "parameters", "activation_hidden", "activation_output", "loss", "bias_sharing"],
+      "additionalProperties": false,
+      "required": ["layers", "input_size", "hidden_size", "output_size", "unit_order", "parameter_order", "parameters", "activation_hidden", "activation_output", "loss", "bias_sharing"],
+      "properties": {
+        "layers": { "type": "array", "items": { "type": "string" } },
+        "input_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "hidden_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "output_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "unit_order": { "$ref": "#/$defs/UnitOrder" },
+        "parameter_order": { "$ref": "#/$defs/ParameterOrder" },
+        "parameters": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "role"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "role": { "enum": ["input_to_hidden_weight", "hidden_to_output_weight", "hidden_bias", "output_bias"] },
+              "from_unit": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "to_unit": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "applies_to_units": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" }
+              }
+            }
+          }
+        },
+        "activation_hidden": { "enum": ["sigmoid", "identity", "relu"] },
+        "activation_output": { "enum": ["sigmoid", "identity", "relu", "softmax"] },
+        "loss": { "enum": ["half_squared_error", "cross_entropy_softmax"] },
+        "bias_sharing": { "enum": ["per_layer", "per_neuron"] }
+      }
+    },
+    "UnitNumberMap": {
+      "type": "object",
+      "additionalProperties": { "type": "number" }
+    },
+    "ParameterMap": {
+      "type": "object",
+      "additionalProperties": { "type": "number" }
+    },
+    "ForwardMap": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/ForwardUnit" }
+    },
+    "ForwardUnit": {
+      "type": "object",
+      "x-order": ["net", "out"],
+      "additionalProperties": false,
+      "required": ["net", "out"],
+      "properties": {
+        "net": { "type": "number" },
+        "out": { "type": "number" }
+      }
+    },
+    "Loss": {
+      "type": "object",
+      "x-order": ["per_output", "total"],
+      "additionalProperties": false,
+      "required": ["per_output", "total"],
+      "properties": {
+        "per_output": { "type": "object", "additionalProperties": { "type": "number" } },
+        "total": { "type": "number" }
+      }
+    },
+    "Backward": {
+      "type": "object",
+      "x-order": ["output_error_signals", "hidden_error_signals"],
+      "additionalProperties": false,
+      "required": ["output_error_signals", "hidden_error_signals"],
+      "properties": {
+        "output_error_signals": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/OutputErrorSignal" }
+        },
+        "hidden_error_signals": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/HiddenErrorSignal" }
+        }
+      }
+    },
+    "OutputErrorSignal": {
+      "type": "object",
+      "x-order": ["factors", "product_order", "signal_value", "dual_form"],
+      "additionalProperties": false,
+      "required": ["factors", "product_order", "signal_value"],
+      "properties": {
+        "factors": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/NamedFactor" }
+        },
+        "product_order": { "const": "left_to_right" },
+        "signal_value": { "type": "number" },
+        "dual_form": { "$ref": "#/$defs/DualForm" }
+      }
+    },
+    "DualForm": {
+      "type": "object",
+      "x-order": ["jacobian_terms", "product_order", "summation_order", "summed_value"],
+      "additionalProperties": false,
+      "required": ["jacobian_terms", "product_order", "summation_order", "summed_value"],
+      "properties": {
+        "jacobian_terms": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/JacobianTerm" }
+        },
+        "product_order": { "const": "left_to_right" },
+        "summation_order": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "summed_value": { "type": "number" }
+      }
+    },
+    "JacobianTerm": {
+      "type": "object",
+      "x-order": ["target_unit", "factors", "term_value"],
+      "additionalProperties": false,
+      "required": ["target_unit", "factors", "term_value"],
+      "properties": {
+        "target_unit": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+        "factors": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/NamedFactor" }
+        },
+        "term_value": { "type": "number" }
+      }
+    },
+    "HiddenErrorSignal": {
+      "type": "object",
+      "x-order": ["downstream_contributions", "summation_order", "backpropagated_sum", "activation_derivative", "product_order", "signal_value"],
+      "additionalProperties": false,
+      "required": ["downstream_contributions", "summation_order", "backpropagated_sum", "activation_derivative", "product_order", "signal_value"],
+      "properties": {
+        "downstream_contributions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/DownstreamContribution" }
+        },
+        "summation_order": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "backpropagated_sum": { "type": "number" },
+        "activation_derivative": { "type": "number" },
+        "product_order": { "const": "left_to_right" },
+        "signal_value": { "type": "number" }
+      }
+    },
+    "DownstreamContribution": {
+      "type": "object",
+      "x-order": ["from", "downstream_signal", "via_weight", "weight_value", "value"],
+      "additionalProperties": false,
+      "required": ["from", "downstream_signal", "via_weight", "weight_value", "value"],
+      "properties": {
+        "from": { "type": "string" },
+        "downstream_signal": { "type": "number" },
+        "via_weight": { "type": "string" },
+        "weight_value": { "type": "number" },
+        "value": { "type": "number" }
+      }
+    },
+    "NamedFactor": {
+      "type": "object",
+      "x-order": ["name", "from", "value"],
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": { "type": "string" },
+        "from": { "type": "string" },
+        "value": { "type": "number" }
+      }
+    },
+    "Update": {
+      "type": "object",
+      "x-order": ["parameter_id", "kind", "layer_edge", "parameter_role", "from_unit", "to_unit", "weight_before", "optimizer", "gradient", "update", "weight_after"],
+      "additionalProperties": false,
+      "required": ["parameter_id", "kind", "weight_before", "optimizer", "gradient", "update", "weight_after"],
+      "properties": {
+        "parameter_id": { "type": "string" },
+        "kind": { "enum": ["weight", "bias"] },
+        "layer_edge": { "enum": ["input_to_hidden", "hidden_to_output", "bias_to_layer"] },
+        "parameter_role": { "type": "string" },
+        "from_unit": { "type": "string" },
+        "to_unit": { "type": "string" },
+        "weight_before": { "type": "number" },
+        "optimizer": {
+          "type": "object",
+          "x-order": ["name", "learning_rate", "factors", "product_order"],
+          "additionalProperties": false,
+          "required": ["name", "learning_rate", "factors", "product_order"],
+          "properties": {
+            "name": { "enum": ["sgd"] },
+            "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
+            "factors": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/NamedFactor" } },
+            "product_order": { "const": "left_to_right" }
+          }
+        },
+        "gradient": { "type": "number" },
+        "update": { "type": "number" },
+        "weight_after": { "type": "number" }
+      }
+    },
+    "PostUpdateForward": {
+      "type": "object",
+      "required": ["status"],
+      "additionalProperties": { "$ref": "#/$defs/ForwardUnit" },
+      "properties": {
+        "status": { "enum": ["pending_engine_first_run", "filled"] },
+        "required_before_promotion": { "type": "boolean" },
+        "fields_required": { "type": "array", "items": { "type": "string" } },
+        "fill_specification": { "type": "string" },
+        "note": { "type": "string" }
+      }
+    },
+    "PostUpdateLoss": {
+      "type": "object",
+      "x-order": ["status", "required_before_promotion", "fields_required", "drift_check_against_published", "note", "per_output", "total"],
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["pending_engine_first_run", "filled"] },
+        "required_before_promotion": { "type": "boolean" },
+        "fields_required": { "type": "array", "items": { "type": "string" } },
+        "drift_check_against_published": { "type": "object" },
+        "note": { "type": "string" },
+        "per_output": { "type": "object", "additionalProperties": { "type": "number" } },
+        "total": { "type": "number" }
+      }
+    }
+  }
+}

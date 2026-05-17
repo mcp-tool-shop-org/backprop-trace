@@ -54,6 +54,9 @@ import {
   getInputSchema,
   INPUT_SCHEMA_VERSIONS,
   type InputSchemaVersion,
+  getFrameworkTraceSchema,
+  FRAMEWORK_TRACE_SCHEMA_VERSIONS,
+  type FrameworkTraceSchemaVersion,
 } from "./schema-loader.js";
 
 // Compile both schemas once at module load. Ajv compilation is hot:
@@ -96,6 +99,10 @@ const ajv = new Ajv2020({
 // metadata) so removal is structurally invisible to downstream validators.
 ajv.addKeyword({ keyword: "x-order" });
 ajv.addKeyword({ keyword: "x-rule" });
+// v0.6: framework-trace.v0.1.0.json declares an `x-purpose` annotation
+// at the schema root naming the schema's audience + role. Pure-annotation
+// (no validation semantics), register as no-op for Ajv strict mode.
+ajv.addKeyword({ keyword: "x-purpose" });
 
 /**
  * Strip top-level `x-changes-from-*` annotations from a loaded schema
@@ -143,6 +150,21 @@ for (const v of INPUT_SCHEMA_VERSIONS) {
   inputValidators.set(
     v,
     ajv.compile(stripInvalidKeywordAnnotations(getInputSchema(v))),
+  );
+}
+
+// Compile framework-trace sidecar validators (v0.6) on the SAME Ajv
+// instance. The framework-trace schema family lives parallel to the
+// topology-input schema family — see schema-loader.ts for the
+// rationale. v0.6 ships exactly one ("0.1.0").
+const frameworkTraceValidators = new Map<
+  FrameworkTraceSchemaVersion,
+  ValidateFunction
+>();
+for (const v of FRAMEWORK_TRACE_SCHEMA_VERSIONS) {
+  frameworkTraceValidators.set(
+    v,
+    ajv.compile(stripInvalidKeywordAnnotations(getFrameworkTraceSchema(v))),
   );
 }
 
@@ -435,5 +457,91 @@ export function validateTopologyInputOrThrow(
       `The input must NOT contain receipt-only fields (forward, loss, ` +
       `updates, parameters_after, post_update_forward, post_update_loss, ` +
       `fixture_status); those are engine outputs.`,
+  );
+}
+
+// --- v0.6 framework-trace sidecar validator ------------------------------
+
+/**
+ * Discriminated-union result of validateFrameworkTraceSidecar.
+ *
+ * On `ok: true` the input is structurally guaranteed (at the JSON-shape
+ * level) to conform to the named framework-trace schema. The cast to
+ * `unknown` mirrors validateReceiptSchema — the importer code is
+ * responsible for the engine-semantic invariants (topology cross-
+ * references, finite scalars, etc.).
+ */
+export type FrameworkTraceValidationResult =
+  | { ok: true; sidecar: unknown; schemaVersion: FrameworkTraceSchemaVersion }
+  | { ok: false; errors: SchemaError[]; schemaVersion: FrameworkTraceSchemaVersion };
+
+export type ValidateFrameworkTraceOptions = {
+  version?: FrameworkTraceSchemaVersion;
+};
+
+/**
+ * Validate an unknown value against the framework-trace sidecar schema
+ * family (v0.6 external trace ingestion input contract).
+ *
+ * Dispatch order:
+ *   1. If `opts.version` is supplied, validate against that exact schema.
+ *   2. Else, default to "0.1.0" (the only shipped version).
+ *
+ * Sidecars do NOT carry a `schema_version` discriminator field —
+ * instead they declare a `format` constant ("framework-trace.v0.1.0").
+ * The dispatcher does not branch on the format string; that's a separate
+ * check the importer performs to fail loudly when a sidecar's declared
+ * format doesn't match the schema version actually validating it.
+ *
+ * Does NOT throw on validation failure.
+ */
+export function validateFrameworkTraceSidecar(
+  input: unknown,
+  opts?: ValidateFrameworkTraceOptions,
+): FrameworkTraceValidationResult {
+  const version: FrameworkTraceSchemaVersion = opts?.version ?? "0.1.0";
+  const validator = frameworkTraceValidators.get(version);
+  if (!validator) {
+    throw new Error(
+      `Internal: no compiled validator for framework-trace schema version ${JSON.stringify(version)}. ` +
+        `This indicates schema-loader.ts FRAMEWORK_TRACE_SCHEMA_VERSIONS was updated without a ` +
+        `matching schemas/framework-trace.v${version}.json file.`,
+    );
+  }
+  if (validator(input)) {
+    return { ok: true, sidecar: input, schemaVersion: version };
+  }
+  const errors = (validator.errors ?? []).map((e) => ({
+    instancePath: e.instancePath ?? "",
+    schemaPath: e.schemaPath ?? "",
+    keyword: e.keyword ?? "",
+    message: e.message ?? "",
+    params: (e.params ?? {}) as Record<string, unknown>,
+  }));
+  return { ok: false, errors, schemaVersion: version };
+}
+
+/**
+ * Convenience wrapper that throws if framework-trace sidecar validation
+ * fails. Mirrors validateReceiptOrThrow / validateTopologyInputOrThrow.
+ *
+ * @throws Error if the input does not satisfy the framework-trace sidecar
+ *         schema. The thrown Error names the dispatched schema version.
+ */
+export function validateFrameworkTraceSidecarOrThrow(
+  input: unknown,
+  opts?: ValidateFrameworkTraceOptions,
+): unknown {
+  const result = validateFrameworkTraceSidecar(input, opts);
+  if (result.ok) return result.sidecar;
+  const summary = result.errors
+    .map((e) => `${e.instancePath || "/"}: ${e.message}`)
+    .join("; ");
+  throw new Error(
+    `Framework-trace sidecar schema validation failed (v${result.schemaVersion}): ${summary}. ` +
+      `Hint: full error list available via validateFrameworkTraceSidecar(). ` +
+      `The sidecar MUST declare format: "framework-trace.v${result.schemaVersion}" and carry ` +
+      `topology + inputs + targets + parameters_before + forward + loss + backward + ` +
+      `updates + parameters_after.`,
   );
 }

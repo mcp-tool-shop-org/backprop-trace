@@ -489,20 +489,28 @@ void GENERAL_REQUIRED_TOPLEVEL_ORDER;
  * @returns Canonical JSONL line ending in LF (`}\n`).
  */
 export function emitGeneralReceipt(r: GeneralReceipt): string {
-  // Build the field list in declared order. Optional trace_id/step_index
-  // insert between learning_rate and unit_order, matching the v0.2.0
-  // schema's top-level x-order array.
+  // Build the field list in declared order. Optional fields insert at
+  // their schema-declared positions. v0.6: source_framework + attestor
+  // sit between fixture_status and metadata per receipt.v0.4.0.json
+  // x-order. v0.2/v0.3 receipts (no source_framework/attestor) emit
+  // byte-identically because the optional emitters return empty.
   const parts: string[] = [
     `"schema_version":${S(r.schema_version)}`,
     `"fixture":${S(r.fixture)}`,
     `"step":${r.step}`,
     `"fixture_status":${emitFixtureStatusV02(r.fixture_status)}`,
-    `"metadata":${emitMetadataV02(r.metadata)}`,
-    `"numeric_policy":${emitNumericPolicyV02(r.numeric_policy)}`,
-    `"bias_policy":${emitBiasPolicyV02(r.bias_policy)}`,
-    `"topology":${emitTopologyV02(r.topology)}`,
-    `"learning_rate":${N(r.learning_rate)}`,
   ];
+  if (r.source_framework !== undefined) {
+    parts.push(`"source_framework":${emitSourceFramework(r.source_framework)}`);
+  }
+  if (r.attestor !== undefined) {
+    parts.push(`"attestor":${emitAttestor(r.attestor)}`);
+  }
+  parts.push(`"metadata":${emitMetadataV02(r.metadata)}`);
+  parts.push(`"numeric_policy":${emitNumericPolicyV02(r.numeric_policy)}`);
+  parts.push(`"bias_policy":${emitBiasPolicyV02(r.bias_policy)}`);
+  parts.push(`"topology":${emitTopologyV02(r.topology)}`);
+  parts.push(`"learning_rate":${N(r.learning_rate)}`);
   if (r.trace_id !== undefined) parts.push(`"trace_id":${S(r.trace_id)}`);
   if (r.step_index !== undefined) parts.push(`"step_index":${r.step_index}`);
   parts.push(`"inputs":${emitOrderedNumberMap(r.inputs, r.topology.unit_order.input)}`);
@@ -794,4 +802,58 @@ function emitPostUpdateLossGeneral(
     `"total":${N(p.total)}`,
     "}",
   ].join("");
+}
+
+// --- v0.6 emitters (observer-mode source_framework + attestor) -----------
+
+/**
+ * v0.6 — emit source_framework block. Schema x-order:
+ * [name, version, information_uri, extractor]. Only emits fields that
+ * are present (information_uri + extractor are optional).
+ */
+function emitSourceFramework(
+  sf: NonNullable<GeneralReceipt["source_framework"]>,
+): string {
+  const parts: string[] = [`"name":${S(sf.name)}`, `"version":${S(sf.version)}`];
+  if (sf.information_uri !== undefined) {
+    parts.push(`"information_uri":${S(sf.information_uri)}`);
+  }
+  if (sf.extractor !== undefined) {
+    parts.push(
+      `"extractor":{"name":${S(sf.extractor.name)},"version":${S(sf.extractor.version)}}`,
+    );
+  }
+  return `{${parts.join(",")}}`;
+}
+
+/**
+ * v0.6 — emit attestor block. Schema x-order:
+ * [computed_by, verified_by, differential_tolerance, import_provenance,
+ * skip_basis, signed_subject_digest]. Optional sub-blocks emit only when
+ * present.
+ */
+function emitAttestor(a: NonNullable<GeneralReceipt["attestor"]>): string {
+  const parts: string[] = [
+    `"computed_by":{"kind":${S(a.computed_by.kind)},"identity":${S(a.computed_by.identity)}}`,
+    `"verified_by":{"kind":${S(a.verified_by.kind)},"identity":${S(a.verified_by.identity)}}`,
+    `"differential_tolerance":{"atol":${N(a.differential_tolerance.atol)},"rtol":${N(a.differential_tolerance.rtol)}}`,
+  ];
+  if (a.import_provenance !== undefined) {
+    const ip = a.import_provenance;
+    const ipParts: string[] = [
+      `"source_format":${S(ip.source_format)}`,
+      `"source_hash":${S(ip.source_hash)}`,
+    ];
+    if (ip.import_timestamp !== undefined) {
+      ipParts.push(`"import_timestamp":${S(ip.import_timestamp)}`);
+    }
+    parts.push(`"import_provenance":{${ipParts.join(",")}}`);
+  }
+  if (a.skip_basis !== undefined) {
+    parts.push(`"skip_basis":${S(a.skip_basis)}`);
+  }
+  if (a.signed_subject_digest !== undefined) {
+    parts.push(`"signed_subject_digest":${S(a.signed_subject_digest)}`);
+  }
+  return `{${parts.join(",")}}`;
 }
