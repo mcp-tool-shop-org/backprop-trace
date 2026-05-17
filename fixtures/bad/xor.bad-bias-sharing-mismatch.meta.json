@@ -1,0 +1,34 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "xor.bad-bias-sharing-mismatch.meta",
+  "describes": "fixtures/bad/xor.bad-bias-sharing-mismatch.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/xor-per-neuron-bias.golden.jsonl. Differs in exactly 4 places: the 3 fixture_status fields (authoring_state, verification_state, canonical) and the single targeted topology.bias_sharing string-enum field.",
+  "mutation": {
+    "field_path": "topology.bias_sharing",
+    "parameter_id": null,
+    "original": "per_neuron",
+    "mutated": "per_layer",
+    "kind": "string_enum_change",
+    "what_was_NOT_mutated": [
+      "topology.parameters[*].applies_to_units (each bias param's applies_to_units still has length 1, matching per_neuron semantics — now contradicts per_layer which would require length === layer size)",
+      "topology.unit_order (hidden: [h1, h2] length 2; output: [y] length 1 — these define the per_layer expected lengths)",
+      "all weight parameters, all bias parameters, all updates, parameters_before, parameters_after, forward, loss, backward"
+    ]
+  },
+  "single_target_invariant": "topology.bias_sharing='per_layer' implies each bias parameter's applies_to_units must list ALL units in its layer. b_h1's applies_to_units=['h1'] has length 1 but the hidden layer has 2 units. Same for b_h2. (b_y's applies_to_units=['y'] has length 1 which matches the output layer's size 1, so b_y does NOT fire.)",
+  "reconciliation_check_targeted_first": "Rule 0e (structural): topology.bias_sharing vs topology.parameters[*].applies_to_units.length",
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/xor.bad-bias-sharing-mismatch.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 0",
+      "b_h1",
+      "topology.parameters[id=b_h1].applies_to_units"
+    ],
+    "stderr_must_NOT_contain": [
+      "b_y"
+    ]
+  },
+  "purpose": "Anti-circularity (Csmith/CompCert lineage) for the v0.4.1 Rule 0 structural-consistency reconciler: this fixture exercises sub-check 0d/0e — bias_sharing declaration must match the per-parameter applies_to_units array shape. Without this fixture, the structural-consistency check could regress silently."
+}

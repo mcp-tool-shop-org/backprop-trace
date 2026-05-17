@@ -14,6 +14,76 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.4.1] - 2026-05-17
+
+Focused trust patch on the v0.4.0 ship: closes the known reconciler gap
+flagged independently by 3 agents during the v0.4 swarm — the
+`bias_policy.mode` vs `Update.kind` contradiction surfaces only via
+`bp verify general`'s engine-reproduce stage, never via `reconcileReceipt`.
+v0.4.1 wires a Rule 0 cross-consistency Phase 0 that catches this and 6
+other receipt-internal structural contradictions before any numeric rule
+runs.
+
+### Added
+
+- `checkRule0Structural` Phase 0 in `reconcileReceipt`. Catches
+  receipt-internal contradictions before Rules 1-8. Short-circuits if
+  any Rule 0 failure fires (numeric rules on a structurally-broken
+  receipt produce confusing quartets — the structural failure alone is
+  what the operator needs to fix). Each sub-check gracefully no-ops for
+  v0.1 Mazur receipts (which don't carry the v0.2+ topology metadata it
+  consults). Sub-checks:
+  - **0a**: `bias_policy.mode='constant'` contradicts `updates[*].kind='bias'`
+  - **0b**: `bias_policy.mode='constant'` contradicts drifted bias `parameters_after`
+  - **0c**: `bias_policy.mode='sgd'` declares biases but no `kind='bias'` updates exist
+  - **0d/0e**: `bias_sharing` vs `applies_to_units.length` mismatch
+  - **0f**: `Update.kind` vs `topology.parameters[].role` mismatch
+  - **0g**: `topology.{input,hidden,output}_size` vs `unit_order.{input,hidden,output}.length` mismatch
+- 3 new bad-* fixtures (paired per Csmith doctrine), each isolating one
+  Rule 0 sub-check:
+  - `fixtures/bad/xor.bad-bias-sharing-mismatch.jsonl` (Rule 0e)
+  - `fixtures/bad/xor.bad-kind-vs-role.jsonl` (Rule 0f)
+  - `fixtures/bad/xor.bad-topology-size.jsonl` (Rule 0g)
+  Sub-checks 0a + 0b are covered by the pre-existing v0.4.0
+  `xor.bad-bias-mode-mismatch.jsonl` fixture (which was a skipped test
+  in v0.4.0; now passes naturally).
+- 3 new tests targeting the new fixtures.
+
+### Changed
+
+- `RULE_DESCRIPTIONS[0]` expanded to mention the v0.4.1+ cross-consistency
+  checks alongside the legacy "shape invalid / unsupported product_order /
+  non-finite arithmetic" cases.
+- `xor.bad-bias-mode-mismatch.test.ts` no longer skips — it fires the
+  defensive assertion path and passes (Rule 0a + 0b both surface on this
+  fixture per its meta.json mutation).
+
+### Tests
+
+- 291 → 294 total tests; 288 → 292 passing; 3 → 2 skipped.
+- 0 fail (Mazur byte-equal preserved; all v0.4.0 behavior unchanged).
+- Remaining 2 skips are carry-overs from v0.3: `bp verify general on Mazur (v0.1)`
+  cross-version policy + `bp verify multi <good-fixture>` (no good multi-step
+  fixture yet).
+
+### Migration notes (v0.4.0 → v0.4.1)
+
+- Pure additive. Existing receipts that pass v0.4.0 reconcile continue to
+  pass v0.4.1 reconcile. v0.1/v0.2 Mazur receipts are unaffected (Rule 0
+  sub-checks no-op when their input fields are absent).
+- Consumers that pattern-match on `result.failures[*].rule` may now see
+  `rule: 0` failures where v0.4.0 returned `ok: true` — these are receipts
+  that v0.4.0 silently accepted but were always structurally inconsistent.
+
+### Out of scope (deferred)
+
+- Softmax + cross-entropy (v0.5 with factor-decomposition design phase)
+- `bp attest` / DSSE / in-toto (premature without consumer)
+- Optimizer state (momentum, Adam, weight decay)
+- Batched receipts
+
+---
+
 ## [0.4.0] - 2026-05-16
 
 ### Added

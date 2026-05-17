@@ -1,0 +1,37 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "xor.bad-kind-vs-role.meta",
+  "describes": "fixtures/bad/xor.bad-kind-vs-role.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/xor-per-neuron-bias.golden.jsonl. Differs in exactly 4 places: the 3 fixture_status fields and the single targeted updates[0].kind string-enum field.",
+  "mutation": {
+    "field_path": "updates[0].kind",
+    "parameter_id": "w_x1_h1",
+    "original": "weight",
+    "mutated": "bias",
+    "kind": "string_enum_change",
+    "what_was_NOT_mutated": [
+      "topology.parameters[id=w_x1_h1].role (still 'input_to_hidden_weight' — now contradicts updates[0].kind='bias')",
+      "updates[0].layer_edge (still 'input_to_hidden' — also contradicts kind='bias' but Rule 0 fires on kind/role first)",
+      "updates[0].optimizer.factors (still 2 factors — weight-style; bias updates have 1 factor)",
+      "updates[1..8] (all other updates retain their correct kind)",
+      "topology, parameters_before, parameters_after, forward, loss, backward"
+    ]
+  },
+  "single_target_invariant": "Receipt declares updates[0].kind='bias' on parameter w_x1_h1 which has topology role='input_to_hidden_weight'. Per Rule 0f: kind='bias' requires role in {hidden_bias, output_bias}; kind='weight' requires role outside that set. The pairing is contradictory.",
+  "reconciliation_check_targeted_first": "Rule 0f (structural): Update.kind vs topology.parameters[*].role consistency",
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/xor.bad-kind-vs-role.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 0",
+      "w_x1_h1",
+      "updates[0].kind"
+    ],
+    "stderr_must_NOT_contain": [
+      "Rule 4",
+      "Rule 5"
+    ]
+  },
+  "purpose": "Anti-circularity (Csmith/CompCert lineage) for the v0.4.1 Rule 0 structural-consistency reconciler: kind-role mismatch is a class of authoring error that numeric Rules 1-8 cannot catch (the rules don't consult topology.parameters[].role). Without this Phase 0 check, a receipt claiming a weight-role parameter received a bias-style update would pass numerically and silently misclassify the parameter type."
+}

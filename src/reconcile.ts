@@ -235,7 +235,7 @@ export type ReconciliationResult =
  * source.
  */
 export const RULE_DESCRIPTIONS: Record<number, string> = {
-  0: "Structural failure: receipt shape, unsupported product_order, or non-finite arithmetic.",
+  0: "Structural failure: receipt-internal contradiction (shape invalid, unsupported product_order, non-finite arithmetic, OR v0.4.1+ cross-consistency between bias_policy.mode / bias_sharing / Update.kind / topology declarations).",
   1: "Output error signal consistency: signal_value == product(factors), left-to-right.",
   2: "Downstream contribution and backpropagated sum: contribution.value == downstream_signal * weight_value AND backpropagated_sum == sum(contributions in summation_order).",
   3: "Hidden error signal consistency: signal_value == backpropagated_sum * activation_derivative, left-to-right.",
@@ -264,6 +264,24 @@ type Update = {
   gradient: number
   update: number
   weight_after: number
+  kind?: "weight" | "bias"
+}
+
+type TopologyParameter = {
+  id: string
+  role: "input_to_hidden_weight" | "hidden_to_output_weight" | "hidden_bias" | "output_bias"
+  from_unit?: string
+  to_unit?: string
+  applies_to_units?: string[]
+}
+
+type TopologyShape = {
+  input_size?: number
+  hidden_size?: number
+  output_size?: number
+  unit_order?: { input?: string[]; hidden?: string[]; output?: string[] }
+  parameters?: TopologyParameter[]
+  bias_sharing?: "per_layer" | "per_neuron"
 }
 
 type Contribution = {
@@ -295,6 +313,7 @@ type Receipt = {
   updates: Update[]
   parameters_before?: Record<string, number>
   parameters_after?: Record<string, number>
+  topology?: TopologyShape
   backward?: {
     output_error_signals?: Record<string, OutputErrorSignalShape>
     hidden_error_signals?: Record<string, HiddenErrorSignalShape>
@@ -634,6 +653,23 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
   const failures: ReconciliationFailure[] = []
   const tolerance = r.numeric_policy.tolerance
 
+  // --- Rule 0 (Phase 0): structural cross-consistency -------------------
+  // Catch receipt-internal contradictions BEFORE running numeric rules.
+  // Numeric Rules 1-8 on a structurally-broken receipt produce confusing
+  // failure quartets (e.g., Rule 7 saying "params_after disagrees with
+  // before+update" when the real bug is "bias_policy.mode='constant' but
+  // bias updates exist"). Short-circuit: if Phase 0 fires, return without
+  // running Rules 1-8. The structural quartet alone tells the operator
+  // what's actually wrong.
+  //
+  // Each check gracefully no-ops when the relevant v0.2+ fields aren't
+  // present (e.g., v0.1 Mazur receipts skip the topology.parameters checks
+  // since v0.1 schema doesn't carry that field).
+  checkRule0Structural(r, failures)
+  if (failures.length > 0) {
+    return { ok: false, failures }
+  }
+
   // Cascade-tracking state: for each parameter_id, remember the set of
   // rule numbers that have already failed on it in this run. Rules 5, 6,
   // 7 consult this map to set `cascade_of_rule` on their own failures.
@@ -715,6 +751,241 @@ function nonFiniteMessage(rule: number, fieldPath: string, recomputed: number, s
     `recomputed=${String(recomputed)}, stored=${String(stored)}. ` +
     `Check upstream factors for NaN/Infinity.`
   )
+}
+
+/**
+ * Rule 0 (structural): receipt-internal cross-consistency checks that catch
+ * contradictions BEFORE numeric reconciliation. Wired in v0.4.1 to close the
+ * gap surfaced by v0.4's xor.bad-bias-mode-mismatch fixture.
+ *
+ * Checks (each gracefully no-ops when the relevant v0.2+ fields are absent,
+ * so v0.1 Mazur receipts pass through cleanly):
+ *
+ *   0a. bias_policy.mode === "constant" but updates[] contains kind:"bias"
+ *       — the policy declares biases never change, but the receipt has
+ *       bias-update entries. Closes xor.bad-bias-mode-mismatch.
+ *
+ *   0b. bias_policy.mode === "constant" but a bias parameter's
+ *       parameters_after value differs from parameters_before — same
+ *       contradiction, observed at the final-state side.
+ *
+ *   0c. bias_policy.mode === "sgd" but the topology declares bias
+ *       parameters AND updates[] contains zero kind:"bias" entries — the
+ *       policy declares SGD on biases, but no bias updates were emitted.
+ *
+ *   0d. bias_sharing === "per_neuron" but a bias parameter's
+ *       applies_to_units has length != 1 — per-neuron biases serve exactly
+ *       one unit each.
+ *
+ *   0e. bias_sharing === "per_layer" but a bias parameter's
+ *       applies_to_units length != the corresponding layer size — per-layer
+ *       biases must serve every unit in their layer.
+ *
+ *   0f. Update.kind mismatches its parameter's role (bias kind on a weight
+ *       parameter, or weight kind on a bias parameter).
+ *
+ *   0g. topology.{input,hidden,output}_size doesn't match
+ *       unit_order.{input,hidden,output}.length.
+ *
+ * For all sub-checks: rule: 0, field_path identifies the contradicting
+ * field, message explains the contradiction in plain English with a
+ * remediation pointer.
+ */
+function checkRule0Structural(
+  r: Receipt,
+  failures: ReconciliationFailure[],
+): void {
+  const bp = r.bias_policy
+  const topo = r.topology
+
+  // 0a. constant mode + bias updates -----------------------------------
+  if (bp?.mode === "constant" && Array.isArray(r.updates)) {
+    for (let i = 0; i < r.updates.length; i++) {
+      const u = r.updates[i]
+      if (u && u.kind === "bias") {
+        failures.push({
+          rule: 0,
+          parameter_id: u.parameter_id,
+          field_path: `updates[${i}].kind`,
+          stored: 0,
+          recomputed: 0,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `bias_policy.mode='constant' contradicts updates[${i}].kind='bias' on ` +
+            `parameter '${u.parameter_id}'. Under mode='constant' the engine emits no ` +
+            `bias-update entries (biases stay fixed). Either set bias_policy.mode='sgd' ` +
+            `or remove the bias updates and restore bias parameters_after to equal ` +
+            `parameters_before.`,
+        })
+      }
+    }
+  }
+
+  // 0b. constant mode + bias parameters drifted ------------------------
+  if (
+    bp?.mode === "constant" &&
+    topo?.parameters &&
+    r.parameters_before &&
+    r.parameters_after
+  ) {
+    for (const param of topo.parameters) {
+      if (param.role === "hidden_bias" || param.role === "output_bias") {
+        const before = r.parameters_before[param.id]
+        const after = r.parameters_after[param.id]
+        if (
+          typeof before === "number" &&
+          typeof after === "number" &&
+          before !== after
+        ) {
+          failures.push({
+            rule: 0,
+            parameter_id: param.id,
+            field_path: `parameters_after.${param.id}`,
+            stored: after,
+            recomputed: before,
+            delta: Math.abs(after - before),
+            tolerance: 0,
+            message:
+              `bias_policy.mode='constant' contradicts parameters_after.${param.id} ` +
+              `(${after}) != parameters_before.${param.id} (${before}). Under ` +
+              `mode='constant', bias parameters must be exactly equal across the step ` +
+              `(tolerance=0). Either set bias_policy.mode='sgd' or restore the bias ` +
+              `value.`,
+          })
+        }
+      }
+    }
+  }
+
+  // 0c. sgd mode + bias parameters declared + no bias updates ----------
+  if (bp?.mode === "sgd" && topo?.parameters && Array.isArray(r.updates)) {
+    const declaredBiasIds = new Set(
+      topo.parameters
+        .filter((p) => p.role === "hidden_bias" || p.role === "output_bias")
+        .map((p) => p.id),
+    )
+    if (declaredBiasIds.size > 0) {
+      const updatedBiasIds = new Set(
+        r.updates.filter((u) => u?.kind === "bias").map((u) => u.parameter_id),
+      )
+      const missing: string[] = []
+      for (const id of declaredBiasIds) {
+        if (!updatedBiasIds.has(id)) missing.push(id)
+      }
+      if (missing.length > 0) {
+        failures.push({
+          rule: 0,
+          field_path: "bias_policy.mode",
+          stored: 0,
+          recomputed: 0,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `bias_policy.mode='sgd' declares biases are updated, but updates[] ` +
+            `contains zero kind='bias' entries for declared bias parameter(s): ` +
+            `${missing.join(", ")}. Either emit bias update entries or set ` +
+            `bias_policy.mode='constant'.`,
+        })
+      }
+    }
+  }
+
+  // 0d + 0e. bias_sharing vs applies_to_units length -------------------
+  if (
+    topo?.bias_sharing &&
+    topo.parameters &&
+    topo.unit_order
+  ) {
+    for (const param of topo.parameters) {
+      if (param.role !== "hidden_bias" && param.role !== "output_bias") continue
+      const layer =
+        param.role === "hidden_bias"
+          ? topo.unit_order.hidden
+          : topo.unit_order.output
+      if (!Array.isArray(layer) || !Array.isArray(param.applies_to_units)) continue
+      const actual = param.applies_to_units.length
+      const expected = topo.bias_sharing === "per_layer" ? layer.length : 1
+      if (actual !== expected) {
+        failures.push({
+          rule: 0,
+          parameter_id: param.id,
+          field_path: `topology.parameters[id=${param.id}].applies_to_units`,
+          stored: actual,
+          recomputed: expected,
+          delta: Math.abs(actual - expected),
+          tolerance: 0,
+          message:
+            `topology.bias_sharing='${topo.bias_sharing}' implies bias parameter ` +
+            `'${param.id}' should have applies_to_units.length === ${expected} ` +
+            `(${topo.bias_sharing === "per_layer" ? "the entire layer" : "exactly one unit"}), ` +
+            `got ${actual}. Either set bias_sharing='${topo.bias_sharing === "per_layer" ? "per_neuron" : "per_layer"}' ` +
+            `or restructure applies_to_units to match the declared mode.`,
+        })
+      }
+    }
+  }
+
+  // 0f. Update.kind vs parameter role ----------------------------------
+  if (topo?.parameters && Array.isArray(r.updates)) {
+    const roleById = new Map<string, TopologyParameter["role"]>()
+    for (const p of topo.parameters) roleById.set(p.id, p.role)
+    for (let i = 0; i < r.updates.length; i++) {
+      const u = r.updates[i]
+      if (!u) continue
+      const role = roleById.get(u.parameter_id)
+      if (role === undefined) continue // schema validation should have caught this
+      const isBiasRole = role === "hidden_bias" || role === "output_bias"
+      const isBiasKind = u.kind === "bias"
+      if (u.kind !== undefined && isBiasRole !== isBiasKind) {
+        failures.push({
+          rule: 0,
+          parameter_id: u.parameter_id,
+          field_path: `updates[${i}].kind`,
+          stored: 0,
+          recomputed: 0,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `updates[${i}].kind='${u.kind}' contradicts topology.parameters[id=${u.parameter_id}].role='${role}'. ` +
+            `${isBiasRole ? "Bias-role parameters require kind='bias'" : "Weight-role parameters require kind='weight'"}. ` +
+            `Either correct the update's kind or fix the parameter's role declaration.`,
+        })
+      }
+    }
+  }
+
+  // 0g. topology sizes vs unit_order lengths ---------------------------
+  if (topo?.unit_order) {
+    const checks: Array<{
+      side: "input" | "hidden" | "output"
+      declared: number | undefined
+      actual: number | undefined
+    }> = [
+      { side: "input", declared: topo.input_size, actual: topo.unit_order.input?.length },
+      { side: "hidden", declared: topo.hidden_size, actual: topo.unit_order.hidden?.length },
+      { side: "output", declared: topo.output_size, actual: topo.unit_order.output?.length },
+    ]
+    for (const c of checks) {
+      if (
+        typeof c.declared === "number" &&
+        typeof c.actual === "number" &&
+        c.declared !== c.actual
+      ) {
+        failures.push({
+          rule: 0,
+          field_path: `topology.${c.side}_size`,
+          stored: c.declared,
+          recomputed: c.actual,
+          delta: Math.abs(c.declared - c.actual),
+          tolerance: 0,
+          message:
+            `topology.${c.side}_size=${c.declared} contradicts topology.unit_order.${c.side}.length=${c.actual}. ` +
+            `These must match: the declared size is the count of unit ids in the layer.`,
+        })
+      }
+    }
+  }
 }
 
 function checkRule1(

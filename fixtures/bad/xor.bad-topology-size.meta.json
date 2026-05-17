@@ -1,0 +1,34 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "xor.bad-topology-size.meta",
+  "describes": "fixtures/bad/xor.bad-topology-size.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/xor-per-neuron-bias.golden.jsonl. Differs in exactly 4 places: the 3 fixture_status fields and the single targeted topology.input_size integer field.",
+  "mutation": {
+    "field_path": "topology.input_size",
+    "parameter_id": null,
+    "original": 2,
+    "mutated": 3,
+    "kind": "integer_change",
+    "what_was_NOT_mutated": [
+      "topology.unit_order.input (still ['x1','x2'] with length 2 — now contradicts input_size=3)",
+      "topology.hidden_size, topology.output_size (still match their respective unit_order array lengths)",
+      "all weights, biases, updates, forward, backward, loss"
+    ]
+  },
+  "single_target_invariant": "topology.input_size=3 contradicts topology.unit_order.input.length=2. The declared size must equal the array length — input_size IS the count of unit ids in the input layer.",
+  "reconciliation_check_targeted_first": "Rule 0g (structural): topology.{input,hidden,output}_size must equal topology.unit_order.{input,hidden,output}.length",
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/xor.bad-topology-size.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 0",
+      "topology.input_size"
+    ],
+    "stderr_must_NOT_contain": [
+      "hidden_size",
+      "output_size"
+    ]
+  },
+  "purpose": "Anti-circularity (Csmith/CompCert lineage) for the v0.4.1 Rule 0 structural-consistency reconciler: topology size declarations are redundant-with-unit_order metadata that must stay coherent. JSON Schema cannot express this cross-field invariant (would need conditional length matching), so a runtime check is the only enforcement."
+}
