@@ -13,3 +13,6 @@ coverage/
 .idea/
 Thumbs.db
 .pnpm-store/
+
+# Translation tool cache (polyglot-mcp / TranslateGemma)
+.polyglot-cache.json
