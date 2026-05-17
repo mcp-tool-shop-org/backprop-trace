@@ -1,0 +1,714 @@
+/**
+ * v0.3 generalized backprop engine — forward / backward / SGD update for
+ * any topology declared via src/topology.ts.
+ *
+ * Coexistence strategy (see design memo §1 + this file's commit notes):
+ * runMazurStep in src/engine.ts is UNCHANGED and remains the canonical
+ * Mazur 2-2-2 path. This module ships alongside it. The two produce
+ * mathematically equivalent receipts for the Mazur topology, but the
+ * Mazur byte-equal golden remains pinned to runMazurStep's output so the
+ * v0.1 contract is ironclad. runGeneralStep produces v0.2.0-schema
+ * receipts (note the bumped schema_version and the generic ForwardUnit /
+ * Update keying by unit/parameter id rather than the Mazur-specific
+ * h1/h2/o1/o2/w1..w8 shape).
+ *
+ * Computation order pins (must mirror src/engine.ts's Mazur path so the
+ * math is provably identical for the Mazur topology):
+ *   - Hidden unit forward: net = sum_i (input_i * weight_i_to_h) + bias_hidden,
+ *     STRICT left-to-right in unit_order.input order.
+ *   - Output unit forward: net = sum_h (out_h * weight_h_to_o) + bias_output,
+ *     STRICT left-to-right in unit_order.hidden order.
+ *   - Hidden backward summation: sum_o (signal_o * weight_h_to_o) in
+ *     unit_order.output order.
+ *   - Update iteration: parameter_order (which biases are skipped per
+ *     bias_policy.mode === "constant").
+ *
+ * Hybrid tolerance (memo §3) is carried THROUGH this engine but not
+ * applied here — the engine emits raw bytes; the reconciler is what
+ * enforces tolerance. numeric_policy.tolerance accepts either a number
+ * (legacy scalar; sugar for {atol: N, rtol: 0}) or the v0.3 object
+ * {atol, rtol} form. Both shapes round-trip through the receipt.
+ *
+ * Multi-step support (memo §4): trace_id + step_index are optional inputs;
+ * when present they propagate to the receipt and downstream Rules 9/10
+ * use them. Single-step callers leave them undefined.
+ */
+
+import {
+  activate,
+  activationDerivativeFromOut,
+  type ActivationName,
+} from "./activations.js"
+import {
+  assertTopologyValid,
+  findHiddenBias,
+  findOutputBias,
+  findWeight,
+  type ParameterId,
+  type Topology,
+  type UnitId,
+} from "./topology.js"
+
+// --- Shared structural types -----------------------------------------------
+
+/**
+ * Per-unit forward pass result — pre-activation `net` and post-activation
+ * `out`. Keyed by unit id in the receipt's `forward` map.
+ */
+export type ForwardUnit = { net: number; out: number }
+
+/**
+ * A named factor in a multiplicative gradient/signal decomposition.
+ * `from` is an optional source-path string for receipt readers.
+ */
+export type NamedFactor = { name: string; from?: string; value: number }
+
+export type OutputErrorSignal = {
+  factors: NamedFactor[]
+  product_order: "left_to_right"
+  signal_value: number
+}
+
+export type DownstreamContribution = {
+  from: string
+  downstream_signal: number
+  via_weight: string
+  weight_value: number
+  value: number
+}
+
+export type HiddenErrorSignal = {
+  downstream_contributions: DownstreamContribution[]
+  summation_order: string[]
+  backpropagated_sum: number
+  activation_derivative: number
+  product_order: "left_to_right"
+  signal_value: number
+}
+
+export type Optimizer = {
+  name: "sgd"
+  learning_rate: number
+  factors: NamedFactor[]
+  product_order: "left_to_right"
+}
+
+export type Update = {
+  parameter_id: string
+  kind: "weight"
+  layer_edge: "input_to_hidden" | "hidden_to_output"
+  parameter_role: string
+  from_unit: string
+  to_unit: string
+  weight_before: number
+  optimizer: Optimizer
+  gradient: number
+  update: number
+  weight_after: number
+}
+
+// --- Policy types (carried from input through receipt) ---------------------
+
+/**
+ * v0.3 hybrid tolerance object: |a - b| <= max(atol, rtol * max(|a|, |b|))
+ * (memo §3). The legacy scalar form `tolerance: number` is accepted as
+ * sugar for {atol: number, rtol: 0} — see ToleranceSpec union.
+ */
+export type ToleranceObject = { atol: number; rtol: number }
+
+/**
+ * Tolerance as accepted at the engine boundary: either the legacy scalar
+ * (treated as {atol: scalar, rtol: 0}) or the v0.3 object. The engine
+ * stores whatever the caller supplied — it does NOT normalize. The
+ * reconciler is responsible for normalizing at consumption time.
+ */
+export type ToleranceSpec = number | ToleranceObject
+
+export type NumericPolicy = {
+  number_encoding: "decimal"
+  precision_significant_digits: number
+  rounding: "round_half_to_even"
+  tolerance: ToleranceSpec
+  computation_order: "schema_defined"
+  byte_output: {
+    format: "jsonl"
+    json_key_order: "schema_defined"
+    trailing_zero_policy: "pad_to_significant_digits"
+    indent: "none"
+  }
+}
+
+export type BiasPolicy = {
+  mode: "constant"
+  reason: string
+  updated_in_step: false
+  reconciliation: string
+}
+
+// --- GeneralInput + GeneralReceipt ----------------------------------------
+
+/**
+ * Input to runGeneralStep. Mirrors MazurInput's shape but is generic over
+ * topology, units, and parameters.
+ *
+ * The `inputs` map is keyed by input unit ids (whatever the topology
+ * declares — e.g. "i1", "x1", "f1"). `targets` is keyed by output unit
+ * ids. `parameters_before` is keyed by parameter ids (e.g. "w1", "w_x1_h1",
+ * "b_hidden"). The engine asserts every required key is present and
+ * finite at the boundary.
+ *
+ * `trace_id` + `step_index` are optional multi-step overlay (memo §4).
+ * Leave undefined for single-step receipts; Rules 9 and 10 skip when
+ * either is absent on a single-record verify.
+ */
+export type GeneralInput = {
+  readonly topology: Topology
+  readonly learning_rate: number
+  readonly inputs: Readonly<Record<string, number>>
+  readonly targets: Readonly<Record<string, number>>
+  readonly parameters_before: Readonly<Record<string, number>>
+  readonly numeric_policy: NumericPolicy
+  readonly bias_policy: BiasPolicy
+  readonly trace_id?: string
+  readonly step_index?: number
+  readonly fixture?: string
+  readonly metadata?: GeneralMetadata
+}
+
+export type GeneralMetadata = {
+  source: string
+  url_reference?: string
+  gradient_convention: "descent_direction"
+}
+
+/**
+ * Serialized form of a Topology for emission inside a receipt. Identical
+ * to Topology except the readonly hints are dropped so it deserializes
+ * round-trip as plain JSON. Equivalent at runtime.
+ */
+export type SerializedTopology = {
+  layers: ["input", "hidden", "output"]
+  unit_order: { input: UnitId[]; hidden: UnitId[]; output: UnitId[] }
+  parameter_order: ParameterId[]
+  parameters: Array<{
+    id: ParameterId
+    role:
+      | "input_to_hidden_weight"
+      | "hidden_to_output_weight"
+      | "hidden_bias"
+      | "output_bias"
+    from_unit?: UnitId
+    to_unit?: UnitId
+    applies_to_units?: UnitId[]
+  }>
+  activation_hidden: ActivationName
+  activation_output: ActivationName
+  loss: "half_squared_error"
+  bias_sharing: "per_layer"
+  input_size: number
+  hidden_size: number
+  output_size: number
+}
+
+export type FixtureStatus = {
+  authoring_state: "engine_generated"
+  verification_state: "engine_reproduced_byte_equal"
+  canonical: true
+}
+
+/**
+ * v0.2.0-schema receipt emitted by runGeneralStep.
+ *
+ * Differences vs MazurReceipt (v0.1.0):
+ *   - schema_version: "0.2.0"
+ *   - topology: full SerializedTopology (not just sizes + activation)
+ *   - forward / loss.per_output / parameters_before / parameters_after /
+ *     targets / inputs: all keyed by unit/parameter id (open-ended record),
+ *     not the fixed Mazur key set.
+ *   - Optional trace_id / step_index for multi-step overlay.
+ */
+export type GeneralReceipt = {
+  schema_version: "0.2.0"
+  fixture: string
+  step: 1
+  fixture_status: FixtureStatus
+  metadata: GeneralMetadata
+  numeric_policy: NumericPolicy
+  bias_policy: BiasPolicy
+  topology: SerializedTopology
+  learning_rate: number
+  trace_id?: string
+  step_index?: number
+  inputs: Record<string, number>
+  targets: Record<string, number>
+  parameters_before: Record<string, number>
+  forward: Record<string, ForwardUnit>
+  loss: { per_output: Record<string, number>; total: number }
+  backward: {
+    output_error_signals: Record<string, OutputErrorSignal>
+    hidden_error_signals: Record<string, HiddenErrorSignal>
+  }
+  updates: Update[]
+  parameters_after: Record<string, number>
+  post_update_forward: {
+    status: "filled"
+    units: Record<string, ForwardUnit>
+  }
+  post_update_loss: {
+    status: "filled"
+    per_output: Record<string, number>
+    total: number
+  }
+}
+
+// --- Boundary validation ---------------------------------------------------
+
+function assertFiniteGeneralInput(input: GeneralInput): void {
+  // learning_rate
+  if (!Number.isFinite(input.learning_rate)) {
+    throw new Error(
+      `runGeneralStep: input.learning_rate is not finite (got ${String(input.learning_rate)}). ` +
+        `Hint: learning_rate must be a finite positive number.`,
+    )
+  }
+  if (!(input.learning_rate > 0)) {
+    throw new Error(
+      `runGeneralStep: input.learning_rate must be > 0 (got ${String(input.learning_rate)}).`,
+    )
+  }
+  // inputs
+  for (const uid of input.topology.unit_order.input) {
+    const v = input.inputs[uid]
+    if (v === undefined) {
+      throw new Error(
+        `runGeneralStep: input.inputs is missing required input unit '${uid}'. ` +
+          `Hint: provide a numeric value for every id in topology.unit_order.input.`,
+      )
+    }
+    if (!Number.isFinite(v)) {
+      throw new Error(
+        `runGeneralStep: input.inputs['${uid}'] is not finite (got ${String(v)}).`,
+      )
+    }
+  }
+  // targets
+  for (const uid of input.topology.unit_order.output) {
+    const v = input.targets[uid]
+    if (v === undefined) {
+      throw new Error(
+        `runGeneralStep: input.targets is missing required output unit '${uid}'. ` +
+          `Hint: provide a numeric value for every id in topology.unit_order.output.`,
+      )
+    }
+    if (!Number.isFinite(v)) {
+      throw new Error(
+        `runGeneralStep: input.targets['${uid}'] is not finite (got ${String(v)}).`,
+      )
+    }
+  }
+  // parameters_before
+  for (const pid of input.topology.parameter_order) {
+    const v = input.parameters_before[pid]
+    if (v === undefined) {
+      throw new Error(
+        `runGeneralStep: input.parameters_before is missing required parameter '${pid}'. ` +
+          `Hint: provide a numeric value for every id in topology.parameter_order.`,
+      )
+    }
+    if (!Number.isFinite(v)) {
+      throw new Error(
+        `runGeneralStep: input.parameters_before['${pid}'] is not finite (got ${String(v)}).`,
+      )
+    }
+  }
+}
+
+function assertSupportedPolicy(input: GeneralInput): void {
+  if (input.topology.loss !== "half_squared_error") {
+    throw new Error(
+      `runGeneralStep: topology.loss must be 'half_squared_error' in v0.3 (got '${input.topology.loss}'). ` +
+        `Hint: cross_entropy and softmax losses are deferred to v0.4+.`,
+    )
+  }
+  if (input.bias_policy.mode !== "constant") {
+    throw new Error(
+      `runGeneralStep: bias_policy.mode must be 'constant' in v0.3 (got '${input.bias_policy.mode}'). ` +
+        `Hint: bias updates are reserved for v0.4+.`,
+    )
+  }
+  if (input.topology.bias_sharing !== "per_layer") {
+    throw new Error(
+      `runGeneralStep: topology.bias_sharing must be 'per_layer' in v0.3 (got '${input.topology.bias_sharing}'). ` +
+        `Hint: per_neuron bias sharing is reserved for v0.4+.`,
+    )
+  }
+  if (input.trace_id !== undefined) {
+    if (typeof input.trace_id !== "string" || input.trace_id.length === 0) {
+      throw new Error(
+        `runGeneralStep: input.trace_id must be a non-empty string when present (got ${String(input.trace_id)}).`,
+      )
+    }
+  }
+  if (input.step_index !== undefined) {
+    if (!Number.isInteger(input.step_index) || input.step_index < 0) {
+      throw new Error(
+        `runGeneralStep: input.step_index must be a non-negative integer when present (got ${String(input.step_index)}).`,
+      )
+    }
+  }
+}
+
+// --- Topology serialization -----------------------------------------------
+
+function serializeTopology(t: Topology): SerializedTopology {
+  return {
+    layers: ["input", "hidden", "output"],
+    unit_order: {
+      input: [...t.unit_order.input],
+      hidden: [...t.unit_order.hidden],
+      output: [...t.unit_order.output],
+    },
+    parameter_order: [...t.parameter_order],
+    parameters: t.parameters.map((p) => {
+      const out: SerializedTopology["parameters"][number] = {
+        id: p.id,
+        role: p.role,
+      }
+      if (p.from_unit !== undefined) out.from_unit = p.from_unit
+      if (p.to_unit !== undefined) out.to_unit = p.to_unit
+      if (p.applies_to_units !== undefined)
+        out.applies_to_units = [...p.applies_to_units]
+      return out
+    }),
+    activation_hidden: t.activation_hidden,
+    activation_output: t.activation_output,
+    loss: t.loss,
+    bias_sharing: t.bias_sharing,
+    input_size: t.input_size,
+    hidden_size: t.hidden_size,
+    output_size: t.output_size,
+  }
+}
+
+// --- The engine -----------------------------------------------------------
+
+/**
+ * Run one generalized backprop step end-to-end.
+ *
+ * Mirrors src/engine.ts's runMazurStep math exactly for the Mazur 2-2-2
+ * topology (same left-to-right factor multiplication, same hidden-signal
+ * summation order, same SGD update sign convention). For other topologies,
+ * the same rules generalize: weight from_unit/to_unit iteration follows
+ * unit_order.input / unit_order.hidden / unit_order.output, and the
+ * parameter update phase iterates topology.parameter_order in declared
+ * order.
+ *
+ * SGD update sign convention: `weight_after = weight_before + lr * gradient`
+ * where gradient absorbs the descent-direction sign (memo §1 + engine.ts
+ * gradient_convention: "descent_direction"). i.e. gradient = signal *
+ * upstream, with signal = (target - out) * activation_derivative on the
+ * output side; for hidden units, signal = (sum downstream contributions)
+ * * activation_derivative.
+ *
+ * Biases are unchanged on the step per bias_policy.mode === "constant"
+ * — `parameters_after[bias_id] === parameters_before[bias_id]` exactly.
+ *
+ * @param input  A GeneralInput literal. Asserted finite + topology-supported
+ *               + policy-supported at the boundary.
+ * @returns      A v0.2.0-schema GeneralReceipt with forward / loss /
+ *               backward / per-parameter updates / parameters_after /
+ *               post_update_forward / post_update_loss.
+ * @throws       Error if any input scalar is non-finite, learning_rate
+ *               <= 0, topology declares an unsupported variant, or a
+ *               required input/target/parameter is missing.
+ */
+export function runGeneralStep(input: GeneralInput): GeneralReceipt {
+  assertTopologyValid(input.topology)
+  assertSupportedPolicy(input)
+  assertFiniteGeneralInput(input)
+
+  const t = input.topology
+  const lr = input.learning_rate
+  const before = input.parameters_before
+
+  // --- Forward pass ---
+  const forward: Record<string, ForwardUnit> = {}
+  for (const hUnit of t.unit_order.hidden) {
+    let net = 0
+    for (const iUnit of t.unit_order.input) {
+      const w = findWeight(t.parameters, iUnit, hUnit)
+      const wVal = before[w.id]!
+      const xVal = input.inputs[iUnit]!
+      net = net + xVal * wVal
+    }
+    const biasParam = findHiddenBias(t.parameters)
+    net = net + before[biasParam.id]!
+    const out = activate(t.activation_hidden, net)
+    forward[hUnit] = { net, out }
+  }
+  for (const oUnit of t.unit_order.output) {
+    let net = 0
+    for (const hUnit of t.unit_order.hidden) {
+      const w = findWeight(t.parameters, hUnit, oUnit)
+      const wVal = before[w.id]!
+      const hOut = forward[hUnit]!.out
+      net = net + hOut * wVal
+    }
+    const biasParam = findOutputBias(t.parameters)
+    net = net + before[biasParam.id]!
+    const out = activate(t.activation_output, net)
+    forward[oUnit] = { net, out }
+  }
+
+  // --- Loss (half squared error, per output, summed) ---
+  const perOutputLoss: Record<string, number> = {}
+  let totalLoss = 0
+  for (const oUnit of t.unit_order.output) {
+    const target = input.targets[oUnit]!
+    const out = forward[oUnit]!.out
+    const diff = target - out
+    const e = 0.5 * diff * diff
+    perOutputLoss[oUnit] = e
+    totalLoss = totalLoss + e
+  }
+
+  // --- Backward: output error signals ---
+  const outputErrorSignals: Record<string, OutputErrorSignal> = {}
+  for (const oUnit of t.unit_order.output) {
+    const target = input.targets[oUnit]!
+    const out = forward[oUnit]!.out
+    const tmo = target - out
+    const ad = activationDerivativeFromOut(t.activation_output, out)
+    const signal = tmo * ad
+    outputErrorSignals[oUnit] = {
+      factors: [
+        { name: "target_minus_output", value: tmo },
+        { name: "activation_derivative", value: ad },
+      ],
+      product_order: "left_to_right",
+      signal_value: signal,
+    }
+  }
+
+  // --- Backward: hidden error signals (summation in unit_order.output order) ---
+  const hiddenErrorSignals: Record<string, HiddenErrorSignal> = {}
+  for (const hUnit of t.unit_order.hidden) {
+    const contributions: DownstreamContribution[] = []
+    let sum = 0
+    for (const oUnit of t.unit_order.output) {
+      const w = findWeight(t.parameters, hUnit, oUnit)
+      const wVal = before[w.id]!
+      const downstreamSignal = outputErrorSignals[oUnit]!.signal_value
+      const value = downstreamSignal * wVal
+      contributions.push({
+        from: oUnit,
+        downstream_signal: downstreamSignal,
+        via_weight: w.id,
+        weight_value: wVal,
+        value,
+      })
+      sum = sum + value
+    }
+    const hOut = forward[hUnit]!.out
+    const ad = activationDerivativeFromOut(t.activation_hidden, hOut)
+    const signal = sum * ad
+    hiddenErrorSignals[hUnit] = {
+      downstream_contributions: contributions,
+      summation_order: [...t.unit_order.output],
+      backpropagated_sum: sum,
+      activation_derivative: ad,
+      product_order: "left_to_right",
+      signal_value: signal,
+    }
+  }
+
+  // --- Updates (iterate topology.parameter_order) ---
+  const updates: Update[] = []
+  const parametersAfter: Record<string, number> = {}
+  // Pre-seed parameters_after with biases (unchanged per bias_policy.mode === "constant")
+  for (const pid of t.parameter_order) {
+    parametersAfter[pid] = before[pid]!
+  }
+  for (const pid of t.parameter_order) {
+    const param = t.parameters.find((p) => p.id === pid)!
+    if (param.role === "hidden_bias" || param.role === "output_bias") {
+      // Biases are constant — nothing to update; already seeded above.
+      continue
+    }
+    if (param.role === "input_to_hidden_weight") {
+      const fromUnit = param.from_unit!
+      const toUnit = param.to_unit!
+      const signal = hiddenErrorSignals[toUnit]!.signal_value
+      const upstream = input.inputs[fromUnit]!
+      const wBefore = before[pid]!
+      const gradient = signal * upstream
+      const update = lr * gradient
+      const wAfter = wBefore + update
+      parametersAfter[pid] = wAfter
+      updates.push({
+        parameter_id: pid,
+        kind: "weight",
+        layer_edge: "input_to_hidden",
+        parameter_role: `${fromUnit}_to_${toUnit}`,
+        from_unit: fromUnit,
+        to_unit: toUnit,
+        weight_before: wBefore,
+        optimizer: {
+          name: "sgd",
+          learning_rate: lr,
+          factors: [
+            {
+              name: "hidden_error_signal",
+              from: `backward.hidden_error_signals.${toUnit}.signal_value`,
+              value: signal,
+            },
+            {
+              name: "upstream_activation",
+              from: `inputs.${fromUnit}`,
+              value: upstream,
+            },
+          ],
+          product_order: "left_to_right",
+        },
+        gradient,
+        update,
+        weight_after: wAfter,
+      })
+    } else if (param.role === "hidden_to_output_weight") {
+      const fromUnit = param.from_unit!
+      const toUnit = param.to_unit!
+      const signal = outputErrorSignals[toUnit]!.signal_value
+      const upstream = forward[fromUnit]!.out
+      const wBefore = before[pid]!
+      const gradient = signal * upstream
+      const update = lr * gradient
+      const wAfter = wBefore + update
+      parametersAfter[pid] = wAfter
+      updates.push({
+        parameter_id: pid,
+        kind: "weight",
+        layer_edge: "hidden_to_output",
+        parameter_role: `${fromUnit}_to_${toUnit}`,
+        from_unit: fromUnit,
+        to_unit: toUnit,
+        weight_before: wBefore,
+        optimizer: {
+          name: "sgd",
+          learning_rate: lr,
+          factors: [
+            {
+              name: "output_error_signal",
+              from: `backward.output_error_signals.${toUnit}.signal_value`,
+              value: signal,
+            },
+            {
+              name: "upstream_activation",
+              from: `forward.${fromUnit}.out`,
+              value: upstream,
+            },
+          ],
+          product_order: "left_to_right",
+        },
+        gradient,
+        update,
+        weight_after: wAfter,
+      })
+    }
+  }
+
+  // --- Post-update forward pass ---
+  const postUpdateForward: Record<string, ForwardUnit> = {}
+  for (const hUnit of t.unit_order.hidden) {
+    let net = 0
+    for (const iUnit of t.unit_order.input) {
+      const w = findWeight(t.parameters, iUnit, hUnit)
+      const wVal = parametersAfter[w.id]!
+      const xVal = input.inputs[iUnit]!
+      net = net + xVal * wVal
+    }
+    const biasParam = findHiddenBias(t.parameters)
+    net = net + parametersAfter[biasParam.id]!
+    const out = activate(t.activation_hidden, net)
+    postUpdateForward[hUnit] = { net, out }
+  }
+  for (const oUnit of t.unit_order.output) {
+    let net = 0
+    for (const hUnit of t.unit_order.hidden) {
+      const w = findWeight(t.parameters, hUnit, oUnit)
+      const wVal = parametersAfter[w.id]!
+      const hOut = postUpdateForward[hUnit]!.out
+      net = net + hOut * wVal
+    }
+    const biasParam = findOutputBias(t.parameters)
+    net = net + parametersAfter[biasParam.id]!
+    const out = activate(t.activation_output, net)
+    postUpdateForward[oUnit] = { net, out }
+  }
+
+  // --- Post-update loss ---
+  const postUpdatePerOutput: Record<string, number> = {}
+  let postUpdateTotal = 0
+  for (const oUnit of t.unit_order.output) {
+    const target = input.targets[oUnit]!
+    const out = postUpdateForward[oUnit]!.out
+    const diff = target - out
+    const e = 0.5 * diff * diff
+    postUpdatePerOutput[oUnit] = e
+    postUpdateTotal = postUpdateTotal + e
+  }
+
+  // --- Build inputs / targets / parameters_before records (plain copies) ---
+  const inputsOut: Record<string, number> = {}
+  for (const uid of t.unit_order.input) inputsOut[uid] = input.inputs[uid]!
+  const targetsOut: Record<string, number> = {}
+  for (const uid of t.unit_order.output) targetsOut[uid] = input.targets[uid]!
+  const parametersBeforeOut: Record<string, number> = {}
+  for (const pid of t.parameter_order)
+    parametersBeforeOut[pid] = input.parameters_before[pid]!
+
+  // --- Observability hook (mirrors src/engine.ts BPT_DEBUG behavior) ---
+  if (process.env["BPT_DEBUG"] === "1") {
+    process.stderr.write(
+      `[bpt:general-engine] step=1 post_update_loss.total=${postUpdateTotal}\n`,
+    )
+  }
+
+  const receipt: GeneralReceipt = {
+    schema_version: "0.2.0",
+    fixture: input.fixture ?? "general-engine-first-run",
+    step: 1,
+    fixture_status: {
+      authoring_state: "engine_generated",
+      verification_state: "engine_reproduced_byte_equal",
+      canonical: true,
+    },
+    metadata: input.metadata ?? {
+      source: "src/general-engine.ts (generalized backprop engine first-run)",
+      gradient_convention: "descent_direction",
+    },
+    numeric_policy: input.numeric_policy,
+    bias_policy: input.bias_policy,
+    topology: serializeTopology(t),
+    learning_rate: lr,
+    inputs: inputsOut,
+    targets: targetsOut,
+    parameters_before: parametersBeforeOut,
+    forward,
+    loss: { per_output: perOutputLoss, total: totalLoss },
+    backward: {
+      output_error_signals: outputErrorSignals,
+      hidden_error_signals: hiddenErrorSignals,
+    },
+    updates,
+    parameters_after: parametersAfter,
+    post_update_forward: { status: "filled", units: postUpdateForward },
+    post_update_loss: {
+      status: "filled",
+      per_output: postUpdatePerOutput,
+      total: postUpdateTotal,
+    },
+  }
+  if (input.trace_id !== undefined) receipt.trace_id = input.trace_id
+  if (input.step_index !== undefined) receipt.step_index = input.step_index
+  return receipt
+}

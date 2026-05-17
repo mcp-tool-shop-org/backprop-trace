@@ -1,0 +1,160 @@
+{
+  "schema_version": "0.2.0",
+  "fixture": "xor-2-2-1",
+  "compiled_on": "2026-05-16",
+  "evidence_ledger_for": "fixtures/xor.golden.jsonl",
+  "human_readable_summary": "This ledger records what backprop-trace's V8/Node 22 engine (src/general-engine.ts) produces for one SGD step on the XOR-sigmoid 2-2-1 topology with operator-chosen deterministic initial weights, and what claim values that engine reproduction pins. Unlike the Mazur fixture (which has a widely-cited published anchor for post-update total error), no canonical XOR step-1 trace exists in the literature for this exact initial-weight configuration — the trace is engine-anchored. Goodfellow et al. 2016 Ch. 6.1 publishes a CONVERGED XOR solution (W=[[1,1],[1,1]], c=[0,-1], w=[1,-2], b=0, ReLU activation, loss=0) but does not provide an arbitrary-init step-1 trace; this fixture establishes one for the sigmoid + half-squared-error setting.",
+  "engine_reproduction_source": "fixtures/xor.golden.jsonl is the engine-emitted first-run output of src/general-engine.ts on XOR_INPUT (V8/Node 22).",
+  "source": {
+    "anchor": "engine-anchored (no published step-1 trace exists for XOR-sigmoid 2-2-1 with these specific initial weights)",
+    "converged_reference": {
+      "author": "Goodfellow, Bengio, Courville",
+      "title": "Deep Learning, Ch. 6.1 — Example: Learning XOR",
+      "year": 2016,
+      "url": "https://www.deeplearningbook.org/contents/mlp.html",
+      "summary": "Provides the canonical analytical CONVERGED solution for XOR (ReLU, loss=0). Does NOT provide an arbitrary-init step-1 trace. This fixture's engine-anchored step-1 values are not directly comparable to Goodfellow's converged values; the converged reference is cited for educational context only."
+    },
+    "operator_chosen_init": {
+      "rationale": "Deterministic small monotonically-increasing weights (0.1, 0.2, 0.3, 0.4 for input-to-hidden; 0.5, 0.6 for hidden-to-output; 0.1 for both biases). Makes the trace reproducible byte-for-byte across runs of the engine on V8/Node 22 and human-readable for pedagogy. No standard 'XOR step-1 trace' exists; this fixture establishes one.",
+      "seed_algorithm": "manual",
+      "weights": {
+        "w_x1_h1": 0.1,
+        "w_x2_h1": 0.2,
+        "w_x1_h2": 0.3,
+        "w_x2_h2": 0.4,
+        "w_h1_y": 0.5,
+        "w_h2_y": 0.6,
+        "b_hidden": 0.1,
+        "b_output": 0.1
+      },
+      "sample": {
+        "inputs": { "x1": 1, "x2": 0 },
+        "target": { "y": 1 },
+        "truth_table_row": "1 XOR 0 = 1"
+      },
+      "hyperparameters": {
+        "learning_rate": 0.5,
+        "topology": "2 inputs -> 2 hidden (sigmoid) -> 1 output (sigmoid)",
+        "loss": "half_squared_error",
+        "optimizer": "sgd",
+        "bias_policy": "constant (per v0.3 design; bias updates deferred to v0.4)"
+      }
+    }
+  },
+  "claim_type_legend": {
+    "source_published_input": "Constant input or hyperparameter explicitly given in the source",
+    "source_published_loss": "Loss value explicitly given in the source",
+    "source_published_forward": "Forward-pass value explicitly given in the source",
+    "source_published_update": "Post-update parameter value explicitly given in the source",
+    "widely_cited_downstream_anchor": "Value commonly repeated in downstream pedagogy; not given an explicit derivation in the source at this precision",
+    "engine_anchored": "No published source provides this value; the engine's first-run output is the canonical anchor"
+  },
+  "reproduction_status_legend": {
+    "direct": "Constant input; no computation required",
+    "verified": "Engine reproduces this value within tolerance",
+    "drift_observed": "Engine produces a different value; documented in drift_note. Hard-gate value (true/false) governs whether drift fails the build or merely WARNs.",
+    "pending": "Not yet attempted"
+  },
+  "claims": [
+    {
+      "id": "loss_total",
+      "value": 0.0525817333,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.0525817333,
+      "drift_absolute": 0,
+      "provenance": "Half squared error of (target_y - forward.y.out) computed on the pre-update forward pass. Engine value pinned at 9 significant digits per numeric_policy.precision_significant_digits."
+    },
+    {
+      "id": "post_update_total_error",
+      "value": 0.0508414178,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.0508414178,
+      "drift_absolute": 0,
+      "provenance": "Post-update total error after one SGD step from the operator-chosen init. Engine value pinned at 9 significant digits. Decrease vs pre-update loss_total demonstrates the step moved in the descent direction (0.0525817333 -> 0.0508414178, delta -0.0017403155).",
+      "v0_3_behavior": "Engine-anchored: any drift here would mean the engine math or canonical emission changed. bp verify general fails (hard gate) on drift."
+    },
+    {
+      "id": "forward_h1_out",
+      "value": 0.549833997,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.549833997,
+      "drift_absolute": 0,
+      "provenance": "sigmoid(net_h1) where net_h1 = w_x1_h1*x1 + w_x2_h1*x2 + b_hidden = 0.1*1 + 0.2*0 + 0.1 = 0.2."
+    },
+    {
+      "id": "forward_h2_out",
+      "value": 0.59868766,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.59868766,
+      "drift_absolute": 0,
+      "provenance": "sigmoid(net_h2) where net_h2 = w_x1_h2*x1 + w_x2_h2*x2 + b_hidden = 0.3*1 + 0.4*0 + 0.1 = 0.4."
+    },
+    {
+      "id": "forward_y_out",
+      "value": 0.675710829,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.675710829,
+      "drift_absolute": 0,
+      "provenance": "sigmoid(net_y) where net_y = w_h1_y*out_h1 + w_h2_y*out_h2 + b_output. Single-output topology (XOR is a binary classification reducing to one scalar output)."
+    },
+    {
+      "id": "output_signal_y",
+      "value": 0.0710600932,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.0710600932,
+      "drift_absolute": 0,
+      "provenance": "Output error signal for y: (target_y - out_y) * sigmoid'(net_y) = 0.324289171 * 0.219125705. Descent-direction sign convention (gradient absorbs the sign, update = +lr*gradient)."
+    },
+    {
+      "id": "post_update_forward_y_out",
+      "value": 0.681122538,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.681122538,
+      "drift_absolute": 0,
+      "provenance": "Post-update forward pass through the same network with parameters_after. Confirms the SGD step pushed the y output closer to target=1 (0.675710829 -> 0.681122538, delta +0.005411709)."
+    }
+  ],
+  "compute_infrastructure": {
+    "cpu_arch": "x86_64",
+    "node_version_at_generation": "22.x",
+    "v8_version_at_generation": "12.x.x",
+    "os_at_generation": "windows",
+    "generation_date": "2026-05-16"
+  },
+  "standards_referenced": [
+    "Pineau et al. JMLR 2021 — ML Reproducibility Checklist (https://arxiv.org/abs/2003.12206)",
+    "Mitchell et al. FAT* 2019 — Model Cards (https://arxiv.org/abs/1810.03993)",
+    "Gebru et al. CACM 2021 — Datasheets for Datasets (https://arxiv.org/abs/1803.09010)",
+    "Kapoor et al. Science Advances 2024 — REFORMS (https://www.science.org/doi/10.1126/sciadv.adk3452)",
+    "Jia et al. IEEE S&P 2021 — Proof-of-Learning (https://ar5iv.labs.arxiv.org/html/2103.05633)",
+    "Goodfellow, Bengio, Courville 2016 — Deep Learning Ch. 6.1 (https://www.deeplearningbook.org/contents/mlp.html)"
+  ],
+  "caveats_and_recommendations": {
+    "scope": "single-step XOR with operator-chosen deterministic init (v0.3 SCOPE)",
+    "topology": "2-2-1 (2 inputs, 2 hidden, 1 output)",
+    "loss": "half_squared_error (MSE)",
+    "activation_hidden": "sigmoid (Math.exp via V8 fdlibm port; deterministic on Node 22 V8)",
+    "activation_output": "sigmoid",
+    "batching": "none (single sample x1=1, x2=0)",
+    "optimizer": "sgd (no momentum, no Adam, no weight decay)",
+    "bias_policy": "constant in step 1 (per v0.3 design; bias updates deferred to v0.4)",
+    "gpu_determinism": "not applicable (CPU-only)",
+    "cross_engine_portability": "V8 only; Hermes / JSC / Bun-JSC untested",
+    "cross_node_major_portability": "tested on Node 22.x only; Math.exp is not contractually bit-stable across V8 majors",
+    "epoch_scope": "ONE training sample, ONE SGD step. Convergence to the 4-row XOR truth table requires many steps across all 4 training samples — that is outside v0.3 scope and is what Goodfellow's converged-solution reference addresses analytically. v0.3 ships only the canonical first-step trace from the operator-chosen init."
+  }
+}

@@ -16,7 +16,7 @@ to have done actually add up?**
 If the answer is "no," the reconciler refuses to certify the receipt and
 the verifier fails closed.
 
-## Quick reference: the 8 rules
+## Quick reference: the 10 rules
 
 | # | Rule | Status |
 |---|------|--------|
@@ -28,11 +28,17 @@ the verifier fails closed.
 | 6 | Weight progression: weight_after == weight_before + update | **implemented (v0.2)** |
 | 7 | Parameter final state consistency | **implemented (v0.2)** |
 | 8 | Provenance reference (factor.from path) | **implemented (v0.2)** |
+| 9 | Multi-step parameter chain (`parameters_before[N]` equals prior `parameters_after[N-1]`) | **implemented (v0.3)** |
+| 10 | Multi-step trace identity (shared `trace_id` + sequential `step_index`) | **implemented (v0.3)** |
 
-All eight rules ship in v0.2.0. Each landed with a deliberately-broken
-`fixtures/bad/mazur.bad-<rule-name>.jsonl` fixture per the
+Rules 1-8 ship in v0.2.0. Rules 9 + 10 ship in v0.3.0 and fire from the
+multi-record verify path (`bp verify multi <file.jsonl>` /
+`reconcileMultiStep(receipts)`), NOT from the single-record path. Each
+rule landed with a deliberately-broken bad-* fixture per the
 anti-circularity doctrine — bad receipts precede good receipts (Csmith /
 CompCert lineage; see "Academic lineage" below and `CONTRIBUTING.md`).
+Rules 9 + 10 ship with `fixtures/bad/multi-step.bad-chain.jsonl` and
+`fixtures/bad/multi-step.bad-trace-id.jsonl` respectively.
 
 ## The eight rules
 
@@ -161,6 +167,83 @@ Examples:
 Factors without a `from` field skip Rule 8 (their values are taken on
 faith at the leaf; they cannot lie about provenance because they don't
 claim provenance).
+
+### Rule 9: Multi-step parameter chain
+
+For a multi-record JSONL file containing `N >= 2` receipts in
+`step_index` order, every receipt at `step_index = K` (K > 0) MUST
+satisfy:
+
+```
+receipt[K].parameters_before[id] == receipt[K-1].parameters_after[id]
+```
+
+for every `id` in `receipt[K].parameter_order`, within
+`receipt[K].numeric_policy.tolerance` (hybrid-form). Single-step
+receipts (`step_index = 0` or absent) skip Rule 9.
+
+Mirrors the Proof-of-Learning (Jia et al. IEEE S&P 2021,
+https://ar5iv.labs.arxiv.org/html/2103.05633) parameter-chain integrity
+pattern: chain integrity is parameter-equality across step boundaries,
+not a separate Merkle digest. The chain stays auditable from the
+receipts alone — no out-of-band ledger required.
+
+### Rule 10: Multi-step trace identity
+
+For a multi-record JSONL file, every receipt MUST share an identical
+`trace_id` (128-bit lowercase hex per W3C TraceContext,
+https://www.w3.org/TR/trace-context/) AND the `step_index` values MUST
+form a monotonic, dense, 0-based sequence (0, 1, 2, ..., N-1). Catches
+accidental cross-run concatenation — a verifier that sees two distinct
+`trace_id`s in one file reports a Rule 10 failure before evaluating
+parameter chain integrity.
+
+Single-step receipts (no `trace_id` / no `step_index`) bypass Rule 10
+entirely.
+
+## Multi-step receipts
+
+Rules 9 + 10 fire only on the multi-record verify path. The split is
+intentional: per-record reconciliation (Rules 1-8) stays self-contained
+and is consumable by tools that stream individual receipts (`bp verify
+mazur`, `bp verify general`, library callers using `reconcileReceipt()`).
+The multi-record path adds two cross-record rules without changing how
+single-record reconciliation works.
+
+**Two-phase verification model**:
+
+1. **Per-record pass.** For each receipt in the file, the reconciler runs
+   the standard 8-rule pass. Any per-record failure surfaces immediately
+   with the same field-path / stored / recomputed / delta / tolerance
+   quartet as `bp reconcile receipt`.
+2. **Cross-record pass.** Once per-record reconciliation completes, Rule
+   10 (trace identity) fires first — a mismatched `trace_id` set or a
+   non-dense `step_index` sequence aborts before Rule 9 runs (a chain
+   spanning two distinct traces wouldn't have a meaningful prior-receipt
+   anchor). If Rule 10 passes, Rule 9 (parameter chain) fires across
+   adjacent receipts in `step_index` order.
+
+**trace_id is 128-bit hex.** v0.3 adopts the W3C TraceContext
+(https://www.w3.org/TR/trace-context/) `trace-id` shape: a lowercase
+hex string of exactly 32 characters. The schema enforces
+`pattern: "^[0-9a-f]{32}$"`. Receipt emitters generate the id once at
+training-run start and reuse it across every step receipt.
+
+**step_index is 0-based, monotonic, dense.** Sparse sequences (e.g.,
+`[0, 1, 3]`) fail Rule 10 — the receipt set must record every step,
+not just every Nth step. A 5-step training run produces 5 receipts with
+`step_index` values 0, 1, 2, 3, 4.
+
+**Single-step receipts are still valid.** Receipts emitted without
+`trace_id` and `step_index` skip Rules 9 and 10 cleanly — those rules
+have no work to do on a single-record file. The XOR and iris fixtures
+shipped with v0.3 are single-step and exercise Rules 1-8 only. The
+v0.2.0 schema's `allOf` constraint enforces "trace_id present iff
+step_index present" so a receipt cannot carry one without the other.
+
+**Entry points**: `bp verify multi <file.jsonl>` from the CLI;
+`reconcileMultiStep(receipts: unknown[])` from the library (returns
+the same `ReconciliationResult` shape as `reconcileReceipt`).
 
 ## Failure-priority rule
 

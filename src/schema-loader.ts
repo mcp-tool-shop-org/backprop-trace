@@ -24,8 +24,17 @@ import { dirname, resolve } from "node:path";
  * append here AND require dropping `schemas/receipt.v<version>.json` in
  * the package payload. The tuple is `as const` so SchemaVersion is the
  * union of string literals (not just `string`).
+ *
+ * v0.3 ships both:
+ *   - "0.1.0" — the Mazur-pinned single-topology schema (v0.1/v0.2 wave)
+ *   - "0.2.0" — the generalized schema (REQUIRED unit_order + parameter_order,
+ *     hybrid tolerance object form, optional trace_id/step_index for multi-step)
+ *
+ * Receipts that say `schema_version: "0.1.0"` continue to validate against
+ * the v0.1.0 schema for byte-equal preservation; new generalized receipts
+ * (XOR, iris, multi-step) declare `schema_version: "0.2.0"`.
  */
-export const SCHEMA_VERSIONS = ["0.1.0"] as const;
+export const SCHEMA_VERSIONS = ["0.1.0", "0.2.0"] as const;
 
 /**
  * Union of currently-shipped receipt schema versions. Use this for any
@@ -45,8 +54,10 @@ const schemaCache = new Map<string, object>();
  * Cached on first read; subsequent calls return the same object instance
  * (do NOT mutate the returned object — it is shared across callers).
  *
- * @param version  Schema version to load. Defaults to "0.1.0" — the only
- *                 version shipped in v0.1.
+ * @param version  Schema version to load. Defaults to "0.1.0" for
+ *                 backward compatibility with v0.1/v0.2 callers; v0.3
+ *                 callers handling generalized receipts should pass
+ *                 "0.2.0" explicitly.
  * @returns        The parsed JSON-Schema object (NOT the raw text).
  * @throws         Error if `version` is not in SCHEMA_VERSIONS, OR if
  *                 the corresponding file is missing / unreadable / not

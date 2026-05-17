@@ -1,7 +1,7 @@
 {
   "name": "@mcptoolshop/backprop-trace",
-  "version": "0.2.0",
-  "description": "Deterministic training-trace engine for explaining neural-network learning from receipts. v0.2 wires all eight reconciler rules against the Mazur 2-2-2 fixture, ships an Ajv-based schema validator, the canonical-bytes sha256 attestation seam, and four bp subcommands (reconcile / verify / generate / validate).",
+  "version": "0.3.0",
+  "description": "v0.3 wires generalized N-input N-hidden N-output topology + hybrid tolerance + multi-step training receipts alongside the existing Mazur 2-2-2 spine.",
   "type": "module",
   "license": "MIT",
   "author": "mcp-tool-shop <64996768+mcp-tool-shop@users.noreply.github.com>",
@@ -25,7 +25,9 @@
     "sigmoid",
     "mse",
     "proof-of-learning",
-    "reconciler"
+    "reconciler",
+    "general-topology",
+    "multi-step"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -42,9 +44,21 @@
       "import": "./dist/engine.js",
       "types": "./dist/engine.d.ts"
     },
+    "./general-engine": {
+      "import": "./dist/general-engine.js",
+      "types": "./dist/general-engine.d.ts"
+    },
     "./mazur": {
       "import": "./dist/mazur.js",
       "types": "./dist/mazur.d.ts"
+    },
+    "./topology": {
+      "import": "./dist/topology.js",
+      "types": "./dist/topology.d.ts"
+    },
+    "./activations": {
+      "import": "./dist/activations.js",
+      "types": "./dist/activations.d.ts"
     },
     "./emit": {
       "import": "./dist/emit.js",
@@ -83,6 +97,8 @@
       "types": "./dist/extract.d.ts"
     },
     "./schema": "./schemas/receipt.v0.1.0.json",
+    "./schema/0.1.0": "./schemas/receipt.v0.1.0.json",
+    "./schema/0.2.0": "./schemas/receipt.v0.2.0.json",
     "./package.json": "./package.json"
   },
   "bin": {

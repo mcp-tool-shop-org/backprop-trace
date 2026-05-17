@@ -165,6 +165,68 @@ comparisons.
   values match the receipt at 9 sig figs under
   `numeric_policy.rounding`.
 
+## Hybrid tolerance (v0.3+)
+
+v0.3 generalizes the v0.1/v0.2 pure-atol comparator into a hybrid
+tolerance form that combines absolute and relative slack in a single
+symmetric expression:
+
+```
+|a - b| <= max(atol, rtol * max(|a|, |b|))
+```
+
+Defaults: `atol = 1e-12`, `rtol = 1e-9`. The reconciler invokes this via
+`applyToleranceCheck(a, b, policy)`; the underlying primitive,
+`normalizeTolerance(policy)`, accepts either an object `{atol, rtol}` or
+a scalar number (legacy v0.1 / v0.2 sugar — treated as `{atol: X, rtol:
+0}`).
+
+**Symmetric max form rationale.** The formula
+
+```
+|a - b| <= max(atol, rtol * max(|a|, |b|))
+```
+
+bounds the comparison by the LARGER of an absolute floor and a relative
+ceiling scaled by the larger operand magnitude. Compared to the strict
+"sum" form `atol + rtol * |b|` (numpy.allclose, PyTorch
+torch.testing.assert_close), the max form:
+
+- treats `(a, b)` and `(b, a)` identically (true symmetry — the
+  inequality holds regardless of operand order);
+- collapses to pure-atol behavior when `rtol = 0` (so v0.1 receipts
+  reconcile bit-identically against the v0.3 reconciler);
+- scales with the LARGER magnitude in the pair, not a chosen reference,
+  which matches the auditor's intuition that the rule is about how close
+  the two values are, not about which one is "right";
+- avoids the asymmetric weighting bias documented in floating-point-gui.de
+  ("Comparing Floating Point Numbers, 2012 Edition", Bruce Dawson —
+  https://randomascii.wordpress.com/2012/02/25/comparing-floating-point-numbers-2012-edition/)
+  and in Boost.Test's FPC_STRONG fixture
+  (https://www.boost.org/doc/libs/release/libs/test/doc/html/boost_test/testing_tools/extended_comparison/floating_point/floating_points_comparison_theory.html).
+
+**Why `atol = 1e-12` and `rtol = 1e-9`.** The defaults absorb the
+~3e-9 product drift on Mazur w6 / w8 previously documented in
+`fixtures/bad/mazur.bad-gradient.meta.json` — the v0.1 reconciler
+required a precision-normalization workaround because the pure-atol
+1e-9 comparator was tight against the v0.1 multiplication ordering.
+The v0.3 defaults remove the need for that workaround without weakening
+the per-rule contract: the rtol envelope is wide enough to cover
+binary64 product accumulation at receipt scale, and the atol floor of
+1e-12 still catches "values almost-zero but disagreeing" cases.
+
+**Backward compat.** A receipt that declares the legacy scalar form
+`numeric_policy.tolerance: 1e-9` is still valid against the v0.2.0
+schema (the `tolerance` field is `oneOf` an object or a scalar number).
+The reconciler reads the scalar as `{atol: 1e-9, rtol: 0}` and the
+comparator reduces to `|a - b| <= 1e-9` — bit-identical to v0.1 / v0.2
+semantics. Mazur receipts in `fixtures/mazur.golden.jsonl` continue to
+ship the scalar form; XOR and iris receipts emitted by `runGeneralStep`
+ship the object form with the v0.3 defaults.
+
+**Per-rule overrides** are reserved for v0.3.x — v0.3.0 uses the single
+top-level `numeric_policy.tolerance` for every rule.
+
 ## Position in the law stack
 
 > Contract precedes engine. Formatter policy precedes runtime formatting.

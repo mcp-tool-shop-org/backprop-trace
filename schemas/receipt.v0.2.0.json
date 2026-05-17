@@ -1,0 +1,429 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mcp-tool-shop-org/backprop-trace/schemas/receipt.v0.2.0.json",
+  "title": "backprop-trace canonical receipt schema v0.2.0",
+  "description": "Generalized topology, hybrid tolerance, multi-step trace support.",
+  "type": "object",
+  "x-changes-from-v0.1.0": [
+    "schema_version const bumped 0.1.0 -> 0.2.0",
+    "numeric_policy.tolerance is now oneOf {object {atol, rtol}, scalar number}; scalar form is legacy sugar treated as {atol: <value>, rtol: 0}",
+    "unit_order is REQUIRED at top level (object with input/hidden/output arrays of identifier-pattern strings)",
+    "parameter_order is REQUIRED at top level (array of identifier-pattern strings, unique, canonical iteration order)",
+    "trace_id is OPTIONAL at top level (128-bit lowercase hex); present iff this receipt is part of a multi-step training run",
+    "step_index is OPTIONAL at top level (0-based integer); present iff trace_id is present",
+    "topology.input_size, hidden_size, output_size widened from const 2 to integer 1-64 (v0.3 soft cap)",
+    "topology.activation enum widened from [sigmoid] to [sigmoid, identity, relu]",
+    "topology.bias_sharing still [per_layer] only (per_neuron deferred to v0.4)",
+    "topology.loss still [half_squared_error] only",
+    "optimizer.name still [sgd] only",
+    "parameters_before / parameters_after / inputs / targets / forward / backward.{output,hidden}_error_signals / post_update_forward / post_update_loss.per_output all converted from fixed-key Mazur objects to {additionalProperties: ...} for arbitrary unit/parameter ids; key-set conformance to parameter_order/unit_order enforced at runtime by the validator (not by the schema)",
+    "fixture_status.authoring_state adds engine_generated_general (parallel to engine_generated for Mazur)"
+  ],
+  "x-order": [
+    "schema_version",
+    "fixture",
+    "step",
+    "fixture_status",
+    "metadata",
+    "numeric_policy",
+    "bias_policy",
+    "topology",
+    "learning_rate",
+    "trace_id",
+    "step_index",
+    "inputs",
+    "targets",
+    "parameters_before",
+    "forward",
+    "loss",
+    "backward",
+    "updates",
+    "parameters_after",
+    "post_update_forward",
+    "post_update_loss"
+  ],
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fixture",
+    "step",
+    "fixture_status",
+    "numeric_policy",
+    "bias_policy",
+    "topology",
+    "learning_rate",
+    "inputs",
+    "targets",
+    "parameters_before",
+    "forward",
+    "loss",
+    "backward",
+    "updates",
+    "parameters_after"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.2.0" },
+    "fixture": { "type": "string" },
+    "step": { "type": "integer", "minimum": 1 },
+    "fixture_status": { "$ref": "#/$defs/FixtureStatus" },
+    "metadata": {
+      "description": "Free-form provenance and authoring notes. Permissive in v0.2; v0.3+ may lock structure.",
+      "type": "object"
+    },
+    "numeric_policy": { "$ref": "#/$defs/NumericPolicy" },
+    "bias_policy": { "$ref": "#/$defs/BiasPolicy" },
+    "topology": { "$ref": "#/$defs/Topology" },
+    "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
+    "trace_id": {
+      "description": "128-bit lowercase hex identifier shared across all steps of a multi-step training run. Present iff this receipt is part of a multi-step run; absent for single-step receipts. Pairs with step_index.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "step_index": {
+      "description": "0-based step index within the trace identified by trace_id. Present iff trace_id is present.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "inputs": { "$ref": "#/$defs/UnitNumberMap" },
+    "targets": { "$ref": "#/$defs/UnitNumberMap" },
+    "parameters_before": { "$ref": "#/$defs/ParameterMap" },
+    "forward": { "$ref": "#/$defs/ForwardMap" },
+    "loss": { "$ref": "#/$defs/Loss" },
+    "backward": { "$ref": "#/$defs/Backward" },
+    "updates": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Update" }
+    },
+    "parameters_after": { "$ref": "#/$defs/ParameterMap" },
+    "post_update_forward": { "$ref": "#/$defs/PostUpdateForward" },
+    "post_update_loss": { "$ref": "#/$defs/PostUpdateLoss" }
+  },
+  "allOf": [
+    {
+      "description": "step_index requires trace_id and vice versa (multi-step receipts carry both).",
+      "anyOf": [
+        {
+          "not": { "required": ["step_index"] }
+        },
+        {
+          "required": ["trace_id"]
+        }
+      ]
+    },
+    {
+      "anyOf": [
+        {
+          "not": { "required": ["trace_id"] }
+        },
+        {
+          "required": ["step_index"]
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "UnitOrder": {
+      "description": "Canonical iteration order for units in each layer. Lives inside Topology in v0.2. Keys of forward/backward/inputs/targets/etc. must conform to these arrays at runtime.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input", "hidden", "output"],
+      "properties": {
+        "input": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } },
+        "hidden": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } },
+        "output": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } }
+      }
+    },
+    "ParameterOrder": {
+      "description": "Canonical iteration order for parameters during emission. Lives inside Topology in v0.2. Keys of parameters_before/parameters_after must match this set at runtime.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" }
+    },
+    "FixtureStatus": {
+      "type": "object",
+      "x-order": ["authoring_state", "verification_state", "canonical", "promote_to", "describes_in", "blockers_to_promotion"],
+      "additionalProperties": false,
+      "required": ["authoring_state", "verification_state", "canonical"],
+      "properties": {
+        "authoring_state": { "enum": ["hand_derived", "engine_generated", "engine_generated_general", "deliberately_corrupted"] },
+        "verification_state": { "enum": ["pending_engine_reproduction", "engine_reproduced_byte_equal", "expected_to_fail_reconciliation"] },
+        "canonical": { "type": "boolean" },
+        "promote_to": { "type": "string" },
+        "describes_in": { "type": "string" },
+        "blockers_to_promotion": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "NumericPolicy": {
+      "type": "object",
+      "x-order": ["number_encoding", "precision_significant_digits", "rounding", "tolerance", "computation_order", "byte_output"],
+      "additionalProperties": false,
+      "required": ["number_encoding", "precision_significant_digits", "rounding", "tolerance"],
+      "properties": {
+        "number_encoding": { "const": "decimal" },
+        "precision_significant_digits": { "type": "integer", "minimum": 1 },
+        "rounding": { "const": "round_half_to_even" },
+        "tolerance": {
+          "description": "Hybrid tolerance. v0.2+ receipts SHOULD emit the object form {atol, rtol}. The scalar form is legacy v0.1 compat sugar; the reader treats a scalar value X as {atol: X, rtol: 0}.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["atol", "rtol"],
+              "additionalProperties": false,
+              "properties": {
+                "atol": { "type": "number", "minimum": 0 },
+                "rtol": { "type": "number", "minimum": 0 }
+              }
+            },
+            { "type": "number", "minimum": 0 }
+          ]
+        },
+        "computation_order": { "const": "schema_defined" },
+        "byte_output": {
+          "type": "object",
+          "x-order": ["format", "json_key_order", "trailing_zero_policy", "indent"],
+          "additionalProperties": false,
+          "properties": {
+            "format": { "const": "jsonl" },
+            "json_key_order": { "const": "schema_defined" },
+            "trailing_zero_policy": { "const": "pad_to_significant_digits" },
+            "indent": { "const": "none" }
+          }
+        }
+      }
+    },
+    "BiasPolicy": {
+      "type": "object",
+      "x-order": ["mode", "reason", "updated_in_step", "reconciliation"],
+      "additionalProperties": false,
+      "required": ["mode", "updated_in_step"],
+      "properties": {
+        "mode": { "enum": ["constant", "sgd"] },
+        "reason": { "type": "string" },
+        "updated_in_step": { "type": "boolean" },
+        "reconciliation": { "type": "string" }
+      }
+    },
+    "Topology": {
+      "type": "object",
+      "x-order": ["layers", "input_size", "hidden_size", "output_size", "unit_order", "parameter_order", "parameters", "activation_hidden", "activation_output", "loss", "bias_sharing"],
+      "additionalProperties": false,
+      "required": ["layers", "input_size", "hidden_size", "output_size", "unit_order", "parameter_order", "parameters", "activation_hidden", "activation_output", "loss", "bias_sharing"],
+      "properties": {
+        "layers": { "type": "array", "items": { "type": "string" } },
+        "input_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "hidden_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "output_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "unit_order": { "$ref": "#/$defs/UnitOrder" },
+        "parameter_order": { "$ref": "#/$defs/ParameterOrder" },
+        "parameters": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "role"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "role": { "enum": ["input_to_hidden_weight", "hidden_to_output_weight", "hidden_bias", "output_bias"] },
+              "from_unit": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "to_unit": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "applies_to_units": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" }
+              }
+            }
+          }
+        },
+        "activation_hidden": { "enum": ["sigmoid", "identity", "relu"] },
+        "activation_output": { "enum": ["sigmoid", "identity", "relu"] },
+        "loss": { "enum": ["half_squared_error"] },
+        "bias_sharing": { "enum": ["per_layer"] }
+      }
+    },
+    "UnitNumberMap": {
+      "description": "Object whose keys are arbitrary unit ids (validated at runtime against unit_order) and whose values are numbers. Used for inputs and targets.",
+      "type": "object",
+      "additionalProperties": { "type": "number" }
+    },
+    "ParameterMap": {
+      "description": "Object whose keys are arbitrary parameter ids (validated at runtime against parameter_order) and whose values are numbers. Used for parameters_before and parameters_after.",
+      "type": "object",
+      "additionalProperties": { "type": "number" }
+    },
+    "ForwardMap": {
+      "description": "Object whose keys are arbitrary unit ids (validated at runtime against unit_order) and whose values are ForwardUnit records.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/ForwardUnit" }
+    },
+    "ForwardUnit": {
+      "type": "object",
+      "x-order": ["net", "out"],
+      "additionalProperties": false,
+      "required": ["net", "out"],
+      "properties": {
+        "net": { "type": "number" },
+        "out": { "type": "number" }
+      }
+    },
+    "Loss": {
+      "type": "object",
+      "x-order": ["per_output", "total"],
+      "additionalProperties": false,
+      "required": ["per_output", "total"],
+      "properties": {
+        "per_output": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "total": { "type": "number" }
+      }
+    },
+    "Backward": {
+      "type": "object",
+      "x-order": ["output_error_signals", "hidden_error_signals"],
+      "additionalProperties": false,
+      "required": ["output_error_signals", "hidden_error_signals"],
+      "properties": {
+        "output_error_signals": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/OutputErrorSignal" }
+        },
+        "hidden_error_signals": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/HiddenErrorSignal" }
+        }
+      }
+    },
+    "OutputErrorSignal": {
+      "type": "object",
+      "x-order": ["factors", "product_order", "signal_value"],
+      "additionalProperties": false,
+      "required": ["factors", "product_order", "signal_value"],
+      "properties": {
+        "factors": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/NamedFactor" }
+        },
+        "product_order": { "const": "left_to_right" },
+        "signal_value": { "type": "number" }
+      }
+    },
+    "HiddenErrorSignal": {
+      "type": "object",
+      "x-order": ["downstream_contributions", "summation_order", "backpropagated_sum", "activation_derivative", "product_order", "signal_value"],
+      "additionalProperties": false,
+      "required": ["downstream_contributions", "summation_order", "backpropagated_sum", "activation_derivative", "product_order", "signal_value"],
+      "properties": {
+        "downstream_contributions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/DownstreamContribution" }
+        },
+        "summation_order": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "backpropagated_sum": { "type": "number" },
+        "activation_derivative": { "type": "number" },
+        "product_order": { "const": "left_to_right" },
+        "signal_value": { "type": "number" }
+      }
+    },
+    "DownstreamContribution": {
+      "type": "object",
+      "x-order": ["from", "downstream_signal", "via_weight", "weight_value", "value"],
+      "additionalProperties": false,
+      "required": ["from", "downstream_signal", "via_weight", "weight_value", "value"],
+      "properties": {
+        "from": { "type": "string" },
+        "downstream_signal": { "type": "number" },
+        "via_weight": { "type": "string" },
+        "weight_value": { "type": "number" },
+        "value": { "type": "number" }
+      }
+    },
+    "NamedFactor": {
+      "type": "object",
+      "x-order": ["name", "from", "value"],
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": { "type": "string" },
+        "from": {
+          "description": "Dotted/bracketed path into the receipt where this factor's value originates. Reconciliation Rule 8 checks that value equals the referenced path's value within tolerance. Factors without a from field skip the provenance check.",
+          "type": "string"
+        },
+        "value": { "type": "number" }
+      }
+    },
+    "Update": {
+      "type": "object",
+      "x-order": ["parameter_id", "kind", "layer_edge", "parameter_role", "from_unit", "to_unit", "weight_before", "optimizer", "gradient", "update", "weight_after"],
+      "additionalProperties": false,
+      "required": ["parameter_id", "kind", "weight_before", "optimizer", "gradient", "update", "weight_after"],
+      "properties": {
+        "parameter_id": { "type": "string" },
+        "kind": { "enum": ["weight", "bias"] },
+        "layer_edge": { "enum": ["input_to_hidden", "hidden_to_output", "bias_to_layer"] },
+        "parameter_role": { "type": "string" },
+        "from_unit": { "type": "string" },
+        "to_unit": { "type": "string" },
+        "weight_before": { "type": "number" },
+        "optimizer": {
+          "type": "object",
+          "x-order": ["name", "learning_rate", "factors", "product_order"],
+          "additionalProperties": false,
+          "required": ["name", "learning_rate", "factors", "product_order"],
+          "properties": {
+            "name": { "enum": ["sgd"] },
+            "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
+            "factors": {
+              "type": "array",
+              "minItems": 2,
+              "items": { "$ref": "#/$defs/NamedFactor" }
+            },
+            "product_order": { "const": "left_to_right" }
+          }
+        },
+        "gradient": { "type": "number" },
+        "update": { "type": "number" },
+        "weight_after": { "type": "number" }
+      }
+    },
+    "PostUpdateForward": {
+      "description": "Post-update forward pass. When status is filled, the additional properties are unit-keyed ForwardUnit records (keys conform to unit_order at runtime).",
+      "type": "object",
+      "required": ["status"],
+      "additionalProperties": { "$ref": "#/$defs/ForwardUnit" },
+      "properties": {
+        "status": { "enum": ["pending_engine_first_run", "filled"] },
+        "required_before_promotion": { "type": "boolean" },
+        "fields_required": { "type": "array", "items": { "type": "string" } },
+        "fill_specification": { "type": "string" },
+        "note": { "type": "string" }
+      }
+    },
+    "PostUpdateLoss": {
+      "type": "object",
+      "x-order": ["status", "required_before_promotion", "fields_required", "drift_check_against_published", "note", "per_output", "total"],
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["pending_engine_first_run", "filled"] },
+        "required_before_promotion": { "type": "boolean" },
+        "fields_required": { "type": "array", "items": { "type": "string" } },
+        "drift_check_against_published": { "type": "object" },
+        "note": { "type": "string" },
+        "per_output": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "total": { "type": "number" }
+      }
+    }
+  }
+}

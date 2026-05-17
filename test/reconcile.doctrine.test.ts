@@ -62,9 +62,16 @@ const antiCircularityTestPath = resolve(
 // Known filename → rule mapping. New names should add an entry here OR
 // declare the rule via the meta file's `reconciliation_check_targeted_first`
 // field. The meta file wins when both are present.
+//
+// Keys correspond to the capture group from
+// `^[a-z0-9-]+\.bad-([a-z0-9-]+)\.jsonl$` (the kind after `bad-`). For
+// historical compatibility we ALSO accept keys prefixed with `bad-`
+// (the v0.2 spelling); the lookup tries both forms.
 const FILENAME_KIND_TO_RULE: Record<string, number> = {
+  // v0.2 keys (kept for back-compat — meta-file mapping is the canonical
+  // path for the mazur.* fixtures, so these entries mostly serve as
+  // documentation).
   "bad-gradient": 4,
-  // v0.2.0 — all 8 reconciliation rules wired with paired fixtures:
   "bad-output-signal": 1,
   "bad-contribution": 2,
   "bad-backprop-sum": 2,
@@ -73,6 +80,23 @@ const FILENAME_KIND_TO_RULE: Record<string, number> = {
   "bad-weight-after": 6,
   "bad-params-after": 7,
   "bad-provenance": 8,
+  // v0.3 keys: regex capture is "chain" / "trace-id" (without bad- prefix).
+  // The v0.2 mazur fixtures route through the meta-file path because their
+  // meta files declare reconciliation_check_targeted_first; the v0.3
+  // multi-step fixtures don't (yet), so they route through this fallback.
+  // Both prefixed AND unprefixed forms are listed so a future meta-less
+  // mazur fixture would still resolve.
+  "gradient": 4,
+  "output-signal": 1,
+  "contribution": 2,
+  "backprop-sum": 2,
+  "hidden-signal": 3,
+  "update-value": 5,
+  "weight-after": 6,
+  "params-after": 7,
+  "provenance": 8,
+  "chain": 9,
+  "trace-id": 10,
 };
 
 /**
@@ -127,7 +151,12 @@ function collectFixtureRuleCoverage(): Map<number, string[]> {
     }
 
     if (rule === undefined) {
-      const m = file.match(/mazur\.bad-([a-z0-9-]+)\.jsonl$/);
+      // Generalized prefix-bearing kind: `<prefix>.bad-<kind>.jsonl` matches
+      // `mazur.bad-gradient.jsonl`, `multi-step.bad-chain.jsonl`, etc. The
+      // prefix names the fixture family (mazur receipt vs multi-step
+      // sequence); the kind names the rule. v0.3 extends from the v0.2
+      // mazur-only convention with `multi-step.bad-{chain,trace-id}.jsonl`.
+      const m = file.match(/^[a-z0-9-]+\.bad-([a-z0-9-]+)\.jsonl$/);
       if (m) {
         const kind = m[1]!;
         const known = FILENAME_KIND_TO_RULE[kind];
@@ -179,15 +208,17 @@ test(
 );
 
 test(
-  "T-A-009: v0.2 reconciler implements all 8 reconciliation rules (scope-extend over E-A-004)",
+  "T-A-009: v0.3 reconciler implements all 10 reconciliation rules (scope-extend over v0.2's Rules 1-8)",
   () => {
     const implemented = extractImplementedRules();
     assert.deepStrictEqual(
       Array.from(implemented).sort((a, b) => a - b),
-      [1, 2, 3, 4, 5, 6, 7, 8],
-      "v0.2 reconciler scope is Rules 1-8 (E-A-004 v0.1 Rule-4-only scope was extended in v0.2). " +
-        "When v0.3 adds a new rule, update this expected list AND ship a sibling bad-* fixture. " +
-        "The previous test (every-rule-has-a-fixture) will fail loudly if you forget the fixture.",
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      "v0.3 reconciler scope is Rules 1-10 — Rules 9 (multi-step parameter chain) and 10 " +
+        "(multi-step trace identity) extend v0.2's per-receipt Rules 1-8. When v0.4+ adds " +
+        "a new rule, update this expected list AND ship a sibling bad-* fixture. " +
+        "The doctrine-ratchet test (every-rule-has-a-fixture) fails loudly if a rule lands " +
+        "without its paired fixture.",
     );
   },
 );

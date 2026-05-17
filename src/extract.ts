@@ -24,6 +24,12 @@
 
 import type { MazurReceipt } from "./engine.js";
 import type { MazurInput } from "./mazur.js";
+import type {
+  GeneralInput,
+  GeneralReceipt,
+  SerializedTopology,
+} from "./general-engine.js";
+import type { Topology } from "./topology.js";
 
 /**
  * Reconstruct the MazurInput that, when fed to `runMazurStep`, would
@@ -57,3 +63,59 @@ export function extractEngineInput(receipt: MazurReceipt): MazurInput {
     bias_policy: receipt.bias_policy,
   };
 }
+
+/**
+ * v0.3 sibling of extractEngineInput, generalized over arbitrary
+ * topologies. Reconstruct the GeneralInput that, when fed to
+ * `runGeneralStep`, would produce the given v0.2.0-schema receipt.
+ *
+ * Round-trip discipline: GeneralReceipt's `topology` field is a
+ * SerializedTopology (JSON-shaped plain object); runGeneralStep accepts a
+ * Topology (readonly arrays / discriminated parameter roles). The two
+ * shapes are STRUCTURALLY identical at runtime — SerializedTopology drops
+ * the readonly hints to be JSON-serializable, but every field name and
+ * value shape matches Topology. The cast through `as unknown as Topology`
+ * is faithful by construction (Topology and SerializedTopology share the
+ * same in-memory shape; the difference is purely type-level mutability).
+ *
+ * The returned input has trace_id / step_index / fixture / metadata
+ * carried through iff they were set on the receipt — runGeneralStep
+ * propagates them back into the regenerated receipt unchanged, which is
+ * required for byte-equality.
+ *
+ * @param receipt  A valid GeneralReceipt (output of a prior runGeneralStep
+ *                 call OR the result of parsing a v0.2.0-schema fixture).
+ * @returns        A GeneralInput equivalent to the input that produced
+ *                 the receipt's forward/backward/update math.
+ */
+export function extractGeneralEngineInput(receipt: GeneralReceipt): GeneralInput {
+  // SerializedTopology and Topology share the same runtime shape; the
+  // type difference is purely the readonly hint. Cast through `unknown`
+  // to satisfy the structural assignability check.
+  const topology = receipt.topology as unknown as Topology;
+  const input: GeneralInput = {
+    topology,
+    learning_rate: receipt.learning_rate,
+    inputs: receipt.inputs,
+    targets: receipt.targets,
+    parameters_before: receipt.parameters_before,
+    numeric_policy: receipt.numeric_policy,
+    bias_policy: receipt.bias_policy,
+  };
+  // Optional fields propagate iff present on the receipt — runGeneralStep
+  // uses exactOptionalPropertyTypes-equivalent discipline (the field is
+  // re-added to the receipt iff the input had it), so this round-trip is
+  // byte-stable.
+  const out: GeneralInput = {
+    ...input,
+    ...(receipt.trace_id !== undefined ? { trace_id: receipt.trace_id } : {}),
+    ...(receipt.step_index !== undefined ? { step_index: receipt.step_index } : {}),
+    ...(receipt.fixture !== undefined ? { fixture: receipt.fixture } : {}),
+    ...(receipt.metadata !== undefined ? { metadata: receipt.metadata } : {}),
+  };
+  return out;
+}
+
+// Re-export SerializedTopology so callers importing extract.ts get the
+// type for argument typing.
+export type { SerializedTopology };

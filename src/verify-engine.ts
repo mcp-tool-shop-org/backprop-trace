@@ -23,8 +23,13 @@ import { createHash } from "node:crypto";
 import type { MazurInput } from "./mazur.js";
 import type { MazurReceipt } from "./engine.js";
 import { runMazurStep } from "./engine.js";
-import { emitMazurReceipt } from "./emit.js";
-import { extractEngineInput } from "./extract.js";
+import { emitMazurReceipt, emitGeneralReceipt } from "./emit.js";
+import { extractEngineInput, extractGeneralEngineInput } from "./extract.js";
+import {
+  runGeneralStep,
+  type GeneralInput,
+  type GeneralReceipt,
+} from "./general-engine.js";
 
 /**
  * Discriminated-union result of verifyEngineReproduces.
@@ -95,4 +100,42 @@ export function verifyEngineReproduces(
  */
 function sha256Hex(s: string): string {
   return createHash("sha256").update(s).digest("hex");
+}
+
+/**
+ * v0.3 sibling of verifyEngineReproduces, generalized over arbitrary
+ * topologies. Re-runs the generalized engine on a v0.2.0-schema receipt's
+ * inputs and verifies that the resulting canonical emission byte-equals
+ * the receipt's own canonical emission.
+ *
+ * Composition mirrors verifyEngineReproduces exactly — the only delta is
+ * which engine + which emitter are dispatched. This lets `bp verify general`
+ * surface the same VerifyEngineResult shape as `bp verify mazur`, so the
+ * CLI can render diff snippets identically across schema versions.
+ *
+ * If `input` is omitted, extracts it from the receipt via
+ * extractGeneralEngineInput (the v0.3 receipt is self-sufficient for replay).
+ *
+ * @param receipt  A v0.2.0-schema GeneralReceipt whose verification_state
+ *                 claim is being discharged. Typically loaded via parseReceipt(file)
+ *                 with schemaVersion === "0.2.0", then cast to GeneralReceipt.
+ * @param input    Optional override for the engine input. If omitted,
+ *                 extracted from the receipt itself.
+ * @returns        VerifyEngineResult — same shape as verifyEngineReproduces.
+ */
+export function verifyGeneralEngineReproduces(
+  receipt: GeneralReceipt,
+  input?: GeneralInput,
+): VerifyEngineResult {
+  const engineInput = input ?? extractGeneralEngineInput(receipt);
+  const ourReceipt = runGeneralStep(engineInput);
+  const ourBytes = emitGeneralReceipt(ourReceipt);
+  const theirBytes = emitGeneralReceipt(receipt);
+  if (ourBytes === theirBytes) {
+    return { matches: true, bytes: ourBytes, digest: sha256Hex(ourBytes) };
+  }
+  let i = 0;
+  const minLen = Math.min(ourBytes.length, theirBytes.length);
+  while (i < minLen && ourBytes[i] === theirBytes[i]) i++;
+  return { matches: false, ourBytes, theirBytes, firstDifferingByte: i };
 }

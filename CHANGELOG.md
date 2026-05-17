@@ -5,10 +5,153 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Note: the `schema_version` field inside receipts (`"0.1.0"`) is the receipt-format
-version, which is versioned independently of this npm package version. A receipt
-written today against schema 0.1.0 will still validate against schema 0.1.0 in
-v0.5 of the package.
+Note: the `schema_version` field inside receipts (`"0.1.0"`, `"0.2.0"`) is the
+receipt-format version, which is versioned independently of this npm package
+version. A receipt written today against schema 0.1.0 will still validate
+against schema 0.1.0 in v0.5 of the package; v0.3 adds schema 0.2.0 for the
+generalized topology + multi-step path without retiring schema 0.1.0.
+
+## [0.3.0] - 2026-05-16
+
+### Added
+
+- Generalized engine (`runGeneralStep`, `src/general-engine.ts`) supporting
+  arbitrary N-input N-hidden N-output sigmoid+ReLU+identity topologies via
+  explicit `unit_order` + `parameter_order` declarations on a `Topology`
+  value. The existing Mazur 2-2-2 path (`runMazurStep`) is unchanged and
+  remains the byte-equal golden source; `runGeneralStep` ships alongside it
+  and produces v0.2.0-schema receipts.
+- Schema v0.2.0 (`schemas/receipt.v0.2.0.json`): additive on top of v0.1.0.
+  `unit_order` + `parameter_order` are REQUIRED at the top level for general-
+  topology receipts; `trace_id` (128-bit lowercase hex) + `step_index`
+  (0-based integer) are OPTIONAL for multi-step receipts;
+  `numeric_policy.tolerance` becomes an object `{atol, rtol}` (the scalar
+  form is retained as v0.1 compat sugar — read as `{atol: <value>, rtol: 0}`);
+  `topology.activation` enum widens to `{sigmoid, identity, relu}`;
+  layer-size fields widen from `const 2` to integer 1-64.
+- Hybrid tolerance: `|a - b| <= max(atol, rtol * max(|a|, |b|))` — symmetric
+  max form per Boost.Test FPC_STRONG, Bruce Dawson (2012), and
+  floating-point-gui.de. Defaults `atol = 1e-12`, `rtol = 1e-9`.
+- Rule 9 — multi-step parameter chain: for `step_index = N` (N > 0),
+  `parameters_before[N]` MUST equal the prior receipt's `parameters_after[N-1]`
+  within tolerance. Single-step receipts (`step_index = 0`) skip Rule 9.
+- Rule 10 — multi-step trace identity: across a JSONL training run, every
+  receipt MUST share `trace_id` and `step_index` MUST be sequential
+  (0, 1, 2, ..., N-1, monotonic and dense).
+- Activation library (`src/activations.ts`): `sigmoid` (existing),
+  `identity` (NEW), `relu` (NEW), each as `activate(x): number` plus
+  `*DerivativeFromOut(out): number` siblings. Plus `activate` /
+  `activationDerivativeFromOut` dispatch helpers consumed by the general
+  engine.
+- Topology types and validators (`src/topology.ts`): `Topology`, `Parameter`,
+  `ParameterRole`, `UnitOrder`, `UnitId`, `ParameterId`, plus
+  `assertTopologyValid`, `findWeight`, `findHiddenBias`, `findOutputBias`
+  helpers.
+- XOR-sigmoid 2-2-1 fixture (`fixtures/xor.golden.jsonl` +
+  `fixtures/xor.published.json`) — operator-chosen seeded init; engine-
+  anchored (no published source provides this exact trace).
+- Iris 4-3-3 sigmoid fixture (`fixtures/iris.golden.jsonl` +
+  `fixtures/iris.published.json`) — first iris flower
+  `(5.1, 3.5, 1.4, 0.2)` targeting one-hot setosa `[1, 0, 0]`;
+  engine-anchored.
+- Bad fixtures for the multi-step rules (`fixtures/bad/multi-step.bad-chain.jsonl`,
+  `fixtures/bad/multi-step.bad-trace-id.jsonl`) per the Csmith
+  bad-receipts-precede-good doctrine — each ships with a sibling
+  `.meta.json` documenting the mutation and the targeted invariant.
+- CLI subcommands: `bp verify general <file>` (generalized verify gate for
+  v0.2.0-schema receipts), `bp verify multi <file.jsonl>` (multi-record
+  verify; Rules 9, 10 + per-record Rules 1-8), `bp generate xor` and
+  `bp generate iris` (emit canonical bytes for the new fixtures).
+  `bp verify mazur` keeps v0.1.0 semantics unchanged.
+- Library exports added to the package barrel: `runGeneralStep`,
+  `runMultiStep`, `emitGeneralReceipt`, `XOR_INPUT`, `XOR_TOPOLOGY`,
+  `IRIS_INPUT`, `IRIS_TOPOLOGY`, `MAZUR_TOPOLOGY`, `sigmoid` /
+  `sigmoidDerivativeFromOut` / `identity` / `identityDerivativeFromOut` /
+  `relu` / `reluDerivativeFromOut`, `activate`,
+  `activationDerivativeFromOut`, `applyToleranceCheck`,
+  `normalizeTolerance`, `checkRule9`, `checkRule10`, `reconcileMultiStep`,
+  `verifyGeneralEngineReproduces`, `extractGeneralEngineInput`,
+  `assertTopologyValid`, `findWeight`, `findHiddenBias`, `findOutputBias`.
+- New subpath exports: `./general-engine`, `./topology`, `./activations`,
+  `./schema/0.1.0`, `./schema/0.2.0`. The bare `./schema` alias keeps
+  pointing at `receipt.v0.1.0.json` for backward compatibility.
+- New docs:
+  - `docs/topology.md` — authoring guide for general topologies (the
+    `Topology` type, the four `ParameterRole`s, unit-id / parameter-id
+    constraints, the `unit_order` + `parameter_order` canonicalization,
+    per-layer bias sharing, and a worked example walking through
+    `XOR_INPUT`).
+  - `docs/multi-step.md` — multi-step training receipts (parameter-chain
+    integrity, `trace_id` + `step_index` semantics, multi-record JSONL
+    framing, two-phase verification model, `bp verify multi` workflow).
+
+### Changed
+
+- All 8 existing reconciliation rules now route through
+  `applyToleranceCheck(a, b, policy)`. v0.1 receipts that supply a scalar
+  `numeric_policy.tolerance` continue to reconcile under pure-atol semantics
+  (the scalar `X` is normalized to `{atol: X, rtol: 0}`, so the symmetric
+  max-form collapses to `|a - b| <= X` — identical to v0.1 behavior).
+- `validateReceiptSchema` auto-detects v0.1 vs v0.2 by inspecting
+  `schema_version` on the receipt. Both validators are compiled once at
+  module load and cached. Callers that need to pin a specific schema can
+  pass `opts.version`.
+- `emitReceipts` dispatches on receipt schema_version — Mazur receipts emit
+  via the v0.1 emitter, generalized receipts via the v0.2 emitter. Multi-
+  record framing is unchanged (trailing LF per record; concatenating two
+  emitter outputs is itself a valid emitter output).
+- `RULE_DESCRIPTIONS` expanded to 10 entries (Rules 9, 10 added).
+- `docs/reconciliation.md`: quick-reference table updated to list all 10
+  rules; new "Multi-step receipts" section explains the two-phase
+  verification model and the 128-bit hex `trace_id` convention.
+- `docs/computation-order.md`: new "Hybrid tolerance (v0.3+)" section
+  documenting the symmetric max form, defaults (`atol = 1e-12`,
+  `rtol = 1e-9`), backward-compat with scalar `tolerance: 1e-9`, and
+  rationale (absorbs the v0.1 w6/w8 product drift previously documented
+  in `fixtures/bad/mazur.bad-gradient.meta.json`).
+- `docs/cli.md`: documents the four new subcommands and the exit-code
+  conventions for each.
+- `docs/schema.md`: dedicated walk-through of `schemas/receipt.v0.2.0.json`,
+  highlighting the v0.1 → v0.2 diffs (required unit_order/parameter_order;
+  tolerance becomes object-or-scalar; activation widened; layer sizes
+  widened; optional trace_id / step_index for multi-step).
+- `docs/quickstart.md`: adds a "Beyond Mazur — XOR and iris" section
+  showing programmatic and CLI flows for the new fixtures.
+- `README.md`: updated CLI section, new "Quick demos" block with XOR + iris
+  one-liners, and the "What this is" section now mentions v0.3 generalized
+  engine + hybrid tolerance + multi-step.
+
+### Determinism scope
+
+Unchanged from v0.2 for sigmoid (Math.exp on V8 / Node 22 — see
+`docs/canonical-emission.md` for the binary64 pinning policy). ReLU is
+exact arithmetic (no transcendental). Identity is trivially exact. The XOR
+and iris fixtures inherit the V8/Node 22 ULP envelope from the Mazur
+spine — they're pinned against the same runtime, not against an external
+published anchor.
+
+### Migration notes (v0.2.0 → v0.3.0)
+
+- Receipts with `schema_version: "0.1.0"` (Mazur) continue to validate
+  against the v0.1.0 schema unchanged. `bp reconcile receipt`,
+  `bp verify mazur`, `bp generate mazur`, and `bp validate` all keep
+  their v0.2 behavior.
+- Receipts emitted by `runGeneralStep` declare
+  `schema_version: "0.2.0"`. Consumers that read receipts and need to
+  route by version should branch on `receipt.schema_version` (the v0.2
+  validator surfaces the dispatched version in its result envelope —
+  see `ValidationResult.schemaVersion`).
+- Consumers that parsed receipts via `JSON.parse` directly and accessed
+  `numeric_policy.tolerance` as a number must now handle both shapes —
+  use `normalizeTolerance(receipt.numeric_policy.tolerance)` to flatten
+  to `{atol, rtol}` and read `atol` (which equals the scalar value for
+  v0.1 receipts). `parseReceipt`, `validateReceiptSchema`, and the
+  reconciler handle both shapes automatically.
+- The Mazur golden fixture (`fixtures/mazur.golden.jsonl`) is byte-equal
+  preserved against v0.2. The byte-equal regression test that pinned v0.1
+  / v0.2 is unaffected by the v0.3 schema additions.
+
+[0.3.0]: https://github.com/mcp-tool-shop-org/backprop-trace/releases/tag/v0.3.0
 
 ## [0.2.0] - 2026-05-16
 

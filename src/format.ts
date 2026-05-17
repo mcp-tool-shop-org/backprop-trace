@@ -34,11 +34,13 @@
  *     string.
  *
  *   - `PLAIN_DECIMAL_OUT_OF_SCOPE` — the input parsed cleanly but its
- *     magnitude falls outside the v0.1 plain-decimal range [1e-9, 1e7).
+ *     magnitude falls outside the v0.3 plain-decimal range [1e-12, 1e7).
  *     Receipt-resident scalars (gradients, weights, signals, losses, inputs)
- *     sit comfortably inside this range for the Mazur 2-2-2 fixture; values
- *     beyond it indicate either a bug upstream or a need to widen
- *     plain_decimal_range in fixtures/formatter.policy.golden.json.
+ *     sit comfortably inside this range for the Mazur 2-2-2 / XOR / iris
+ *     fixtures; values beyond it indicate either a bug upstream or a need to
+ *     widen plain_decimal_range in fixtures/formatter.policy.golden.json.
+ *     The v0.1/v0.2 floor was 1e-9; widened in v0.3 to admit tighter atol
+ *     values without scientific-notation fallback.
  */
 export type FormatErrorKind = "NON_PLAIN_DECIMAL_INPUT" | "PLAIN_DECIMAL_OUT_OF_SCOPE";
 
@@ -63,7 +65,16 @@ export class FormatPolicyError extends Error {
 
 const PLAIN_DECIMAL_REGEX = /^-?(0|[1-9][0-9]*)(\.[0-9]+)?$/;
 const SIGNIFICANT_DIGITS = 9;
-const PLAIN_DECIMAL_MIN_EXPONENT = -9;
+// v0.3: widened from -9 to -13 to admit hybrid-tolerance atol=1e-12 default.
+// The user-intent floor is 1e-12, but IEEE-754 binary64 represents 1e-12 as
+// approximately 9.9999999999999998e-13 — its leading non-zero digit is at
+// position 13 after the decimal, NOT 12. The pre-round magnitude check at
+// step 5 below operates on the toPrecision(17) string before HTE rounding to
+// 9 sig figs, so the floor must accommodate the raw representation. After
+// rounding, the emitted bytes for 1e-12 are "0.00000000000100000000" with
+// leading exponent -12 (the user-intended floor). v0.1/v0.2 used -9.
+// See fixtures/bad/mazur.bad-gradient.meta.json's v0_2_followup note.
+const PLAIN_DECIMAL_MIN_EXPONENT = -13;
 const PLAIN_DECIMAL_MAX_EXPONENT_EXCLUSIVE = 7;
 const ZERO_REPRESENTATION = "0.000000000";
 
@@ -94,7 +105,8 @@ const DIGIT_IS_ODD: Record<string, boolean> = {
  * Input contract — must-have:
  *   - String matching PLAIN_DECIMAL_REGEX (optional minus, integer part, optional
  *     fractional part). No scientific notation, no whitespace, no leading "+".
- *   - Magnitude in [1e-9, 1e7) — the v0.1 plain-decimal range.
+ *   - Magnitude in [1e-12, 1e7) — the v0.3 plain-decimal range (widened from
+ *     v0.1/v0.2's [1e-9, 1e7) to admit hybrid-tolerance atol=1e-12).
  *
  * Input contract — must-NOT:
  *   - No call to Number(), parseFloat(), or any IEEE-754 coercion of input.
@@ -108,7 +120,7 @@ const DIGIT_IS_ODD: Record<string, boolean> = {
  *
  * @throws FormatPolicyError with kind === "NON_PLAIN_DECIMAL_INPUT" when the
  *   input does not match PLAIN_DECIMAL_REGEX, or kind ===
- *   "PLAIN_DECIMAL_OUT_OF_SCOPE" when magnitude is outside [1e-9, 1e7).
+ *   "PLAIN_DECIMAL_OUT_OF_SCOPE" when magnitude is outside [1e-12, 1e7).
  */
 export function formatDecimalStringForFixture(input_decimal: string): string {
   // 1. Validate format
@@ -152,13 +164,13 @@ export function formatDecimalStringForFixture(input_decimal: string): string {
   if (leadingExponent < PLAIN_DECIMAL_MIN_EXPONENT) {
     throw new FormatPolicyError(
       "PLAIN_DECIMAL_OUT_OF_SCOPE",
-      `Magnitude of ${JSON.stringify(input_decimal)} is below plain_decimal_range.min_magnitude (1e${PLAIN_DECIMAL_MIN_EXPONENT}). Hint: v0.1 plain-decimal range is [1e-9, 1e7). Receipt-resident data (gradients, weights, signals, losses, inputs) sits well above the 1e-9 floor in practice; the floor exists to keep numeric_policy.tolerance (=1e-9) emittable. If a future tolerance needs to be tighter than 1e-9, the floor expands first (see docs/canonical-emission.md).`,
+      `Magnitude of ${JSON.stringify(input_decimal)} is below plain_decimal_range.min_magnitude (1e${PLAIN_DECIMAL_MIN_EXPONENT}). Hint: v0.3 plain-decimal range is [1e-12, 1e7). Receipt-resident data (gradients, weights, signals, losses, inputs) sits well above the 1e-12 floor in practice; the floor exists to keep numeric_policy.tolerance (atol defaults to 1e-12 in v0.3 hybrid form) emittable. The v0.1/v0.2 floor was 1e-9 — widened in v0.3 to admit tighter atol values without scientific-notation fallback (see docs/canonical-emission.md).`,
     );
   }
   if (leadingExponent >= PLAIN_DECIMAL_MAX_EXPONENT_EXCLUSIVE) {
     throw new FormatPolicyError(
       "PLAIN_DECIMAL_OUT_OF_SCOPE",
-      `Magnitude of ${JSON.stringify(input_decimal)} is at or above plain_decimal_range.max_magnitude_exclusive (1e${PLAIN_DECIMAL_MAX_EXPONENT_EXCLUSIVE}). Hint: v0.1 plain-decimal range is [1e-9, 1e7). Receipt-resident data (gradients, weights, signals, losses, inputs) sits well above the 1e-9 floor in practice; the floor exists to keep numeric_policy.tolerance (=1e-9) emittable. If a future tolerance needs to be tighter than 1e-9, the floor expands first (see docs/canonical-emission.md).`,
+      `Magnitude of ${JSON.stringify(input_decimal)} is at or above plain_decimal_range.max_magnitude_exclusive (1e${PLAIN_DECIMAL_MAX_EXPONENT_EXCLUSIVE}). Hint: v0.3 plain-decimal range is [1e-12, 1e7). Receipt-resident data (gradients, weights, signals, losses, inputs) sits well above the 1e-12 floor in practice; the floor exists to keep numeric_policy.tolerance (atol defaults to 1e-12 in v0.3 hybrid form) emittable. The v0.1/v0.2 floor was 1e-9 — widened in v0.3 to admit tighter atol values without scientific-notation fallback (see docs/canonical-emission.md).`,
     );
   }
 
@@ -172,7 +184,7 @@ export function formatDecimalStringForFixture(input_decimal: string): string {
   if (finalExponent >= PLAIN_DECIMAL_MAX_EXPONENT_EXCLUSIVE) {
     throw new FormatPolicyError(
       "PLAIN_DECIMAL_OUT_OF_SCOPE",
-      `After rounding, magnitude of ${JSON.stringify(input_decimal)} reached >= 1e${PLAIN_DECIMAL_MAX_EXPONENT_EXCLUSIVE}. Hint: v0.1 plain-decimal range is [1e-9, 1e7). Receipt-resident data (gradients, weights, signals, losses, inputs) sits well above the 1e-9 floor in practice; the floor exists to keep numeric_policy.tolerance (=1e-9) emittable. If a future tolerance needs to be tighter than 1e-9, the floor expands first (see docs/canonical-emission.md).`,
+      `After rounding, magnitude of ${JSON.stringify(input_decimal)} reached >= 1e${PLAIN_DECIMAL_MAX_EXPONENT_EXCLUSIVE}. Hint: v0.3 plain-decimal range is [1e-12, 1e7). Receipt-resident data (gradients, weights, signals, losses, inputs) sits well above the 1e-12 floor in practice; the floor exists to keep numeric_policy.tolerance (atol defaults to 1e-12 in v0.3 hybrid form) emittable. The v0.1/v0.2 floor was 1e-9 — widened in v0.3 to admit tighter atol values without scientific-notation fallback (see docs/canonical-emission.md).`,
     );
   }
 

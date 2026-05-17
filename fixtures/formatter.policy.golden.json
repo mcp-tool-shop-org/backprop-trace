@@ -9,7 +9,7 @@
     "negative_zero": "normalize_to_positive_zero",
     "scientific_notation_output": "never",
     "plain_decimal_range": {
-      "min_magnitude": 1e-9,
+      "min_magnitude": 1e-12,
       "max_magnitude_exclusive": 1e7
     },
     "zero_representation": "0.000000000"
@@ -39,7 +39,7 @@
     ]
   },
   "out_of_scope_behavior": "Inputs whose value falls outside plain_decimal_range produce expected_error PLAIN_DECIMAL_OUT_OF_SCOPE. Inputs not in plain-decimal format produce expected_error NON_PLAIN_DECIMAL_INPUT. These categories are not interchangeable.",
-  "range_rationale": "min_magnitude = 1e-9 is sized to admit numeric_policy.tolerance (= 1e-9 in v0.1) without falling back to scientific notation. Data values (gradients, weights, signals, losses, inputs) sit well above this floor in practice; the floor exists to keep configuration constants emittable.",
+  "range_rationale": "v0.3: min_magnitude = 1e-12 is sized to admit numeric_policy.tolerance hybrid-form atol default (= 1e-12) without falling back to scientific notation. v0.1/v0.2 used 1e-9 (sized for the pure-atol Mazur tolerance); widened in v0.3 to admit tighter atol values. Data values (gradients, weights, signals, losses, inputs) sit well above this floor in practice; the floor exists to keep configuration constants emittable.",
   "cases": [
     { "category": "round_down",                "input_decimal":  "0.1234567894",  "expected":  "0.123456789",   "note": "10th sig digit = 4 (< 5), round down" },
     { "category": "round_up_strict",           "input_decimal":  "0.1234567896",  "expected":  "0.123456790",   "note": "10th sig digit = 6 (> 5), round up" },
@@ -62,8 +62,10 @@
     { "category": "zero_negative",             "input_decimal": "-0",             "expected":  "0.000000000",   "note": "Negative zero normalized to positive" },
     { "category": "integer_padding",           "input_decimal":  "1",             "expected":  "1.00000000",    "note": "Pad integer to 9 sig figs" },
     { "category": "round_trip_identity",       "input_decimal":  "0.149780716",   "expected":  "0.149780716",   "note": "Already canonical; round-trip stability" },
-    { "category": "min_boundary",              "input_decimal":  "0.000000001",   "expected":  "0.00000000100000000", "note": "Minimum supported plain-decimal magnitude (1e-9); required for numeric_policy.tolerance" },
-    { "category": "out_of_scope_value_small",  "input_decimal":  "0.0000000001",  "expected_error": "PLAIN_DECIMAL_OUT_OF_SCOPE", "note": "Valid plain decimal; magnitude (1e-10) below plain_decimal_range.min_magnitude (1e-9)" },
+    { "category": "min_boundary_v0_1",         "input_decimal":  "0.000000001",   "expected":  "0.00000000100000000", "note": "v0.1/v0.2 minimum (1e-9); still in scope under v0.3 [1e-12, 1e7)" },
+    { "category": "v0_3_within_v0_1_floor",    "input_decimal":  "0.0000000001",  "expected":  "0.000000000100000000", "note": "Valid plain decimal; magnitude (1e-10) — was OUT_OF_SCOPE in v0.1/v0.2, now in scope under v0.3 [1e-12, 1e7)" },
+    { "category": "min_boundary_v0_3",         "input_decimal":  "0.000000000001", "expected": "0.00000000000100000000", "note": "v0.3 minimum supported plain-decimal magnitude (1e-12); required for numeric_policy.tolerance hybrid-form atol default" },
+    { "category": "out_of_scope_value_small",  "input_decimal":  "0.00000000000001", "expected_error": "PLAIN_DECIMAL_OUT_OF_SCOPE", "note": "Valid plain decimal; magnitude (1e-14) below v0.3 plain_decimal_range.min_magnitude (1e-12). The 1e-13 strings format cleanly because IEEE-754 representation of 1e-12 dips to leading-exponent -13; the format module's pre-round check accepts -13 to admit 1e-12 round-trips, so genuine OUT_OF_SCOPE rejections start at -14 or beyond." },
     { "category": "out_of_scope_value_large",  "input_decimal": "10000000",       "expected_error": "PLAIN_DECIMAL_OUT_OF_SCOPE", "note": "Valid plain decimal; magnitude at plain_decimal_range.max_magnitude_exclusive" },
     { "category": "invalid_input_format",      "input_decimal":  "1e-7",          "expected_error": "NON_PLAIN_DECIMAL_INPUT",    "note": "Scientific notation; policy formatter rejects non-plain-decimal inputs before evaluating value" }
   ]

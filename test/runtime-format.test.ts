@@ -46,10 +46,14 @@ test("formatNumberForEngine(1e7) throws PLAIN_DECIMAL_OUT_OF_SCOPE (at max_magni
   assert.strictEqual(caught.kind, "PLAIN_DECIMAL_OUT_OF_SCOPE");
 });
 
-test("formatNumberForEngine(1e-10) throws PLAIN_DECIMAL_OUT_OF_SCOPE (below min_magnitude)", () => {
+test("formatNumberForEngine(1e-14) throws PLAIN_DECIMAL_OUT_OF_SCOPE (v0.3: below 1e-12 min_magnitude)", () => {
+  // v0.3 widened the user-intent floor from 1e-9 to 1e-12. The actual
+  // pre-round check accepts leading-exponent down to -13 to admit IEEE-754
+  // 1e-12 representation (which dips to ~9.99...e-13). So the new boundary
+  // for guaranteed OUT_OF_SCOPE is 1e-14 or smaller.
   let caught: unknown;
   try {
-    formatNumberForEngine(1e-10);
+    formatNumberForEngine(1e-14);
   } catch (e) {
     caught = e;
   }

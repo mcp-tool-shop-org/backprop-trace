@@ -1,0 +1,44 @@
+{
+  "schema_version": "0.2.0",
+  "fixture": "multi-step.bad-chain.meta",
+  "describes": "fixtures/bad/multi-step.bad-chain.jsonl",
+  "based_on": "Two XOR-sigmoid 2-2-1 first-step receipts produced by src/general-engine.ts. Step 0's input is the canonical XOR_INPUT (operator-chosen init w_x1_h1=0.1, etc. — same as fixtures/xor.golden.jsonl). Step 1's parameters_before SHOULD equal step 0's parameters_after byte-for-byte, but w_x1_h1 has been mutated by +1e-6 to deliberately break the parameter chain.",
+  "mutation": {
+    "field_path": "[1].parameters_before.w_x1_h1",
+    "parameter_id": "w_x1_h1",
+    "original": 0.10439713767945162,
+    "mutated": 0.10439813767945162,
+    "delta_absolute": 1.0e-6,
+    "delta_vs_tolerance_multiplier": 1000,
+    "rationale": "1e-6 is 3 orders of magnitude above v0.3's default atol=1e-12 (and 3 orders of magnitude above rtol=1e-9 * |0.104| ≈ 1.04e-10) — comfortably above any plausible hybrid-tolerance threshold the reconciler might apply. Rule 9's chain check uses the receipt-level numeric_policy.tolerance, so this delta will fire Rule 9 regardless of whether the reconciler interprets tolerance as {atol, rtol} or as legacy scalar.",
+    "what_was_NOT_mutated": [
+      "step 0 (entire receipt)",
+      "step 1's trace_id (matches step 0's)",
+      "step 1's step_index (= 1, sequential after step 0's 0)",
+      "step 1's parameters_before for any other parameter (w_x2_h1, w_x1_h2, w_x2_h2, w_h1_y, w_h2_y, b_hidden, b_output)",
+      "step 1's forward / loss / backward / updates / parameters_after — these are all engine-computed from the MUTATED parameters_before, so they are internally self-consistent within step 1 (Rules 1-8 PASS on step 1 standalone)"
+    ]
+  },
+  "single_target_invariant": "Reconciliation produces exactly one Rule 9 failure on step 1, and that failure names parameter w_x1_h1. Rule 10 (trace identity) MUST NOT fire — trace_ids match and step_indices are sequential 0, 1. Per-step Rules 1-8 MUST pass on both step 0 AND step 1 (each receipt is internally consistent on its own — the mutation only breaks the cross-step chain).",
+  "expected_verify_outcome": {
+    "command": "bp verify multi fixtures/bad/multi-step.bad-chain.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "Rule 9",
+      "w_x1_h1",
+      "parameters_before",
+      "chain"
+    ],
+    "stderr_must_NOT_contain": [
+      "Rule 10",
+      "trace_id"
+    ],
+    "stderr_section_count": {
+      "Rule 9:": 1
+    }
+  },
+  "rule_9_specification": "For receipt at step_index = N (N > 0), parameters_before[parameter_id] MUST equal the PRIOR receipt's parameters_after[parameter_id] for every parameter_id, within the receipt-level numeric_policy.tolerance. Single-step receipts (step_index = 0 or step_index absent) skip Rule 9. The chain check is the load-bearing Proof-of-Learning pattern from Jia et al. 2021 (IEEE S&P) — parameter equality across step boundaries is what binds individual SGD updates into a verifiable training run.",
+  "purpose": "Anti-circularity gate for multi-step receipts. Without this fixture, the v0.3 multi-record verifier could pass purely by checking that each step is internally consistent (Rules 1-8 PASS standalone on each receipt) and miss the cross-step chain break — exactly the kind of failure a malicious actor might construct to forge a 'training run' from independent single-step receipts. Written BEFORE the multi-record verifier so the verifier cannot be co-developed against engine output.",
+  "v0_3_extensions": "v0.3.x may add: a Rule 9 fixture mutating EACH parameter in turn (8 fixtures total for the XOR topology); a 3-step bad-chain fixture where the chain breaks at step 2 (not step 1); a fixture where the chain breaks in the OPPOSITE direction (parameters_before is correct but parameters_after diverges from what re-running the engine on parameters_before would produce — this is closer to a Rule 7 failure than Rule 9, but the cross-step framing is novel).",
+  "error_message_format_note": "Rule 9 failure messages should follow the existing renderFailure format from src/bin/bp.ts: 'Rule 9: <label> on <parameter_id>' with field_path, stored, recomputed, delta, tolerance. The 'recomputed' value for Rule 9 is the prior receipt's parameters_after[parameter_id]; 'stored' is the current receipt's parameters_before[parameter_id]."
+}

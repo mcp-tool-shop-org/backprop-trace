@@ -1,21 +1,33 @@
 /**
- * Reconciler v0.2 — implements all 8 rules from docs/reconciliation.md.
+ * Reconciler v0.3 — implements all 10 rules from docs/reconciliation.md
+ * with hybrid (atol + rtol) tolerance.
  *
  * Each rule has at least one bad-* fixture per the Csmith anti-circularity
  * doctrine (see docs/reconciliation.md "Failure-priority rule" and the
  * Csmith / CompCert lineage cited there). The reconciler answers one
  * question: does the math the receipt claims to have done actually add up?
  *
- * v0.1 wired Rule 4 (update.gradient) only. v0.2 adds:
- *   - Rule 1: output error signal == product(factors)
- *   - Rule 2: downstream contribution and backpropagated sum (two-part)
- *   - Rule 3: hidden error signal == backpropagated_sum * activation_derivative
- *   - Rule 5: update.update == optimizer.learning_rate * update.gradient
- *   - Rule 6: weight_after == weight_before + update
- *   - Rule 7: parameters_after final state (with bias-policy branch)
- *   - Rule 8: provenance reference (factor.from path resolution)
+ * v0.1 wired Rule 4 (update.gradient) only.
+ * v0.2 added Rules 1-3 and 5-8 — the full single-receipt math surface.
+ * v0.3 lands two cross-cutting upgrades:
  *
- * Plus two cheap structural improvements:
+ *   1. **Hybrid tolerance** — `applyToleranceCheck(a, b, policy)` replaces
+ *      the pure-atol `Math.abs(a-b) > tolerance` pattern at every rule
+ *      site. A scalar `tolerance: <N>` (v0.1/v0.2 shape) is treated as
+ *      sugar for `{ atol: N, rtol: 0 }` and produces byte-identical
+ *      reconciliation results to v0.2 — the v0.3 migration is strictly
+ *      additive in capability. New v0.3 receipts may emit the object form
+ *      `{ atol, rtol }` and benefit from the symmetric-max-form check
+ *      `|a-b| <= max(atol, rtol*max(|a|,|b|))`.
+ *
+ *   2. **Multi-step rules** — Rule 9 (parameter chain across step
+ *      boundaries) and Rule 10 (trace_id + step_index sequencing) extend
+ *      the reconciler beyond a single receipt. They fire from
+ *      `reconcileMultiStep(receipts)` against a JSONL training run; the
+ *      single-receipt `reconcileReceipt()` path is unchanged and still
+ *      runs only Rules 1-8.
+ *
+ * Plus two cheap structural improvements (from v0.2):
  *   - FT-E-017: cascade wiring — when rule N fails on parameter P and rule
  *     N-1 also failed on the same P, the rule-N failure carries
  *     `cascade_of_rule: N-1` so the CLI can render a "fix this first" hint.
@@ -28,13 +40,91 @@
  *   rule: 0 — structural failure (shape invalid, unsupported product_order,
  *             non-finite arithmetic, underdetermined Rule 7). Not a real
  *             reconciliation rule.
- *   rule: 1-8 — the eight documented reconciliation rules.
+ *   rule: 1-8 — the eight per-receipt reconciliation rules.
+ *   rule: 9-10 — the two cross-receipt (multi-step) reconciliation rules.
+ *               Surfaced only from reconcileMultiStep().
  */
 
 import type { NamedFactor } from "./engine.js"
 
 /**
- * One reconciliation failure surfaced by reconcileReceipt.
+ * Tolerance policy — supports both v0.1 scalar form and v0.2+ object form.
+ *
+ * Scalar form: `tolerance: 1e-9` (v0.1/v0.2 receipts). Treated as
+ * `{ atol: 1e-9, rtol: 0 }` so behavior is byte-identical to the pre-v0.3
+ * pure-atol check.
+ *
+ * Object form: `tolerance: { atol: 1e-12, rtol: 1e-9 }` (v0.3+ receipts).
+ * Both axes are honored via the symmetric-max-form check
+ * `|a - b| <= max(atol, rtol * max(|a|, |b|))`.
+ */
+export type TolerancePolicy = number | { readonly atol: number; readonly rtol: number }
+
+/**
+ * Normalize a tolerance policy to the object form. Scalar `<N>` becomes
+ * `{ atol: N, rtol: 0 }` (preserves v0.1 pure-atol semantics).
+ *
+ * The ONLY place in the reconciler that handles the scalar-vs-object
+ * distinction — all rule sites route through `applyToleranceCheck`, which
+ * calls this normalizer. New code MUST NOT branch on `typeof policy`.
+ */
+export function normalizeTolerance(p: TolerancePolicy): { atol: number; rtol: number } {
+  if (typeof p === "number") return { atol: p, rtol: 0 }
+  return { atol: p.atol, rtol: p.rtol }
+}
+
+/**
+ * Symmetric max-form tolerance check:
+ *
+ *     |a - b| <= max(atol, rtol * max(|a|, |b|))
+ *
+ * Used by all 10 reconciler rules. Returns the absolute delta + tolerance
+ * threshold that was actually applied (the effective max of atol and the
+ * rtol-scaled magnitude bound) so failure reports stay informative — the
+ * `appliedTolerance` field is what the CLI renders.
+ *
+ * NaN/Infinity poisoning: if either input or the computed delta is
+ * non-finite, returns `{ ok: false, delta: NaN, appliedTolerance: 0,
+ * isFinite: false }`. The caller wraps as a Rule N failure with delta:
+ * NaN, tolerance: 0, and an explicit non-finite annotation in `message`.
+ *
+ * @param a       First operand (typically the recomputed value).
+ * @param b       Second operand (typically the stored value).
+ * @param policy  Tolerance policy. Scalar form is treated as
+ *                `{ atol: scalar, rtol: 0 }` — preserves v0.1/v0.2
+ *                behavior byte-identically.
+ *
+ * @returns       `{ ok, delta, appliedTolerance, isFinite }`. When
+ *                `isFinite` is false, `delta` is NaN and
+ *                `appliedTolerance` is 0 — both sentinels for the
+ *                "non-finite arithmetic" branch.
+ */
+export function applyToleranceCheck(
+  a: number,
+  b: number,
+  policy: TolerancePolicy,
+): { ok: boolean; delta: number; appliedTolerance: number; isFinite: boolean } {
+  const { atol, rtol } = normalizeTolerance(policy)
+  if (!Number.isFinite(a) || !Number.isFinite(b)) {
+    return { ok: false, delta: Number.NaN, appliedTolerance: 0, isFinite: false }
+  }
+  const delta = Math.abs(a - b)
+  if (!Number.isFinite(delta)) {
+    return { ok: false, delta, appliedTolerance: 0, isFinite: false }
+  }
+  const magBased = rtol * Math.max(Math.abs(a), Math.abs(b))
+  const appliedTolerance = Math.max(atol, magBased)
+  return {
+    ok: delta <= appliedTolerance,
+    delta,
+    appliedTolerance,
+    isFinite: true,
+  }
+}
+
+/**
+ * One reconciliation failure surfaced by reconcileReceipt or
+ * reconcileMultiStep.
  *
  * For real-rule failures (rule >= 1), the numeric quartet
  * (stored / recomputed / delta / tolerance) carries the diagnostic
@@ -46,7 +136,7 @@ import type { NamedFactor } from "./engine.js"
  * (typically all zeros), so an optional `message` field carries a
  * developer-facing sentence explaining what was wrong with the receipt
  * (e.g. "Unsupported product_order 'right_to_left' at
- * updates[0].optimizer.product_order. v0.1 reconciler accepts only
+ * updates[0].optimizer.product_order. v0.2 reconciler accepts only
  * 'left_to_right'."). Consumers MAY render this verbatim.
  *
  * For multiplication-rule failures (Rules 1, 3, 4), `factors` carries the
@@ -57,13 +147,20 @@ import type { NamedFactor } from "./engine.js"
  *     output_error_signal: -0.138498562
  *     upstream_activation:  0.593269992
  *
- * Other rules (2, 5, 6, 7, 8) omit factors — their failures are fully
- * described by the numeric quartet alone.
+ * Other rules (2, 5, 6, 7, 8, 9, 10) omit factors — their failures are
+ * fully described by the numeric quartet alone, optionally accompanied by
+ * a developer-facing `message`.
  *
  * `cascade_of_rule` is set when a downstream rule fails on the same
  * parameter_id as an upstream rule in the same run. The CLI renders
  * "Note: cascades from Rule N. Fix Rule N first." so a reader can
  * prioritize the root cause.
+ *
+ * For Rule 10 trace_id mismatches, `stored` and `recomputed` hold the
+ * observed-and-expected trace_id values cast to `any` (they're strings,
+ * not numbers). CLI renderers SHOULD branch on `rule === 10` when
+ * presenting these — the `message` field carries the human-readable
+ * description in either case.
  */
 export type ReconciliationFailure = {
   rule: number
@@ -75,9 +172,11 @@ export type ReconciliationFailure = {
   tolerance: number
   cascade_of_rule?: number
   /**
-   * Developer-facing hint. Populated for structural failures (rule === 0)
-   * to explain WHAT to do, not just what failed. Undefined or empty for
-   * numeric rule failures — those are fully described by the quartet.
+   * Developer-facing hint. Populated for structural failures (rule === 0),
+   * Rule 9 (multi-step chain breaks), Rule 10 (trace/step-index issues),
+   * and any failure where the numeric quartet alone is insufficient.
+   * Undefined or empty for plain numeric rule failures — those are fully
+   * described by the quartet.
    */
   message?: string
   /**
@@ -88,9 +187,9 @@ export type ReconciliationFailure = {
   factors?: NamedFactor[]
   /**
    * Multiplication order used when `factors` is populated. Always
-   * "left_to_right" in v0.2 — the only product_order the engine emits and
-   * the only one the reconciler accepts. Declared so a future rtl variant
-   * can be distinguished without an additive field rename.
+   * "left_to_right" in v0.2/v0.3 — the only product_order the engine
+   * emits and the only one the reconciler accepts. Declared so a future
+   * rtl variant can be distinguished without an additive field rename.
    */
   product_order?: "left_to_right"
 }
@@ -103,16 +202,15 @@ export type ReconciliationResult =
  * Canonical human-readable description for each reconciliation rule.
  *
  * Single source of truth for rule descriptions: docs/reconciliation.md
- * "The eight rules" headings and src/bin/bp.ts RULE_LABELS labels should
- * all derive from this table.
+ * "The rules" headings and src/bin/bp.ts RULE_LABELS labels should all
+ * derive from this table.
  *
- * Rule 0 is the structural-failure sentinel (NOT one of the eight rules
- * documented in docs/reconciliation.md, but a reconciler-internal slot
- * for shape/typing failures so the result stream stays uniformly
- * `{ ok: false; failures: [...] }` rather than mixing throws and
- * structured failures).
+ * Rule 0 is the structural-failure sentinel (NOT one of the documented
+ * rules, but a reconciler-internal slot for shape/typing failures so the
+ * result stream stays uniformly `{ ok: false; failures: [...] }` rather
+ * than mixing throws and structured failures).
  *
- * v0.2 wires all eight rules; the table also serves as a registration
+ * v0.3 wires all ten rules; the table also serves as a registration
  * point so CLI labels and future MCP-tool descriptions pull from one
  * source.
  */
@@ -126,6 +224,8 @@ export const RULE_DESCRIPTIONS: Record<number, string> = {
   6: "Weight progression: update.weight_after == update.weight_before + update.update.",
   7: "Final state consistency: parameters_after[param] == parameters_before[param] + sum(updates targeting param).",
   8: "Provenance reference consistency: each factor.from path resolves and factor.value matches the referenced field.",
+  9: "Multi-step parameter chain: step N parameters_before == step N-1 parameters_after (within tolerance).",
+  10: "Multi-step trace identity: all receipts share trace_id AND step_index is sequential (0, 1, 2, ..., N-1).",
 }
 
 type Factor = { name: string; from?: string; value: number }
@@ -170,7 +270,7 @@ type HiddenErrorSignalShape = {
 }
 
 type Receipt = {
-  numeric_policy: { tolerance: number }
+  numeric_policy: { tolerance: TolerancePolicy }
   bias_policy?: { mode?: string }
   updates: Update[]
   parameters_before?: Record<string, number>
@@ -179,6 +279,8 @@ type Receipt = {
     output_error_signals?: Record<string, OutputErrorSignalShape>
     hidden_error_signals?: Record<string, HiddenErrorSignalShape>
   }
+  trace_id?: string
+  step_index?: number
 }
 
 /**
@@ -366,12 +468,44 @@ export function resolvePath(
 }
 
 /**
+ * Structural validity check for a tolerance policy value. Returns true if
+ * the value is either:
+ *   - a finite number (scalar form, v0.1/v0.2 receipts), OR
+ *   - an object with finite `atol` AND finite `rtol` (object form, v0.3+).
+ *
+ * Used by `reconcileReceipt` to surface a Rule-0 structural failure when
+ * `numeric_policy.tolerance` is malformed BEFORE any rule runs. Schema
+ * validation against receipt.v0.1.0.json / receipt.v0.2.0.json is the
+ * load-bearing gate; this helper exists only so a receipt that bypasses
+ * validation surfaces a typed failure rather than a cryptic crash.
+ */
+function isValidTolerancePolicy(t: unknown): t is TolerancePolicy {
+  if (typeof t === "number") return Number.isFinite(t)
+  if (t !== null && typeof t === "object") {
+    const obj = t as { atol?: unknown; rtol?: unknown }
+    return (
+      typeof obj.atol === "number" &&
+      Number.isFinite(obj.atol) &&
+      typeof obj.rtol === "number" &&
+      Number.isFinite(obj.rtol)
+    )
+  }
+  return false
+}
+
+/**
  * Reconcile the math claims in a backprop-trace receipt against the rules
  * documented in docs/reconciliation.md.
  *
- * v0.2 SCOPE: all 8 rules wired (1, 2, 3, 4, 5, 6, 7, 8). Cascade detection
- * fires on Rules 5/6/7 when an upstream rule failed on the same
- * parameter_id. See RULE_DESCRIPTIONS for the canonical rule descriptions.
+ * v0.3 SCOPE: per-receipt rules (1-8) wired with hybrid-tolerance check.
+ * Multi-step rules (9, 10) fire from `reconcileMultiStep` against a JSONL
+ * training run — `reconcileReceipt` deliberately skips them so a
+ * single-receipt verify gate (`bp verify mazur`, `bp verify general`) is
+ * not muddied with multi-step assertions that don't apply.
+ *
+ * Cascade detection fires on Rules 5/6/7 when an upstream rule failed on
+ * the same parameter_id. See RULE_DESCRIPTIONS for the canonical rule
+ * descriptions.
  *
  * The function is tolerant of malformed receipts: instead of throwing, it
  * surfaces a typed Rule-0 (structural-failure) entry with a developer-
@@ -381,9 +515,11 @@ export function resolvePath(
  *
  * @param receipt  An unknown value, expected (but not enforced) to have
  *                 already passed JSON-Schema validation against
- *                 schemas/receipt.v0.1.0.json. The function performs a
- *                 minimal structural shape guard so a malformed receipt
- *                 produces a typed failure rather than a cryptic crash.
+ *                 schemas/receipt.v0.1.0.json (scalar tolerance) or
+ *                 schemas/receipt.v0.2.0.json (object tolerance). The
+ *                 function performs a minimal structural shape guard so a
+ *                 malformed receipt produces a typed failure rather than
+ *                 a cryptic crash.
  * @returns        `{ ok: true }` if every implemented rule passes within
  *                 tolerance, OR `{ ok: false; failures: [...] }` listing
  *                 every failure found. The failures array is never empty
@@ -407,10 +543,10 @@ export function resolvePath(
  */
 export function reconcileReceipt(receipt: unknown): ReconciliationResult {
   // Precondition: the receipt has passed schema validation against
-  // schemas/receipt.v0.1.0.json. This function does not re-validate
-  // structure exhaustively; it performs a minimal structural shape guard
-  // here so a malformed receipt produces a typed Rule-0 failure rather
-  // than a cryptic crash (E-A-002).
+  // schemas/receipt.v0.1.0.json or schemas/receipt.v0.2.0.json. This
+  // function does not re-validate structure exhaustively; it performs a
+  // minimal structural shape guard here so a malformed receipt produces
+  // a typed Rule-0 failure rather than a cryptic crash (E-A-002).
   if (receipt === null || typeof receipt !== "object") {
     return {
       ok: false,
@@ -425,19 +561,14 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
           message:
             "Receipt is not a JSON object (got " +
             (receipt === null ? "null" : typeof receipt) +
-            "). Run schema validation against schemas/receipt.v0.1.0.json before reconciling.",
+            "). Run schema validation against schemas/receipt.v0.1.0.json or v0.2.0.json before reconciling.",
         },
       ],
     }
   }
   const raw = receipt as { numeric_policy?: unknown; updates?: unknown }
   const np = raw.numeric_policy as { tolerance?: unknown } | undefined
-  if (
-    np === null ||
-    typeof np !== "object" ||
-    typeof np.tolerance !== "number" ||
-    !Number.isFinite(np.tolerance)
-  ) {
+  if (np === null || typeof np !== "object" || !isValidTolerancePolicy(np.tolerance)) {
     return {
       ok: false,
       failures: [
@@ -449,8 +580,10 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
           delta: 0,
           tolerance: 0,
           message:
-            "Receipt is missing required field 'numeric_policy.tolerance' or it is not a finite number. " +
-            "Run schema validation against schemas/receipt.v0.1.0.json before reconciling.",
+            "Receipt is missing required field 'numeric_policy.tolerance' or it is malformed. " +
+            "Expected a finite number (v0.1/v0.2 scalar form) or an object " +
+            "{ atol: <finite>, rtol: <finite> } (v0.3+ object form). " +
+            "Run schema validation against schemas/receipt.v0.1.0.json or v0.2.0.json before reconciling.",
         },
       ],
     }
@@ -468,7 +601,7 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
           tolerance: 0,
           message:
             "Receipt is missing required field 'updates' (expected an array of update records). " +
-            "Run schema validation against schemas/receipt.v0.1.0.json before reconciling.",
+            "Run schema validation against schemas/receipt.v0.1.0.json or v0.2.0.json before reconciling.",
         },
       ],
     }
@@ -535,15 +668,35 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
 }
 
 // ============================================================================
-// Per-rule check helpers — each takes the receipt, tolerance, the failures
-// accumulator, and (when relevant) the cascade-state helpers. Helpers push
-// directly into `failures` and `failuresByParam` via callbacks rather than
-// returning arrays so the caller's traversal order is preserved exactly.
+// Per-rule check helpers — each takes the receipt, tolerance policy, the
+// failures accumulator, and (when relevant) the cascade-state helpers.
+// Helpers push directly into `failures` and `failuresByParam` via callbacks
+// rather than returning arrays so the caller's traversal order is preserved
+// exactly.
+//
+// Every rule routes its numeric check through `applyToleranceCheck` (v0.3
+// migration). The reported `tolerance` on each failure is the EFFECTIVE
+// threshold (`max(atol, rtol * max(|a|, |b|))`) so failure reports stay
+// informative for both the scalar (v0.1/v0.2) and object (v0.3+) policy
+// shapes.
 // ============================================================================
+
+/**
+ * Build the developer-facing message string for a non-finite arithmetic
+ * failure. Centralized so every rule emits the same wording for the
+ * same failure mode.
+ */
+function nonFiniteMessage(rule: number, fieldPath: string, recomputed: number, stored: number): string {
+  return (
+    `Non-finite arithmetic detected at ${fieldPath} (Rule ${rule}): ` +
+    `recomputed=${String(recomputed)}, stored=${String(stored)}. ` +
+    `Check upstream factors for NaN/Infinity.`
+  )
+}
 
 function checkRule1(
   r: Receipt,
-  tolerance: number,
+  tolerance: TolerancePolicy,
   failures: ReconciliationFailure[],
   recordFailure: (rule: number, parameter_id: string | undefined) => void,
 ): void {
@@ -560,10 +713,10 @@ function checkRule1(
         stored: 0,
         recomputed: 0,
         delta: 0,
-        tolerance,
+        tolerance: 0,
         message:
           `Unsupported product_order ${JSON.stringify(unit.product_order)} at ` +
-          `backward.output_error_signals.${unitId}.product_order. v0.2 reconciler accepts only ` +
+          `backward.output_error_signals.${unitId}.product_order. v0.3 reconciler accepts only ` +
           `'left_to_right' (see docs/reconciliation.md and docs/computation-order.md).`,
       })
       continue
@@ -577,41 +730,43 @@ function checkRule1(
         stored: 0,
         recomputed: 0,
         delta: 0,
-        tolerance,
+        tolerance: 0,
         message:
           `backward.output_error_signals.${unitId}.factors has ` +
           (Array.isArray(factors) ? `${factors.length} entries` : `non-array type ${typeof factors}`) +
-          `. v0.2 receipts require >= 2 factors per output error signal (schema minItems: 2).`,
+          `. v0.3 receipts require >= 2 factors per output error signal (schema minItems: 2).`,
       })
       continue
     }
     const product = multiplyFactorsLeftToRight(factors)
     const stored = unit.signal_value
-    const delta = Math.abs(product - stored)
-    if (!Number.isFinite(product) || !Number.isFinite(stored) || !Number.isFinite(delta)) {
+    const fieldPath = `backward.output_error_signals.${unitId}.signal_value`
+    const check = applyToleranceCheck(product, stored, tolerance)
+    if (!check.isFinite) {
       failures.push({
         rule: 1,
         parameter_id: unitId,
-        field_path: `backward.output_error_signals.${unitId}.signal_value`,
+        field_path: fieldPath,
         stored,
         recomputed: product,
-        delta: Number.isFinite(delta) ? delta : Number.NaN,
-        tolerance,
+        delta: Number.NaN,
+        tolerance: 0,
         factors: factors as NamedFactor[],
         product_order: "left_to_right",
+        message: nonFiniteMessage(1, fieldPath, product, stored),
       })
       recordFailure(1, unitId)
       continue
     }
-    if (delta > tolerance) {
+    if (!check.ok) {
       failures.push({
         rule: 1,
         parameter_id: unitId,
-        field_path: `backward.output_error_signals.${unitId}.signal_value`,
+        field_path: fieldPath,
         stored,
         recomputed: product,
-        delta,
-        tolerance,
+        delta: check.delta,
+        tolerance: check.appliedTolerance,
         factors: factors as NamedFactor[],
         product_order: "left_to_right",
       })
@@ -622,7 +777,7 @@ function checkRule1(
 
 function checkRule2(
   r: Receipt,
-  tolerance: number,
+  tolerance: TolerancePolicy,
   failures: ReconciliationFailure[],
   recordFailure: (rule: number, parameter_id: string | undefined) => void,
 ): void {
@@ -640,10 +795,10 @@ function checkRule2(
         stored: 0,
         recomputed: 0,
         delta: 0,
-        tolerance,
+        tolerance: 0,
         message:
           `backward.hidden_error_signals.${unitId}.downstream_contributions is not an array ` +
-          `(got ${typeof contribs}). v0.2 receipts require an array of contribution records.`,
+          `(got ${typeof contribs}). v0.3 receipts require an array of contribution records.`,
       })
       continue
     }
@@ -652,29 +807,31 @@ function checkRule2(
       const c = contribs[j]!
       const product = c.downstream_signal * c.weight_value
       const stored = c.value
-      const delta = Math.abs(product - stored)
-      if (!Number.isFinite(product) || !Number.isFinite(stored) || !Number.isFinite(delta)) {
+      const fieldPath = `backward.hidden_error_signals.${unitId}.downstream_contributions[${j}].value`
+      const check = applyToleranceCheck(product, stored, tolerance)
+      if (!check.isFinite) {
         failures.push({
           rule: 2,
           parameter_id: unitId,
-          field_path: `backward.hidden_error_signals.${unitId}.downstream_contributions[${j}].value`,
+          field_path: fieldPath,
           stored,
           recomputed: product,
-          delta: Number.isFinite(delta) ? delta : Number.NaN,
-          tolerance,
+          delta: Number.NaN,
+          tolerance: 0,
+          message: nonFiniteMessage(2, fieldPath, product, stored),
         })
         recordFailure(2, unitId)
         continue
       }
-      if (delta > tolerance) {
+      if (!check.ok) {
         failures.push({
           rule: 2,
           parameter_id: unitId,
-          field_path: `backward.hidden_error_signals.${unitId}.downstream_contributions[${j}].value`,
+          field_path: fieldPath,
           stored,
           recomputed: product,
-          delta,
-          tolerance,
+          delta: check.delta,
+          tolerance: check.appliedTolerance,
         })
         recordFailure(2, unitId)
       }
@@ -689,38 +846,40 @@ function checkRule2(
         stored: 0,
         recomputed: 0,
         delta: 0,
-        tolerance,
+        tolerance: 0,
         message:
           `backward.hidden_error_signals.${unitId}.summation_order is not an array ` +
-          `(got ${typeof order}). v0.2 receipts require a declared summation_order.`,
+          `(got ${typeof order}). v0.3 receipts require a declared summation_order.`,
       })
       continue
     }
     const sum = sumInOrder(contribs, order, (c) => c.from, (c) => c.value)
     const storedSum = unit.backpropagated_sum
-    const delta2 = Math.abs(sum - storedSum)
-    if (!Number.isFinite(sum) || !Number.isFinite(storedSum) || !Number.isFinite(delta2)) {
+    const fieldPath2 = `backward.hidden_error_signals.${unitId}.backpropagated_sum`
+    const check2 = applyToleranceCheck(sum, storedSum, tolerance)
+    if (!check2.isFinite) {
       failures.push({
         rule: 2,
         parameter_id: unitId,
-        field_path: `backward.hidden_error_signals.${unitId}.backpropagated_sum`,
+        field_path: fieldPath2,
         stored: storedSum,
         recomputed: sum,
-        delta: Number.isFinite(delta2) ? delta2 : Number.NaN,
-        tolerance,
+        delta: Number.NaN,
+        tolerance: 0,
+        message: nonFiniteMessage(2, fieldPath2, sum, storedSum),
       })
       recordFailure(2, unitId)
       continue
     }
-    if (delta2 > tolerance) {
+    if (!check2.ok) {
       failures.push({
         rule: 2,
         parameter_id: unitId,
-        field_path: `backward.hidden_error_signals.${unitId}.backpropagated_sum`,
+        field_path: fieldPath2,
         stored: storedSum,
         recomputed: sum,
-        delta: delta2,
-        tolerance,
+        delta: check2.delta,
+        tolerance: check2.appliedTolerance,
       })
       recordFailure(2, unitId)
     }
@@ -729,7 +888,7 @@ function checkRule2(
 
 function checkRule3(
   r: Receipt,
-  tolerance: number,
+  tolerance: TolerancePolicy,
   failures: ReconciliationFailure[],
   recordFailure: (rule: number, parameter_id: string | undefined) => void,
 ): void {
@@ -746,10 +905,10 @@ function checkRule3(
         stored: 0,
         recomputed: 0,
         delta: 0,
-        tolerance,
+        tolerance: 0,
         message:
           `Unsupported product_order ${JSON.stringify(unit.product_order)} at ` +
-          `backward.hidden_error_signals.${unitId}.product_order. v0.2 reconciler accepts only ` +
+          `backward.hidden_error_signals.${unitId}.product_order. v0.3 reconciler accepts only ` +
           `'left_to_right' (see docs/reconciliation.md and docs/computation-order.md).`,
       })
       continue
@@ -765,31 +924,33 @@ function checkRule3(
     ]
     const product = multiplyFactorsLeftToRight(operands)
     const stored = unit.signal_value
-    const delta = Math.abs(product - stored)
-    if (!Number.isFinite(product) || !Number.isFinite(stored) || !Number.isFinite(delta)) {
+    const fieldPath = `backward.hidden_error_signals.${unitId}.signal_value`
+    const check = applyToleranceCheck(product, stored, tolerance)
+    if (!check.isFinite) {
       failures.push({
         rule: 3,
         parameter_id: unitId,
-        field_path: `backward.hidden_error_signals.${unitId}.signal_value`,
+        field_path: fieldPath,
         stored,
         recomputed: product,
-        delta: Number.isFinite(delta) ? delta : Number.NaN,
-        tolerance,
+        delta: Number.NaN,
+        tolerance: 0,
         factors: operands,
         product_order: "left_to_right",
+        message: nonFiniteMessage(3, fieldPath, product, stored),
       })
       recordFailure(3, unitId)
       continue
     }
-    if (delta > tolerance) {
+    if (!check.ok) {
       failures.push({
         rule: 3,
         parameter_id: unitId,
-        field_path: `backward.hidden_error_signals.${unitId}.signal_value`,
+        field_path: fieldPath,
         stored,
         recomputed: product,
-        delta,
-        tolerance,
+        delta: check.delta,
+        tolerance: check.appliedTolerance,
         factors: operands,
         product_order: "left_to_right",
       })
@@ -800,7 +961,7 @@ function checkRule3(
 
 function checkRule4(
   r: Receipt,
-  tolerance: number,
+  tolerance: TolerancePolicy,
   failures: ReconciliationFailure[],
   recordFailure: (rule: number, parameter_id: string | undefined) => void,
 ): void {
@@ -817,10 +978,10 @@ function checkRule4(
         stored: 0,
         recomputed: 0,
         delta: 0,
-        tolerance,
+        tolerance: 0,
         message:
           `Unsupported product_order ${JSON.stringify(update.optimizer.product_order)} at ` +
-          `updates[${i}].optimizer.product_order. v0.2 reconciler accepts only 'left_to_right' ` +
+          `updates[${i}].optimizer.product_order. v0.3 reconciler accepts only 'left_to_right' ` +
           `(see docs/reconciliation.md and docs/computation-order.md).`,
       })
       continue
@@ -837,11 +998,11 @@ function checkRule4(
         stored: 0,
         recomputed: 0,
         delta: 0,
-        tolerance,
+        tolerance: 0,
         message:
           `updates[${i}].optimizer.factors has ` +
           (Array.isArray(factors) ? `${factors.length} entries` : `non-array type ${typeof factors}`) +
-          `. v0.2 receipts require >= 2 factors per optimizer (schema minItems: 2).`,
+          `. v0.3 receipts require >= 2 factors per optimizer (schema minItems: 2).`,
       })
       continue
     }
@@ -851,42 +1012,37 @@ function checkRule4(
     // to prove product_order is load-bearing.
     const product = multiplyFactorsLeftToRight(factors)
     const stored = update.gradient
-    const delta = Math.abs(product - stored)
-    // E-A-001: NaN-poisoning guard. Math.abs(NaN - x) is NaN and NaN >
-    // tolerance is false, so a non-finite product, stored gradient, or
-    // delta would silently pass the threshold check below. Surface those
-    // cases as a Rule 4 failure with delta: NaN when delta itself is not
-    // finite. Catches non-finite factors (multiplyFactorsLeftToRight
-    // propagates NaN/Infinity through the product) and a non-finite
-    // stored gradient.
-    if (
-      !Number.isFinite(product) ||
-      !Number.isFinite(stored) ||
-      !Number.isFinite(delta)
-    ) {
+    const fieldPath = `updates[${i}].gradient`
+    // E-A-001: NaN-poisoning guard. applyToleranceCheck returns
+    // isFinite: false when either input or the computed delta is
+    // non-finite, so a non-finite product or stored gradient surfaces as
+    // a Rule 4 failure with delta: NaN (never a silent pass).
+    const check = applyToleranceCheck(product, stored, tolerance)
+    if (!check.isFinite) {
       failures.push({
         rule: 4,
         parameter_id: update.parameter_id,
-        field_path: `updates[${i}].gradient`,
+        field_path: fieldPath,
         stored,
         recomputed: product,
-        delta: Number.isFinite(delta) ? delta : Number.NaN,
-        tolerance,
+        delta: Number.NaN,
+        tolerance: 0,
         factors: factors as NamedFactor[],
         product_order: "left_to_right",
+        message: nonFiniteMessage(4, fieldPath, product, stored),
       })
       recordFailure(4, update.parameter_id)
       continue
     }
-    if (delta > tolerance) {
+    if (!check.ok) {
       failures.push({
         rule: 4,
         parameter_id: update.parameter_id,
-        field_path: `updates[${i}].gradient`,
+        field_path: fieldPath,
         stored,
         recomputed: product,
-        delta,
-        tolerance,
+        delta: check.delta,
+        tolerance: check.appliedTolerance,
         factors: factors as NamedFactor[],
         product_order: "left_to_right",
       })
@@ -897,7 +1053,7 @@ function checkRule4(
 
 function checkRule5(
   r: Receipt,
-  tolerance: number,
+  tolerance: TolerancePolicy,
   failures: ReconciliationFailure[],
   recordFailure: (rule: number, parameter_id: string | undefined) => void,
   priorFailureRule: (parameter_id: string | undefined, candidates: readonly number[]) => number | undefined,
@@ -912,33 +1068,35 @@ function checkRule5(
     const grad = update.gradient
     const recomputed = lr * grad
     const stored = update.update
-    const delta = Math.abs(recomputed - stored)
-    if (!Number.isFinite(recomputed) || !Number.isFinite(stored) || !Number.isFinite(delta)) {
+    const fieldPath = `updates[${i}].update`
+    const check = applyToleranceCheck(recomputed, stored, tolerance)
+    if (!check.isFinite) {
       const cascade = priorFailureRule(update.parameter_id, [4])
       const fail: ReconciliationFailure = {
         rule: 5,
         parameter_id: update.parameter_id,
-        field_path: `updates[${i}].update`,
+        field_path: fieldPath,
         stored,
         recomputed,
-        delta: Number.isFinite(delta) ? delta : Number.NaN,
-        tolerance,
+        delta: Number.NaN,
+        tolerance: 0,
+        message: nonFiniteMessage(5, fieldPath, recomputed, stored),
       }
       if (cascade !== undefined) fail.cascade_of_rule = cascade
       failures.push(fail)
       recordFailure(5, update.parameter_id)
       continue
     }
-    if (delta > tolerance) {
+    if (!check.ok) {
       const cascade = priorFailureRule(update.parameter_id, [4])
       const fail: ReconciliationFailure = {
         rule: 5,
         parameter_id: update.parameter_id,
-        field_path: `updates[${i}].update`,
+        field_path: fieldPath,
         stored,
         recomputed,
-        delta,
-        tolerance,
+        delta: check.delta,
+        tolerance: check.appliedTolerance,
       }
       if (cascade !== undefined) fail.cascade_of_rule = cascade
       failures.push(fail)
@@ -949,7 +1107,7 @@ function checkRule5(
 
 function checkRule6(
   r: Receipt,
-  tolerance: number,
+  tolerance: TolerancePolicy,
   failures: ReconciliationFailure[],
   recordFailure: (rule: number, parameter_id: string | undefined) => void,
   priorFailureRule: (parameter_id: string | undefined, candidates: readonly number[]) => number | undefined,
@@ -960,33 +1118,35 @@ function checkRule6(
     const upd = update.update
     const recomputed = before + upd
     const stored = update.weight_after
-    const delta = Math.abs(recomputed - stored)
-    if (!Number.isFinite(recomputed) || !Number.isFinite(stored) || !Number.isFinite(delta)) {
+    const fieldPath = `updates[${i}].weight_after`
+    const check = applyToleranceCheck(recomputed, stored, tolerance)
+    if (!check.isFinite) {
       const cascade = priorFailureRule(update.parameter_id, [4, 5])
       const fail: ReconciliationFailure = {
         rule: 6,
         parameter_id: update.parameter_id,
-        field_path: `updates[${i}].weight_after`,
+        field_path: fieldPath,
         stored,
         recomputed,
-        delta: Number.isFinite(delta) ? delta : Number.NaN,
-        tolerance,
+        delta: Number.NaN,
+        tolerance: 0,
+        message: nonFiniteMessage(6, fieldPath, recomputed, stored),
       }
       if (cascade !== undefined) fail.cascade_of_rule = cascade
       failures.push(fail)
       recordFailure(6, update.parameter_id)
       continue
     }
-    if (delta > tolerance) {
+    if (!check.ok) {
       const cascade = priorFailureRule(update.parameter_id, [4, 5])
       const fail: ReconciliationFailure = {
         rule: 6,
         parameter_id: update.parameter_id,
-        field_path: `updates[${i}].weight_after`,
+        field_path: fieldPath,
         stored,
         recomputed,
-        delta,
-        tolerance,
+        delta: check.delta,
+        tolerance: check.appliedTolerance,
       }
       if (cascade !== undefined) fail.cascade_of_rule = cascade
       failures.push(fail)
@@ -997,7 +1157,7 @@ function checkRule6(
 
 function checkRule7(
   r: Receipt,
-  tolerance: number,
+  tolerance: TolerancePolicy,
   failures: ReconciliationFailure[],
   recordFailure: (rule: number, parameter_id: string | undefined) => void,
   priorFailureRule: (parameter_id: string | undefined, candidates: readonly number[]) => number | undefined,
@@ -1026,10 +1186,10 @@ function checkRule7(
         stored: 0,
         recomputed: 0,
         delta: 0,
-        tolerance,
+        tolerance: 0,
         message:
           `parameters_after.${paramId} is not a number (got ${typeof storedAfter}). ` +
-          `Run schema validation against schemas/receipt.v0.1.0.json before reconciling.`,
+          `Run schema validation against schemas/receipt.v0.1.0.json or v0.2.0.json before reconciling.`,
       })
       continue
     }
@@ -1041,7 +1201,7 @@ function checkRule7(
         stored: 0,
         recomputed: 0,
         delta: 0,
-        tolerance,
+        tolerance: 0,
         message:
           `parameters_before.${paramId} is missing or not a number (got ${typeof beforeVal}). ` +
           `Cannot reconcile parameters_after.${paramId} without it.`,
@@ -1054,33 +1214,35 @@ function checkRule7(
       // update so each rule attributes independently; cascade names Rule 4/5/6
       // if any fired first on this parameter).
       const recomputed = beforeVal + u.update
-      const delta = Math.abs(recomputed - storedAfter)
-      if (!Number.isFinite(recomputed) || !Number.isFinite(storedAfter) || !Number.isFinite(delta)) {
+      const fieldPath = `parameters_after.${paramId}`
+      const check = applyToleranceCheck(recomputed, storedAfter, tolerance)
+      if (!check.isFinite) {
         const cascade = priorFailureRule(paramId, [4, 5, 6])
         const fail: ReconciliationFailure = {
           rule: 7,
           parameter_id: paramId,
-          field_path: `parameters_after.${paramId}`,
+          field_path: fieldPath,
           stored: storedAfter,
           recomputed,
-          delta: Number.isFinite(delta) ? delta : Number.NaN,
-          tolerance,
+          delta: Number.NaN,
+          tolerance: 0,
+          message: nonFiniteMessage(7, fieldPath, recomputed, storedAfter),
         }
         if (cascade !== undefined) fail.cascade_of_rule = cascade
         failures.push(fail)
         recordFailure(7, paramId)
         continue
       }
-      if (delta > tolerance) {
+      if (!check.ok) {
         const cascade = priorFailureRule(paramId, [4, 5, 6])
         const fail: ReconciliationFailure = {
           rule: 7,
           parameter_id: paramId,
-          field_path: `parameters_after.${paramId}`,
+          field_path: fieldPath,
           stored: storedAfter,
           recomputed,
-          delta,
-          tolerance,
+          delta: check.delta,
+          tolerance: check.appliedTolerance,
         }
         if (cascade !== undefined) fail.cascade_of_rule = cascade
         failures.push(fail)
@@ -1114,10 +1276,10 @@ function checkRule7(
           stored: 0,
           recomputed: 0,
           delta: 0,
-          tolerance,
+          tolerance: 0,
           message:
             `Underdetermined: parameter not in updates and bias_policy.mode is not 'constant' ` +
-            `(got '${biasMode ?? "undefined"}'). v0.1 reconciler cannot certify this combination.`,
+            `(got '${biasMode ?? "undefined"}'). v0.3 reconciler cannot certify this combination.`,
         })
       }
     }
@@ -1126,7 +1288,7 @@ function checkRule7(
 
 function checkRule8(
   r: Receipt,
-  tolerance: number,
+  tolerance: TolerancePolicy,
   failures: ReconciliationFailure[],
 ): void {
   // Walk every NamedFactor with a `from` field that looks like a path.
@@ -1170,7 +1332,7 @@ function rule8CheckOne(
   factor: Factor,
   factorPath: string,
   parameter_id: string | undefined,
-  tolerance: number,
+  tolerance: TolerancePolicy,
   failures: ReconciliationFailure[],
 ): void {
   // Rule 8 names the provenance path (factor.from) as the field_path on
@@ -1190,7 +1352,7 @@ function rule8CheckOne(
       stored: factor.value,
       recomputed: Number.NaN,
       delta: Number.NaN,
-      tolerance,
+      tolerance: 0,
       message:
         `Provenance path ${JSON.stringify(fromPath)} could not be resolved (referenced from ${factorPath}): ${resolved.reason}.`,
     })
@@ -1198,28 +1360,262 @@ function rule8CheckOne(
   }
   const stored = factor.value
   const recomputed = resolved.value
-  const delta = Math.abs(recomputed - stored)
-  if (!Number.isFinite(stored) || !Number.isFinite(delta)) {
+  const check = applyToleranceCheck(recomputed, stored, tolerance)
+  if (!check.isFinite) {
     failures.push({
       rule: 8,
       parameter_id,
       field_path: fromPath,
       stored,
       recomputed,
-      delta: Number.isFinite(delta) ? delta : Number.NaN,
-      tolerance,
+      delta: Number.NaN,
+      tolerance: 0,
+      message: nonFiniteMessage(8, fromPath, recomputed, stored),
     })
     return
   }
-  if (delta > tolerance) {
+  if (!check.ok) {
     failures.push({
       rule: 8,
       parameter_id,
       field_path: fromPath,
       stored,
       recomputed,
-      delta,
-      tolerance,
+      delta: check.delta,
+      tolerance: check.appliedTolerance,
     })
   }
+}
+
+// ============================================================================
+// v0.3 multi-step rules: Rule 9 (parameter chain) + Rule 10 (trace identity).
+// These fire from reconcileMultiStep against a sequence of receipts in a
+// training run. They are NOT run by reconcileReceipt — single-receipt verify
+// paths skip them so `bp verify mazur` / `bp verify general` are not muddied
+// with multi-step assertions that don't apply.
+// ============================================================================
+
+/**
+ * Rule 9: Multi-step parameter chain.
+ *
+ * For receipt at `step_index = N` (N > 0), `parameters_before` MUST equal
+ * the PRIOR receipt's `parameters_after` (within the receipt's
+ * `numeric_policy.tolerance`).
+ *
+ * Single-step receipts (`step_index = 0` or absent) SKIP this rule — chain
+ * integrity is only defined across step boundaries.
+ *
+ * Called by `reconcileMultiStep(receipts)` — NOT by `reconcileReceipt()`
+ * which works on one receipt at a time. The caller passes adjacent pairs:
+ * `checkRule9(receipts[i], receipts[i-1], policy)` for i in [1, N).
+ *
+ * @param current   The current step's receipt (with `parameters_before`).
+ * @param prior     The prior step's receipt (with `parameters_after`).
+ * @param tolerance The tolerance policy from the CURRENT receipt's
+ *                  `numeric_policy.tolerance`. Multi-step receipts inherit
+ *                  the per-receipt policy — there is no separate
+ *                  cross-step tolerance.
+ * @returns         Zero or more failures (one per parameter that
+ *                  disagrees beyond tolerance). Returns an empty array
+ *                  when the chain is intact.
+ */
+export function checkRule9(
+  current: unknown,
+  prior: unknown,
+  tolerance: TolerancePolicy,
+): ReconciliationFailure[] {
+  const failures: ReconciliationFailure[] = []
+  if (current === null || typeof current !== "object") return failures
+  if (prior === null || typeof prior !== "object") return failures
+  const cur = current as { parameters_before?: Record<string, number> }
+  const prv = prior as { parameters_after?: Record<string, number> }
+  if (!cur.parameters_before || typeof cur.parameters_before !== "object") return failures
+  if (!prv.parameters_after || typeof prv.parameters_after !== "object") return failures
+  for (const paramId of Object.keys(cur.parameters_before)) {
+    const before = cur.parameters_before[paramId]
+    const after = prv.parameters_after[paramId]
+    // Defense-in-depth: skip parameters that aren't present in both sides
+    // as numbers — schema validation should catch this upstream, but a
+    // malformed receipt that reaches Rule 9 shouldn't crash the run.
+    if (typeof before !== "number" || typeof after !== "number") continue
+    const check = applyToleranceCheck(before, after, tolerance)
+    if (!check.isFinite) {
+      failures.push({
+        rule: 9,
+        parameter_id: paramId,
+        field_path: `parameters_before.${paramId}`,
+        stored: before,
+        recomputed: after,
+        delta: Number.NaN,
+        tolerance: 0,
+        message:
+          `Multi-step chain non-finite value at parameters_before.${paramId}: ` +
+          `before=${String(before)}, prior parameters_after=${String(after)}. ` +
+          `Check upstream factors for NaN/Infinity.`,
+      })
+      continue
+    }
+    if (!check.ok) {
+      failures.push({
+        rule: 9,
+        parameter_id: paramId,
+        field_path: `parameters_before.${paramId}`,
+        stored: before,
+        // "recomputed" here = "value from prior step's parameters_after";
+        // the field name keeps the quartet shape uniform across rules so
+        // the CLI can render every failure with one template.
+        recomputed: after,
+        delta: check.delta,
+        tolerance: check.appliedTolerance,
+        message:
+          `Multi-step chain violation: parameters_before.${paramId} ` +
+          `disagrees with prior step's parameters_after.${paramId} ` +
+          `(delta=${check.delta}, tolerance=${check.appliedTolerance}).`,
+      })
+    }
+  }
+  return failures
+}
+
+/**
+ * Rule 10: Trace identity + step ordering.
+ *
+ * For a sequence of receipts in a multi-step training run:
+ *   - All receipts MUST share the same `trace_id`.
+ *   - `step_index` MUST be sequential (0, 1, 2, ..., N-1) — monotonic AND
+ *     dense. Gaps, reorderings, and duplicates all fire.
+ *
+ * Receipts without `trace_id` are exempt (single-step usage). A mixed
+ * sequence where the FIRST receipt has no trace_id is treated as the
+ * single-step legacy case — the entire sequence is exempt.
+ *
+ * Note: stored/recomputed for Rule 10 are non-numeric in the trace_id
+ * case (they're strings). The field types still match (we cast to `any`).
+ * CLI renderers SHOULD branch on `rule === 10` to render the trace_id
+ * comparison sensibly; the `message` field carries a human-readable
+ * description in either case.
+ *
+ * @param receipts The full ordered sequence of receipts in the training
+ *                 run (typically the parsed lines of a multi-record
+ *                 JSONL file). An empty array passes trivially.
+ */
+export function checkRule10(receipts: ReadonlyArray<unknown>): ReconciliationFailure[] {
+  const failures: ReconciliationFailure[] = []
+  if (receipts.length === 0) return failures
+  const first = receipts[0]
+  if (first === null || typeof first !== "object") return failures
+  const expectedTraceId = (first as { trace_id?: unknown }).trace_id
+  // Single-step exemption: a first receipt without trace_id signals legacy
+  // single-step usage; the whole sequence is exempt from Rule 10.
+  if (expectedTraceId === undefined) return failures
+
+  for (let i = 0; i < receipts.length; i++) {
+    const r = receipts[i]
+    if (r === null || typeof r !== "object") continue
+    const rr = r as { trace_id?: unknown; step_index?: unknown }
+    if (rr.trace_id !== expectedTraceId) {
+      failures.push({
+        rule: 10,
+        field_path: `receipts[${i}].trace_id`,
+        // String values cast through `any` so the numeric quartet type
+        // still matches — CLI renderers branch on rule === 10 to format.
+        stored: rr.trace_id as unknown as number,
+        recomputed: expectedTraceId as unknown as number,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Trace ID mismatch at receipt ${i}: expected ${JSON.stringify(expectedTraceId)}, ` +
+          `got ${JSON.stringify(rr.trace_id ?? "(undefined)")}. All receipts in a multi-step ` +
+          `training run must share trace_id.`,
+      })
+    }
+    if (rr.step_index !== i) {
+      const observed = typeof rr.step_index === "number" ? rr.step_index : -1
+      failures.push({
+        rule: 10,
+        field_path: `receipts[${i}].step_index`,
+        stored: observed,
+        recomputed: i,
+        delta: Math.abs(observed - i),
+        tolerance: 0,
+        message:
+          `step_index gap or reorder at receipt ${i}: expected ${i}, ` +
+          `got ${JSON.stringify(rr.step_index ?? "(undefined)")}. Multi-step receipts must be ` +
+          `0-indexed, monotonic, and dense (no gaps, no duplicates, no reorderings).`,
+      })
+    }
+  }
+  return failures
+}
+
+/**
+ * Reconcile a sequence of receipts from a multi-step training run.
+ *
+ * Two-phase validation:
+ *   1. For each receipt, run Rules 1-8 (per-receipt math correctness)
+ *      via `reconcileReceipt`. Failures are prefixed with `receipts[i].`
+ *      in their `field_path` so the multi-record output unambiguously
+ *      locates each failure to a specific step.
+ *   2. Across adjacent pairs, run Rule 9 (parameter chain). Across the
+ *      entire sequence, run Rule 10 (trace identity + step_index
+ *      sequencing).
+ *
+ * Returns the union of all failures from both phases. An empty sequence
+ * passes trivially (`{ ok: true }`); a single-receipt sequence runs
+ * Rules 1-8 only (Rule 9 has no prior step; Rule 10 is exempt when the
+ * first receipt has no trace_id, or fires if step_index !== 0 when it
+ * does).
+ *
+ * @param receipts  The ordered sequence of receipts in the training run
+ *                  (typically the parsed lines of a multi-record JSONL
+ *                  file, e.g. `fixtures/xor.golden.jsonl`).
+ * @returns         `{ ok: true }` if every implemented rule passes across
+ *                  the full sequence, OR `{ ok: false; failures: [...] }`
+ *                  listing every failure found across both phases. The
+ *                  failures array is never empty when `ok` is false.
+ *
+ * @example
+ *   import { reconcileMultiStep, parseReceiptJsonl } from "@mcptoolshop/backprop-trace";
+ *   import { readFileSync } from "node:fs";
+ *
+ *   const parsed = parseReceiptJsonl(readFileSync("training-run.jsonl", "utf-8"));
+ *   if (!parsed.ok) throw new Error(parsed.error.message);
+ *   const result = reconcileMultiStep(parsed.receipts);
+ *   if (!result.ok) {
+ *     for (const f of result.failures) {
+ *       console.error(`Rule ${f.rule} at ${f.field_path}: ${f.message ?? ""}`);
+ *     }
+ *     process.exit(1);
+ *   }
+ */
+export function reconcileMultiStep(
+  receipts: ReadonlyArray<unknown>,
+): ReconciliationResult {
+  const failures: ReconciliationFailure[] = []
+
+  // Phase 1: per-receipt rules (1-8) on every step.
+  for (let i = 0; i < receipts.length; i++) {
+    const r = receipts[i]
+    const result = reconcileReceipt(r)
+    if (!result.ok) {
+      for (const f of result.failures) {
+        failures.push({ ...f, field_path: `receipts[${i}].${f.field_path}` })
+      }
+    }
+  }
+
+  // Phase 2: cross-record rules.
+  // Rule 9: adjacent pairs, current step's tolerance policy.
+  for (let i = 1; i < receipts.length; i++) {
+    const cur = receipts[i]
+    if (cur === null || typeof cur !== "object") continue
+    const curPolicy = (cur as { numeric_policy?: { tolerance?: unknown } }).numeric_policy
+      ?.tolerance
+    if (!isValidTolerancePolicy(curPolicy)) continue
+    failures.push(...checkRule9(cur, receipts[i - 1], curPolicy))
+  }
+  // Rule 10: full-sequence trace identity + step_index sequencing.
+  failures.push(...checkRule10(receipts))
+
+  return failures.length === 0 ? { ok: true } : { ok: false, failures }
 }

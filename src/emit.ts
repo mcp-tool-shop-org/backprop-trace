@@ -23,6 +23,10 @@ import type {
   OutputErrorSignal,
   Update,
 } from "./engine.js";
+import type {
+  GeneralReceipt,
+  SerializedTopology,
+} from "./general-engine.js";
 
 // String emitter — JSON.stringify produces a valid JSON string literal
 // (quotes + escapes) for any JS string input. The TypeScript signature
@@ -318,17 +322,18 @@ function emitPostUpdateLoss(p: MazurReceipt["post_update_loss"]): string {
 }
 
 /**
- * Emit multiple MazurReceipts as a single canonical JSONL document.
+ * Emit multiple receipts (Mazur and/or General) as a single canonical
+ * JSONL document.
  *
  * Framing choice — trailing-LF AFTER EACH RECORD:
  *
  *   `{record1}\n{record2}\n{record3}\n`
  *
  * Rationale:
- *   - Each emitMazurReceipt call already produces `{...}\n` (single LF
- *     terminator); concatenating with the empty string yields the
- *     trailing-LF-per-record framing naturally. No special-case for the
- *     last record — the single-record case (the existing v0.1 fixture
+ *   - Each emit{Mazur,General}Receipt call already produces `{...}\n`
+ *     (single LF terminator); concatenating with the empty string yields
+ *     the trailing-LF-per-record framing naturally. No special-case for
+ *     the last record — the single-record case (the existing v0.1 fixture
  *     shape) emits identically whether produced by emitMazurReceipt or
  *     emitReceipts([receipt]).
  *   - Trailing-LF-after-every-record is the strict ndjson convention
@@ -347,17 +352,410 @@ function emitPostUpdateLoss(p: MazurReceipt["post_update_loss"]): string {
  * `parseReceiptJsonl(emitReceipts([])) === error("Empty JSONL input")`
  * — which is the correct symmetric behavior.
  *
- * v0.3+ may add a streaming variant (FT-F-007) that emits records as
- * they arrive; until then this in-memory helper is sufficient for the
- * single-record fixture shape and any small batches a future
- * `bp generate mazur --batch` mode might produce.
+ * v0.3 widens this to accept a mixed array of MazurReceipt (v0.1.0) and
+ * GeneralReceipt (v0.2.0) values; dispatch is driven by
+ * `receipt.schema_version`. Multi-step v0.2.0 training runs (memo §4)
+ * are the canonical multi-record use case; the v0.1 single-record path
+ * still works (single-element array of MazurReceipt).
  *
- * @param receipts  ReadonlyArray of MazurReceipts. Order is preserved —
- *                  receipts emit in the same order they appear in the
- *                  array, no sorting / dedup.
+ * @param receipts  ReadonlyArray of Mazur and/or General receipts. Order
+ *                  is preserved — receipts emit in the same order they
+ *                  appear, no sorting / dedup.
  * @returns         Canonical JSONL string with trailing LF after each
  *                  record. Empty string for an empty input array.
  */
-export function emitReceipts(receipts: ReadonlyArray<MazurReceipt>): string {
-  return receipts.map(emitMazurReceipt).join("");
+export function emitReceipts(
+  receipts: ReadonlyArray<MazurReceipt | GeneralReceipt>,
+): string {
+  return receipts
+    .map((r) =>
+      r.schema_version === "0.1.0"
+        ? emitMazurReceipt(r as MazurReceipt)
+        : emitGeneralReceipt(r as GeneralReceipt),
+    )
+    .join("");
+}
+
+// =============================================================================
+// v0.3 emitGeneralReceipt — schema-walker for v0.2.0-schema receipts
+// =============================================================================
+
+/**
+ * Canonical-emission key order for v0.2.0-schema receipts.
+ *
+ * Mirrors schemas/receipt.v0.2.0.json `x-order` annotation. Top-level
+ * fields emit in this order, with optional fields (trace_id, step_index)
+ * inserted at their declared slot iff present.
+ *
+ * Build-time exhaustiveness check is intentionally lighter than v0.1's
+ * `_AssertEmittedKeysMatchReceiptKeys` cross-check — GeneralReceipt's
+ * shape is open-ended (unit/parameter id keys on inputs/forward/etc.) so
+ * a strict "every key emits" assertion would have to discriminate
+ * structural-required keys from data-keyed maps. The top-level required
+ * fields ARE captured below as a static array used for both ordering AND
+ * a per-receipt presence check; missing required fields surface as a
+ * runtime Error rather than a compile error.
+ */
+const GENERAL_REQUIRED_TOPLEVEL_ORDER = [
+  "schema_version",
+  "fixture",
+  "step",
+  "fixture_status",
+  "metadata",
+  "numeric_policy",
+  "bias_policy",
+  "topology",
+  "learning_rate",
+  "unit_order",
+  "parameter_order",
+  "inputs",
+  "targets",
+  "parameters_before",
+  "forward",
+  "loss",
+  "backward",
+  "updates",
+  "parameters_after",
+  "post_update_forward",
+  "post_update_loss",
+] as const;
+// Mark as load-bearing so a future emitter rewrite can't drop it on a
+// "looks-unused" tree-shake. The constant is a single-source-of-truth
+// reference for the v0.2.0 schema's x-order at the top level.
+void GENERAL_REQUIRED_TOPLEVEL_ORDER;
+
+/**
+ * Emit a GeneralReceipt as one canonical JSONL line.
+ *
+ * v0.3 contract:
+ *   - Schema-ordered traversal per schemas/receipt.v0.2.0.json x-order
+ *     annotations. trace_id + step_index optional pair lands between
+ *     learning_rate and unit_order when present (per the v0.2.0 schema's
+ *     top-level x-order array).
+ *   - Inputs/targets/parameters/forward/backward maps iterate in declared
+ *     unit_order / parameter_order — NOT in JavaScript object-insertion
+ *     order. This is the load-bearing canonical-key-order policy for
+ *     generalized topologies.
+ *   - numeric_policy.tolerance emits as object form `{atol, rtol}` if the
+ *     receipt carries it that way, OR as legacy scalar form if it's a
+ *     scalar (back-compat with v0.1 receipts that landed as v0.2.0 via
+ *     transcoding). Reader-side normalization is the reconciler's job
+ *     (see src/reconcile.ts normalizeTolerance).
+ *   - post_update_forward emits with `status` first then each unit's
+ *     ForwardUnit at the same level (per the v0.2.0 schema's
+ *     additionalProperties: { ForwardUnit } shape). The engine's
+ *     GeneralReceipt nests these under a `units` property; the emitter
+ *     flattens during serialization.
+ *
+ * CRITICAL: emitMazurReceipt is unchanged and remains the v0.1.0 path.
+ * This sibling exists for v0.2.0 receipts only.
+ *
+ * @returns Canonical JSONL line ending in LF (`}\n`).
+ */
+export function emitGeneralReceipt(r: GeneralReceipt): string {
+  // Build the field list in declared order. Optional trace_id/step_index
+  // insert between learning_rate and unit_order, matching the v0.2.0
+  // schema's top-level x-order array.
+  const parts: string[] = [
+    `"schema_version":${S(r.schema_version)}`,
+    `"fixture":${S(r.fixture)}`,
+    `"step":${r.step}`,
+    `"fixture_status":${emitFixtureStatusV02(r.fixture_status)}`,
+    `"metadata":${emitMetadataV02(r.metadata)}`,
+    `"numeric_policy":${emitNumericPolicyV02(r.numeric_policy)}`,
+    `"bias_policy":${emitBiasPolicyV02(r.bias_policy)}`,
+    `"topology":${emitTopologyV02(r.topology)}`,
+    `"learning_rate":${N(r.learning_rate)}`,
+  ];
+  if (r.trace_id !== undefined) parts.push(`"trace_id":${S(r.trace_id)}`);
+  if (r.step_index !== undefined) parts.push(`"step_index":${r.step_index}`);
+  parts.push(`"inputs":${emitOrderedNumberMap(r.inputs, r.topology.unit_order.input)}`);
+  parts.push(`"targets":${emitOrderedNumberMap(r.targets, r.topology.unit_order.output)}`);
+  parts.push(`"parameters_before":${emitOrderedNumberMap(r.parameters_before, r.topology.parameter_order)}`);
+  parts.push(`"forward":${emitForwardGeneral(r.forward, r.topology.unit_order)}`);
+  parts.push(`"loss":${emitLossGeneral(r.loss, r.topology.unit_order.output)}`);
+  parts.push(`"backward":${emitBackwardGeneral(r.backward, r.topology.unit_order)}`);
+  parts.push(`"updates":${emitUpdates(r.updates)}`);
+  parts.push(`"parameters_after":${emitOrderedNumberMap(r.parameters_after, r.topology.parameter_order)}`);
+  parts.push(`"post_update_forward":${emitPostUpdateForwardGeneral(r.post_update_forward, r.topology.unit_order)}`);
+  parts.push(`"post_update_loss":${emitPostUpdateLossGeneral(r.post_update_loss, r.topology.unit_order.output)}`);
+  return `{${parts.join(",")}}\n`;
+}
+
+// --- v0.2.0 per-section emitters ------------------------------------------
+
+function emitFixtureStatusV02(s: GeneralReceipt["fixture_status"]): string {
+  // v0.2.0 FixtureStatus has the same required triple as v0.1 (authoring_
+  // state, verification_state, canonical), plus optional promote_to /
+  // describes_in / blockers_to_promotion fields the engine doesn't set.
+  // Mirror v0.1's emit shape for the required fields.
+  return [
+    "{",
+    `"authoring_state":${S(s.authoring_state)},`,
+    `"verification_state":${S(s.verification_state)},`,
+    `"canonical":${s.canonical}`,
+    "}",
+  ].join("");
+}
+
+function emitMetadataV02(m: GeneralReceipt["metadata"]): string {
+  // The schema declares metadata as a free-form object (`type: "object"`).
+  // The engine sets source + gradient_convention always, plus optional
+  // url_reference. Emit in canonical-named order with the optional field
+  // honored.
+  const parts: string[] = [`"source":${S(m.source)}`];
+  if (m.url_reference !== undefined) {
+    parts.push(`"url_reference":${S(m.url_reference)}`);
+  }
+  parts.push(`"gradient_convention":${S(m.gradient_convention)}`);
+  return `{${parts.join(",")}}`;
+}
+
+function emitNumericPolicyV02(np: GeneralReceipt["numeric_policy"]): string {
+  // Hybrid tolerance emission (memo §3): if `tolerance` is a scalar
+  // (legacy v0.1 sugar), emit it as a bare JSON number; if it's an object
+  // {atol, rtol}, emit the canonical 2-field object. The reader (reconciler
+  // normalizeTolerance) handles both shapes symmetrically.
+  const tol = np.tolerance;
+  const tolerancePart =
+    typeof tol === "number"
+      ? `"tolerance":${N(tol)}`
+      : `"tolerance":{"atol":${N(tol.atol)},"rtol":${N(tol.rtol)}}`;
+  return [
+    "{",
+    `"number_encoding":${S(np.number_encoding)},`,
+    `"precision_significant_digits":${np.precision_significant_digits},`,
+    `"rounding":${S(np.rounding)},`,
+    `${tolerancePart},`,
+    `"computation_order":${S(np.computation_order)},`,
+    `"byte_output":${emitByteOutputV02(np.byte_output)}`,
+    "}",
+  ].join("");
+}
+
+function emitByteOutputV02(bo: GeneralReceipt["numeric_policy"]["byte_output"]): string {
+  return [
+    "{",
+    `"format":${S(bo.format)},`,
+    `"json_key_order":${S(bo.json_key_order)},`,
+    `"trailing_zero_policy":${S(bo.trailing_zero_policy)},`,
+    `"indent":${S(bo.indent)}`,
+    "}",
+  ].join("");
+}
+
+function emitBiasPolicyV02(bp: GeneralReceipt["bias_policy"]): string {
+  // v0.2.0 schema requires `mode` + `updated_in_step`; reason +
+  // reconciliation are optional. The engine populates all four in practice
+  // but we emit only the present fields.
+  const parts: string[] = [`"mode":${S(bp.mode)}`];
+  if (bp.reason !== undefined) parts.push(`"reason":${S(bp.reason)}`);
+  parts.push(`"updated_in_step":${bp.updated_in_step}`);
+  if (bp.reconciliation !== undefined) {
+    parts.push(`"reconciliation":${S(bp.reconciliation)}`);
+  }
+  return `{${parts.join(",")}}`;
+}
+
+function emitTopologyV02(t: SerializedTopology): string {
+  // v0.2.0 Topology schema fields (matches schemas/receipt.v0.2.0.json#/$defs/Topology):
+  // layers, input_size, hidden_size, output_size, unit_order, parameter_order,
+  // parameters[], activation_hidden, activation_output, loss, bias_sharing.
+  // unit_order + parameter_order + parameters live INSIDE topology (not root)
+  // so the topology block is fully self-describing; consumers reconstructing
+  // the engine state get the entire graph declaration in one nested object.
+  const layers = t.layers.map(S).join(",");
+  const unitOrder = emitUnitOrderV02(t.unit_order);
+  const parameterOrder = emitParameterOrderV02(t.parameter_order);
+  const parameters = emitTopologyParameters(t.parameters);
+  const parts: string[] = [
+    `"layers":[${layers}]`,
+    `"input_size":${t.input_size}`,
+    `"hidden_size":${t.hidden_size}`,
+    `"output_size":${t.output_size}`,
+    `"unit_order":${unitOrder}`,
+    `"parameter_order":${parameterOrder}`,
+    `"parameters":${parameters}`,
+    `"activation_hidden":${S(t.activation_hidden)}`,
+    `"activation_output":${S(t.activation_output)}`,
+    `"loss":${S(t.loss)}`,
+    `"bias_sharing":${S(t.bias_sharing)}`,
+  ];
+  return `{${parts.join(",")}}`;
+}
+
+function emitUnitOrderV02(uo: { input: readonly string[]; hidden: readonly string[]; output: readonly string[] }): string {
+  const input = uo.input.map(S).join(",");
+  const hidden = uo.hidden.map(S).join(",");
+  const output = uo.output.map(S).join(",");
+  return `{"input":[${input}],"hidden":[${hidden}],"output":[${output}]}`;
+}
+
+function emitParameterOrderV02(po: readonly string[]): string {
+  return `[${po.map(S).join(",")}]`;
+}
+
+function emitTopologyParameter(p: SerializedTopology["parameters"][number]): string {
+  // Each parameter has required id + role; optional from_unit / to_unit
+  // (weights only) and applies_to_units (biases only). Emit in the
+  // canonical-named order with optional fields honored.
+  const parts: string[] = [`"id":${S(p.id)}`, `"role":${S(p.role)}`];
+  if (p.from_unit !== undefined) parts.push(`"from_unit":${S(p.from_unit)}`);
+  if (p.to_unit !== undefined) parts.push(`"to_unit":${S(p.to_unit)}`);
+  if (p.applies_to_units !== undefined) {
+    const units = p.applies_to_units.map(S).join(",");
+    parts.push(`"applies_to_units":[${units}]`);
+  }
+  return `{${parts.join(",")}}`;
+}
+
+function emitTopologyParameters(ps: SerializedTopology["parameters"]): string {
+  return `[${ps.map(emitTopologyParameter).join(",")}]`;
+}
+
+/**
+ * Iterate `order` and emit `{ key1: N(map[key1]), key2: N(map[key2]), ... }`
+ * — the canonical schema-defined key order for unit/parameter-keyed
+ * number maps in v0.2.0 receipts. Throws if any required key is missing
+ * from the map (per receipt-validity: every id in `order` must have a
+ * value).
+ */
+function emitOrderedNumberMap(
+  map: Readonly<Record<string, number>>,
+  order: readonly string[],
+): string {
+  const parts: string[] = [];
+  for (const key of order) {
+    if (!(key in map)) {
+      throw new Error(
+        `emitOrderedNumberMap: missing required key '${key}' in ordered number map. ` +
+          `Hint: every id in the receipt's unit_order/parameter_order must have a numeric value.`,
+      );
+    }
+    parts.push(`${S(key)}:${N(map[key]!)}`);
+  }
+  return `{${parts.join(",")}}`;
+}
+
+/**
+ * Iterate `order` and emit `{ key1: ForwardUnit, key2: ForwardUnit, ... }`
+ * — per-unit forward records keyed by unit id. Used for both `forward` at
+ * the receipt top level and the `units` block inside post_update_forward.
+ */
+function emitOrderedForwardMap(
+  map: Readonly<Record<string, ForwardUnit>>,
+  order: readonly string[],
+): string {
+  const parts: string[] = [];
+  for (const key of order) {
+    const unit = map[key];
+    if (unit === undefined) {
+      throw new Error(
+        `emitOrderedForwardMap: missing required key '${key}' in ordered forward map.`,
+      );
+    }
+    parts.push(`${S(key)}:${emitForwardUnit(unit)}`);
+  }
+  return `{${parts.join(",")}}`;
+}
+
+function emitForwardGeneral(
+  forward: GeneralReceipt["forward"],
+  unitOrder: { input: readonly string[]; hidden: readonly string[]; output: readonly string[] },
+): string {
+  // Hidden units first, then output units — input units have no forward
+  // pass record (they are pure inputs to the network).
+  const order = [...unitOrder.hidden, ...unitOrder.output];
+  return emitOrderedForwardMap(forward, order);
+}
+
+function emitLossGeneral(
+  loss: GeneralReceipt["loss"],
+  outputOrder: readonly string[],
+): string {
+  const perOutput = emitOrderedNumberMap(loss.per_output, outputOrder);
+  return `{"per_output":${perOutput},"total":${N(loss.total)}}`;
+}
+
+function emitBackwardGeneral(
+  backward: GeneralReceipt["backward"],
+  unitOrder: { input: readonly string[]; hidden: readonly string[]; output: readonly string[] },
+): string {
+  // output_error_signals are keyed by output unit id and emit in
+  // unit_order.output order; hidden_error_signals are keyed by hidden
+  // unit id and emit in unit_order.hidden order.
+  const outputSignals = emitOrderedSignalMap(
+    backward.output_error_signals,
+    unitOrder.output,
+    emitOutputErrorSignal,
+  );
+  const hiddenSignals = emitOrderedSignalMap(
+    backward.hidden_error_signals,
+    unitOrder.hidden,
+    emitHiddenErrorSignal,
+  );
+  return [
+    "{",
+    `"output_error_signals":${outputSignals},`,
+    `"hidden_error_signals":${hiddenSignals}`,
+    "}",
+  ].join("");
+}
+
+function emitOrderedSignalMap<T>(
+  map: Readonly<Record<string, T>>,
+  order: readonly string[],
+  emitOne: (s: T) => string,
+): string {
+  const parts: string[] = [];
+  for (const key of order) {
+    const signal = map[key];
+    if (signal === undefined) {
+      throw new Error(
+        `emitOrderedSignalMap: missing required key '${key}' in ordered signal map.`,
+      );
+    }
+    parts.push(`${S(key)}:${emitOne(signal)}`);
+  }
+  return `{${parts.join(",")}}`;
+}
+
+function emitPostUpdateForwardGeneral(
+  p: GeneralReceipt["post_update_forward"],
+  unitOrder: { input: readonly string[]; hidden: readonly string[]; output: readonly string[] },
+): string {
+  // v0.2.0 schema shape: `status` first, then each unit's ForwardUnit as
+  // sibling top-level keys (additionalProperties: ForwardUnit).
+  // The engine's runtime type nests units under `p.units`; a JSON-parsed
+  // receipt has them flattened at the top level (matching the wire shape).
+  // Support both by checking p.units first, then falling back to flat keys.
+  const order = [...unitOrder.hidden, ...unitOrder.output];
+  const parts: string[] = [`"status":${S(p.status)}`];
+  const flat = p as unknown as Record<string, unknown>;
+  for (const key of order) {
+    const unit = (p.units && p.units[key]) ?? (flat[key] as ForwardUnit | undefined);
+    if (unit === undefined) {
+      throw new Error(
+        `emitPostUpdateForwardGeneral: missing required unit '${key}' (looked in p.units and as flat key).`,
+      );
+    }
+    parts.push(`${S(key)}:${emitForwardUnit(unit)}`);
+  }
+  return `{${parts.join(",")}}`;
+}
+
+function emitPostUpdateLossGeneral(
+  p: GeneralReceipt["post_update_loss"],
+  outputOrder: readonly string[],
+): string {
+  // v0.2.0 schema's PostUpdateLoss has status + per_output + total
+  // (plus optional drift-tracking fields the engine doesn't populate).
+  const perOutput = emitOrderedNumberMap(p.per_output, outputOrder);
+  return [
+    "{",
+    `"status":${S(p.status)},`,
+    `"per_output":${perOutput},`,
+    `"total":${N(p.total)}`,
+    "}",
+  ].join("");
 }

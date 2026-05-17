@@ -175,10 +175,14 @@ test("T-A-006: doubles at exactly 1e-9 round to '0.00000000100000000'", () => {
   );
 });
 
-test("T-A-006: doubles at 9.999999e-10 (just below 1e-9) throw PLAIN_DECIMAL_OUT_OF_SCOPE", () => {
+test("T-A-006 (v0.3): doubles at 1e-14 (well below 1e-12) throw PLAIN_DECIMAL_OUT_OF_SCOPE", () => {
+  // v0.3 widened the user-intent floor from 1e-9 to 1e-12 to admit
+  // hybrid-tolerance atol=1e-12. The pre-round check accepts down to
+  // leading-exponent -13 to admit IEEE-754 representation of 1e-12
+  // (which dips to ~9.99...e-13). So genuine OUT_OF_SCOPE starts at 1e-14.
   let caught: unknown;
   try {
-    formatNumberForEngine(9.999999e-10);
+    formatNumberForEngine(1e-14);
   } catch (e) {
     caught = e;
   }
@@ -189,7 +193,17 @@ test("T-A-006: doubles at 9.999999e-10 (just below 1e-9) throw PLAIN_DECIMAL_OUT
   assert.strictEqual(
     (caught as FormatPolicyError).kind,
     "PLAIN_DECIMAL_OUT_OF_SCOPE",
-    "9.999999e-10 sits just below the 1e-9 floor; must throw OUT_OF_SCOPE",
+    "1e-14 is below the v0.3 floor (accepts down to -13); must throw OUT_OF_SCOPE",
+  );
+});
+
+test("T-A-006 (v0.3): doubles previously OUT_OF_SCOPE in v0.1/v0.2 (1e-10) now format cleanly", () => {
+  // Regression-by-evolution: this test pins the v0.3 widening.
+  const result = formatNumberForEngine(1e-10);
+  assert.match(
+    result,
+    /^0\.0+1[0-9]*$/,
+    `expected canonical plain-decimal expansion of 1e-10, got ${result}`,
   );
 });
 

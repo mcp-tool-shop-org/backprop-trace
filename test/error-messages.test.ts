@@ -83,8 +83,9 @@ test("Stage C: FormatPolicyError(NON_PLAIN_DECIMAL_INPUT) message contains 'Hint
 test("Stage C: FormatPolicyError(PLAIN_DECIMAL_OUT_OF_SCOPE) below min message contains 'Hint:'", () => {
   let caught: unknown;
   try {
-    // "0.0000000000001" is below the 1e-9 floor.
-    formatDecimalStringForFixture("0.0000000000001");
+    // "0.00000000000001" (1e-14) is below the v0.3 floor (1e-12 user-intent,
+    // accepts down to leading-exponent -13 for IEEE-754 1e-12 round-trips).
+    formatDecimalStringForFixture("0.00000000000001");
   } catch (e) {
     caught = e;
   }

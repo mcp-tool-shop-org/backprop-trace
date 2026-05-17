@@ -43,7 +43,8 @@ import { formatDecimalStringForFixture } from "./format.js";
  * @throws Error when input is non-finite (NaN, Infinity, -Infinity). The
  *   message includes a remediation hint pointing to upstream input validation.
  * @throws FormatPolicyError from formatDecimalStringForFixture when magnitude
- *   is outside [1e-9, 1e7).
+ *   is outside [1e-12, 1e7) (v0.3 range; widened from v0.1/v0.2's [1e-9, 1e7)
+ *   to admit hybrid-tolerance atol=1e-12).
  */
 export function formatNumberForEngine(value: number): string {
   if (!Number.isFinite(value)) {

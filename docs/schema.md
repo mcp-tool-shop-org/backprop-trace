@@ -1,4 +1,26 @@
-# Receipt schema (v0.1.0) — field-by-field guide
+# Receipt schemas — field-by-field guide
+
+backprop-trace ships two receipt schemas:
+
+- **`schemas/receipt.v0.1.0.json`** — the original Mazur 2-2-2 schema
+  (v0.1 / v0.2 wave). Pinned. Fixed unit/parameter key sets.
+- **`schemas/receipt.v0.2.0.json`** — the generalized + multi-step schema
+  (v0.3 wave). Required `unit_order` + `parameter_order` for arbitrary
+  topologies; hybrid-tolerance object form for `numeric_policy.tolerance`;
+  optional `trace_id` + `step_index` for multi-step receipts.
+
+Both schemas are JSON Schema draft 2020-12 (`$schema:
+"https://json-schema.org/draft/2020-12/schema"`), `additionalProperties:
+false` at every level, and `x-order`-annotated for canonical emission.
+
+A receipt's `schema_version` field selects which schema validates it.
+The bundled validator (`src/validate.ts`) compiles both schemas at
+module load and dispatches on the receipt's declared version (or a
+caller-supplied `opts.version` override). Mazur receipts continue to
+declare `schema_version: "0.1.0"`; generalized receipts emitted by
+`runGeneralStep` declare `schema_version: "0.2.0"`.
+
+## Receipt schema v0.1.0 — field-by-field
 
 This walks through `schemas/receipt.v0.1.0.json` (JSON Schema draft
 2020-12, `additionalProperties: false`) and explains each field's role.
@@ -68,8 +90,12 @@ Free-form fixture identifier. The Mazur golden uses `"mazur-2-2-2"`.
 
 ### `step` (required, integer ≥ 1)
 
-The 1-indexed training step. v0.1 only ships step-1 receipts; step-2+
-arrives in v0.2 once multi-step semantics are pinned.
+The 1-indexed training step. v0.1.0 receipts only ship step-1 receipts.
+Multi-step semantics arrive in v0.3 via the v0.2.0 schema's optional
+`trace_id` + `step_index` overlay — see
+[`docs/multi-step.md`](./multi-step.md). In v0.2.0 receipts the
+`step_index` field is the load-bearing position within a training run;
+`step` remains for byte-equal compatibility with v0.1.0 receipts.
 
 ### `fixture_status` (required, FixtureStatus object)
 
@@ -317,12 +343,158 @@ open to DSSE-wrapped, Rekor-logged provenance integration later
 (https://github.com/in-toto/attestation/blob/main/spec/v1/envelope.md).
 v0.1 does not ship that integration; the architectural seam exists.
 
+## Receipt schema v0.2.0 — what's different
+
+`schemas/receipt.v0.2.0.json` is **additive** on top of v0.1.0. Every
+v0.1.0 receipt remains valid against its own schema; v0.2.0 receipts
+are emitted by `runGeneralStep` and parsed against the v0.2.0 schema
+by the dispatching validator.
+
+The v0.2.0 schema records its own change log at the top under
+`x-changes-from-v0.1.0` (a vendor annotation declared as a no-op keyword
+on the Ajv validator). This section walks through the load-bearing
+diffs.
+
+### `schema_version` bump
+
+`const: "0.2.0"`. A receipt's first field is what tells the validator
+which schema to load.
+
+### `unit_order` (REQUIRED in v0.2.0; absent in v0.1.0)
+
+```
+"unit_order": {
+  "input":  ["i1", "i2"],
+  "hidden": ["h1", "h2"],
+  "output": ["o1", "o2"]
+}
+```
+
+Three arrays of identifier-pattern strings (`^[a-zA-Z][a-zA-Z0-9_]*$`),
+listing every input / hidden / output unit by id in the canonical
+iteration order. The engine walks units in this exact order during
+forward, backward, and update phases; the order is part of the
+topology's pinned identity (reordering changes the floating-point sum
+order in hidden-layer net computations).
+
+For v0.1 Mazur receipts the equivalent ordering is hard-coded by the
+schema's per-field key constraints (`i1`, `i2`, `h1`, `h2`, etc.); the
+v0.2.0 schema lifts that into receipt-side data so non-Mazur topologies
+have a place to declare it.
+
+### `parameter_order` (REQUIRED in v0.2.0; absent in v0.1.0)
+
+An array of identifier-pattern strings, unique, listing every parameter
+in the iteration order the update phase uses. For the Mazur 2-2-2
+topology this is `["w1", "w2", ..., "w8", "b1", "b2"]`. For XOR it's
+`["w_x1_h1", "w_x2_h1", ..., "w_h1_y", "w_h2_y", "b_hidden", "b_output"]`.
+The keys of `parameters_before` / `parameters_after` must conform to
+this set at runtime (enforced by the engine and reconciler, not by the
+schema).
+
+### `numeric_policy.tolerance` — scalar OR object
+
+v0.1.0: `tolerance: 1e-9` (a bare number).
+
+v0.2.0: `oneOf [object {atol, rtol}, scalar number]`. The object form
+is the canonical v0.3 shape; the scalar form is legacy compat sugar
+and is treated by the reconciler as `{atol: <value>, rtol: 0}` (so v0.1
+Mazur receipts reconcile bit-identically — see
+[`docs/computation-order.md` "Hybrid tolerance (v0.3+)"](./computation-order.md#hybrid-tolerance-v03)).
+
+```
+// v0.2.0 object form (default emitted by runGeneralStep)
+"tolerance": { "atol": 1e-12, "rtol": 1e-9 }
+
+// v0.1 scalar form (still valid against the v0.2.0 schema as a
+// transition aid; runGeneralStep does not emit this shape)
+"tolerance": 1e-9
+```
+
+### `topology.activation` enum widened
+
+v0.1.0: `["sigmoid"]`. v0.2.0: `["sigmoid", "identity", "relu"]`. The
+`half_squared_error` loss enum and `per_layer` bias-sharing enum stay
+the same in v0.2.0 (cross_entropy / softmax / per_neuron are deferred
+to v0.4+).
+
+### `topology.{input,hidden,output}_size` widened
+
+v0.1.0: `const: 2` on every layer size (Mazur 2-2-2 only). v0.2.0:
+`integer 1-64` per axis. The upper bound is a soft cap for v0.3 — large
+topologies will pass schema validation but may take noticeable time
+through the engine (which is O(input * hidden * output) per step).
+
+### `trace_id` (OPTIONAL, NEW)
+
+```
+"trace_id": "5f8b3c0a7d2e4f1b9c6e8a7d3f5b2c1a"
+```
+
+Lowercase hex, exactly 32 characters (`pattern: "^[0-9a-f]{32}$"`).
+Mirrors W3C TraceContext's `trace-id` shape
+(https://www.w3.org/TR/trace-context/). Present iff this receipt is
+part of a multi-step training run. Shared across every step receipt of
+the run. Used by Rule 10 (trace identity) on the multi-record verify
+path.
+
+### `step_index` (OPTIONAL, NEW)
+
+A non-negative integer (`type: "integer", minimum: 0`). 0-based step
+index within the trace identified by `trace_id`. Present iff `trace_id`
+is present (the schema's `allOf` clause enforces this — a receipt may
+not carry one without the other).
+
+### `unit_order` / `parameter_order` already-present field
+
+v0.1.0 reserved `unit_order` and `parameter_order` as optional forward-
+compat fields. v0.2.0 promotes both to REQUIRED. The transition is
+non-breaking for the v0.1.0 schema (which is frozen); it only affects
+new v0.2.0 receipts.
+
+### `fixture_status.authoring_state` adds `engine_generated_general`
+
+v0.1.0 enum: `["hand_derived", "engine_generated", "deliberately_corrupted"]`.
+v0.2.0 enum adds `"engine_generated_general"` — the value
+`runGeneralStep` emits for XOR / iris / future general-topology
+receipts. The Mazur path keeps `engine_generated`.
+
+### Open-keyed maps for unit / parameter ids
+
+v0.1.0 hard-codes `inputs.{i1, i2}`, `targets.{o1, o2}`,
+`parameters_before.{w1..w8, b1, b2}`, etc. via fixed `properties` blocks.
+v0.2.0 replaces those with `additionalProperties: { type: "number" }`
+maps for `inputs`, `targets`, `parameters_before`, `parameters_after`,
+`forward`, `loss.per_output`, `post_update_forward`, and
+`backward.{output,hidden}_error_signals` — the keys are now arbitrary
+unit / parameter ids whose conformance to `unit_order` /
+`parameter_order` is enforced at runtime, not by the schema. The
+runtime check is in `runGeneralStep`'s boundary assertions; the
+reconciler also verifies key-set consistency before walking the rules.
+
+### What stayed the same
+
+- `additionalProperties: false` at every level — closed schema.
+- `x-order` annotations on every object — canonical emission walks
+  these.
+- `product_order: "left_to_right"` is the only permitted value for
+  every `product_order` field (FMA still prohibited; v0.3 does not
+  introduce a `right_to_left` option).
+- `optimizer.name: "sgd"` is still the only permitted optimizer.
+- `bias_policy.mode: ["constant", "sgd"]` enum unchanged (the "sgd"
+  bias-update path is reserved for v0.4+; v0.3 receipts ship `mode:
+  "constant"`).
+
 ## Reference
 
-- Schema file: `schemas/receipt.v0.1.0.json`
+- Schema files: `schemas/receipt.v0.1.0.json` (Mazur), `schemas/receipt.v0.2.0.json` (generalized + multi-step)
 - Reconciliation rules: `docs/reconciliation.md`
-- Computation order: `docs/computation-order.md`
+- Computation order + hybrid tolerance: `docs/computation-order.md`
 - Canonical emission rules: `docs/canonical-emission.md`
+- Topology authoring guide (v0.3+): `docs/topology.md`
+- Multi-step receipts (v0.3+): `docs/multi-step.md`
 - Formatter policy fixture: `fixtures/formatter.policy.golden.json`
 - Mazur golden receipt (engine output): `fixtures/mazur.golden.jsonl`
-- Anti-circularity bad fixture: `fixtures/bad/mazur.bad-gradient.jsonl`
+- XOR golden receipt (v0.3+): `fixtures/xor.golden.jsonl`
+- Iris golden receipt (v0.3+): `fixtures/iris.golden.jsonl`
+- Anti-circularity bad fixtures: `fixtures/bad/mazur.bad-*.jsonl` + `fixtures/bad/multi-step.bad-{chain,trace-id}.jsonl`

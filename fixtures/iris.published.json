@@ -1,0 +1,154 @@
+{
+  "schema_version": "0.2.0",
+  "fixture": "iris-4-3-3",
+  "compiled_on": "2026-05-16",
+  "evidence_ledger_for": "fixtures/iris.golden.jsonl",
+  "human_readable_summary": "This ledger records what backprop-trace's V8/Node 22 engine (src/general-engine.ts) produces for one SGD step on a 4-3-3-sigmoid topology applied to the canonical first iris flower (Fisher 1936 sample row 1: sepal_length=5.1, sepal_width=3.5, petal_length=1.4, petal_width=0.2; target one-hot [1, 0, 0] for Iris setosa). Initial weights are operator-chosen deterministic monotonically-increasing values (0.01, 0.02, ..., 0.23). No published step-1 trace exists in the literature for the iris dataset under this exact topology/init/optimizer combination — the trace is engine-anchored.",
+  "engine_reproduction_source": "fixtures/iris.golden.jsonl is the engine-emitted first-run output of src/general-engine.ts on IRIS_INPUT (V8/Node 22).",
+  "source": {
+    "anchor": "engine-anchored (no published step-1 trace exists for iris 4-3-3-sigmoid with these specific initial weights)",
+    "dataset_reference": {
+      "author": "R. A. Fisher",
+      "title": "The Use of Multiple Measurements in Taxonomic Problems",
+      "year": 1936,
+      "url": "https://archive.ics.uci.edu/ml/datasets/iris",
+      "summary": "The iris dataset (150 flowers, 4 features, 3 species) is one of the most-cited datasets in statistical ML pedagogy. This fixture uses the first sample row (Iris setosa) only — a single training example chosen for canonicity and reproducibility, NOT a full training run."
+    },
+    "operator_chosen_init": {
+      "rationale": "Deterministic monotonically-increasing weights stepping by 0.01 in topology.parameter_order. 12 input-to-hidden weights take values 0.01..0.12, 9 hidden-to-output weights take values 0.13..0.21, hidden bias is 0.22, output bias is 0.23. This pattern makes the trace reproducible byte-for-byte and the order of parameters in parameter_order visible from the parameters_before values alone.",
+      "seed_algorithm": "manual (parameter_order index * 0.01, starting from 0.01)",
+      "parameter_count": 23,
+      "parameter_layout": "12 input-to-hidden (w_f1_h1..w_f4_h3 in order: h1 first then h2 then h3, each across f1..f4) + 9 hidden-to-output (w_h1_y1..w_h3_y3 in order: y1 first then y2 then y3, each across h1..h3) + b_hidden + b_output",
+      "weights_summary": "parameters_before[parameter_order[i]] = (i+1) * 0.01 for i in [0, 22]",
+      "sample": {
+        "inputs": { "f1": 5.1, "f2": 3.5, "f3": 1.4, "f4": 0.2 },
+        "target": { "y1": 1, "y2": 0, "y3": 0 },
+        "interpretation": "First iris flower in Fisher's 1936 dataset (Iris setosa)"
+      },
+      "hyperparameters": {
+        "learning_rate": 0.1,
+        "topology": "4 inputs -> 3 hidden (sigmoid) -> 3 outputs (sigmoid)",
+        "loss": "half_squared_error",
+        "optimizer": "sgd",
+        "bias_policy": "constant (per v0.3 design; bias updates deferred to v0.4)"
+      }
+    }
+  },
+  "claim_type_legend": {
+    "source_published_input": "Constant input or hyperparameter explicitly given in the source",
+    "source_published_loss": "Loss value explicitly given in the source",
+    "source_published_forward": "Forward-pass value explicitly given in the source",
+    "source_published_update": "Post-update parameter value explicitly given in the source",
+    "widely_cited_downstream_anchor": "Value commonly repeated in downstream pedagogy; not given an explicit derivation in the source at this precision",
+    "engine_anchored": "No published source provides this value; the engine's first-run output is the canonical anchor"
+  },
+  "reproduction_status_legend": {
+    "direct": "Constant input; no computation required",
+    "verified": "Engine reproduces this value within tolerance",
+    "drift_observed": "Engine produces a different value; documented in drift_note. Hard-gate value (true/false) governs whether drift fails the build or merely WARNs.",
+    "pending": "Not yet attempted"
+  },
+  "claims": [
+    {
+      "id": "loss_total",
+      "value": 0.490002431,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.490002431,
+      "drift_absolute": 0,
+      "provenance": "Sum of half squared errors across all 3 outputs (y1, y2, y3) on the pre-update forward pass. Setosa target [1,0,0] vs engine forward [0.627049474, 0.641357562, 0.655418375]. Per-output: y1=0.0695460473 (target 1, output 0.627 is below), y2=0.205669761 (target 0, output 0.641 is well above), y3=0.214786623 (target 0, output 0.655 is well above)."
+    },
+    {
+      "id": "post_update_total_error",
+      "value": 0.481817288,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.481817288,
+      "drift_absolute": 0,
+      "provenance": "Post-update total error after one SGD step from the operator-chosen init. Decrease vs pre-update loss_total demonstrates the step moved in the descent direction (0.490002431 -> 0.481817288, delta -0.008185143). Engine value pinned at 9 significant digits per numeric_policy.precision_significant_digits.",
+      "v0_3_behavior": "Engine-anchored: any drift here would mean the engine math or canonical emission changed. bp verify general fails (hard gate) on drift."
+    },
+    {
+      "id": "forward_y1_out",
+      "value": 0.627049474,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.627049474,
+      "drift_absolute": 0,
+      "provenance": "sigmoid(net_y1) for the setosa output. net_y1 = w_h1_y1*out_h1 + w_h2_y1*out_h2 + w_h3_y1*out_h3 + b_output."
+    },
+    {
+      "id": "forward_y2_out",
+      "value": 0.641357562,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.641357562,
+      "drift_absolute": 0,
+      "provenance": "sigmoid(net_y2) for the versicolor output."
+    },
+    {
+      "id": "forward_y3_out",
+      "value": 0.655418375,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.655418375,
+      "drift_absolute": 0,
+      "provenance": "sigmoid(net_y3) for the virginica output."
+    },
+    {
+      "id": "output_signal_y1",
+      "value": 0.0872176248,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.0872176248,
+      "drift_absolute": 0,
+      "provenance": "Output error signal for y1 (setosa): (1 - out_y1) * sigmoid'(net_y1) = positive (engine should push y1 UP toward the target of 1). Confirms descent-direction sign convention is consistent across multi-output topologies."
+    },
+    {
+      "id": "post_update_forward_y1_out",
+      "value": 0.629175379,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.629175379,
+      "drift_absolute": 0,
+      "provenance": "Post-update forward pass through the same network with parameters_after. Confirms the SGD step pushed the setosa output closer to target=1 (0.627049474 -> 0.629175379, delta +0.002125905). The other two outputs (y2, y3) are pushed DOWN toward target=0."
+    }
+  ],
+  "compute_infrastructure": {
+    "cpu_arch": "x86_64",
+    "node_version_at_generation": "22.x",
+    "v8_version_at_generation": "12.x.x",
+    "os_at_generation": "windows",
+    "generation_date": "2026-05-16"
+  },
+  "standards_referenced": [
+    "Pineau et al. JMLR 2021 — ML Reproducibility Checklist (https://arxiv.org/abs/2003.12206)",
+    "Mitchell et al. FAT* 2019 — Model Cards (https://arxiv.org/abs/1810.03993)",
+    "Gebru et al. CACM 2021 — Datasheets for Datasets (https://arxiv.org/abs/1803.09010)",
+    "Kapoor et al. Science Advances 2024 — REFORMS (https://www.science.org/doi/10.1126/sciadv.adk3452)",
+    "Jia et al. IEEE S&P 2021 — Proof-of-Learning (https://ar5iv.labs.arxiv.org/html/2103.05633)",
+    "Fisher 1936 — The Use of Multiple Measurements in Taxonomic Problems (https://archive.ics.uci.edu/ml/datasets/iris)"
+  ],
+  "caveats_and_recommendations": {
+    "scope": "single-step iris (one sample, one SGD step) with operator-chosen deterministic init (v0.3 SCOPE)",
+    "topology": "4-3-3 (4 features, 3 hidden, 3 outputs)",
+    "loss": "half_squared_error (MSE) — NOT cross-entropy (deferred to v0.4)",
+    "activation_hidden": "sigmoid (Math.exp via V8 fdlibm port; deterministic on Node 22 V8)",
+    "activation_output": "sigmoid (NOT softmax — softmax deferred to v0.4)",
+    "batching": "none (single sample = the first row of Fisher's iris dataset)",
+    "optimizer": "sgd (no momentum, no Adam, no weight decay)",
+    "bias_policy": "constant in step 1 (per v0.3 design; bias updates deferred to v0.4)",
+    "gpu_determinism": "not applicable (CPU-only)",
+    "cross_engine_portability": "V8 only; Hermes / JSC / Bun-JSC untested",
+    "cross_node_major_portability": "tested on Node 22.x only; Math.exp is not contractually bit-stable across V8 majors",
+    "training_scope": "ONE sample, ONE SGD step. NOT a converged classifier — convergence to ~95-99% setosa accuracy requires many epochs across all 150 samples, which is outside v0.3 scope. v0.3 ships only the canonical first-step trace from the operator-chosen init.",
+    "loss_choice_note": "Sigmoid + MSE is suboptimal for multi-class classification (cross-entropy + softmax converges faster). This fixture uses MSE because v0.3 only ships half_squared_error as a loss option; cross-entropy + softmax is on the v0.4 roadmap. The trace is mathematically correct for the loss it implements."
+  }
+}

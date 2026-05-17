@@ -1,12 +1,13 @@
 # `bp` CLI reference
 
 The `bp` binary is the user-facing entry point for `@mcptoolshop/backprop-trace`.
-It exposes four subcommands that compose the library's primitives into the
-common verification flows: reconcile, verify (full gate), generate, validate.
+It exposes eight subcommands that compose the library's primitives into the
+common verification flows: reconcile, verify (full gate; Mazur / general /
+multi-step), generate (Mazur / XOR / iris), validate.
 
 The CLI is dependency-free (no commander / yargs / citty); the argv dispatch
 is hand-rolled at `src/bin/bp.ts` per the study-swarm CLI-ergonomics finding
-(`commander` and `citty` don't add value at the v0.2 surface size).
+(`commander` and `citty` don't add value at the v0.3 surface size).
 
 ```
 bp <verb> <noun> [args]
@@ -19,13 +20,17 @@ the subcommand-specific text.
 
 | Command | Purpose | Typical exit |
 |---|---|---|
-| `bp reconcile receipt <file>` | Run the 8 reconciliation rules against a receipt | 0 / 1 |
-| `bp verify mazur [<file>]` | Full gate (schema + reconcile + engine-reproduce + byte-equal + drift) | 0 / 1 |
+| `bp reconcile receipt <file>` | Run the 8 per-record reconciliation rules against a receipt | 0 / 1 |
+| `bp verify mazur [<file>]` | Full gate (Mazur): schema + reconcile + engine-reproduce + byte-equal + drift | 0 / 1 |
+| `bp verify general <file>` | Generalized verify gate for any v0.2.0-schema receipt | 0 / 1 |
+| `bp verify multi <file.jsonl>` | Multi-record verify: Rules 9 + 10 + per-record Rules 1-8 (v0.3+) | 0 / 1 |
 | `bp generate mazur [--out F] [--check]` | Re-run the Mazur engine, emit canonical JSONL | 0 / 1 |
-| `bp validate <file>` | Schema-only validation against the bundled JSON Schema | 0 / 1 |
+| `bp generate xor [--out F]` | Re-run the XOR engine, emit canonical JSONL (v0.3+) | 0 / 1 |
+| `bp generate iris [--out F]` | Re-run the iris engine, emit canonical JSONL (v0.3+) | 0 / 1 |
+| `bp validate <file>` | Schema-only validation; auto-detects v0.1.0 vs v0.2.0 | 0 / 1 |
 
 All subcommands accept `-` as the file argument to read from stdin
-(except `generate mazur`, which writes rather than reads).
+(except `generate mazur / xor / iris`, which write rather than read).
 
 ## Subcommand: `bp reconcile receipt`
 
@@ -55,14 +60,17 @@ documented in [`docs/reconciliation.md`](./reconciliation.md).
 | `bp reconcile receipt foo.jsonl` (pretty-printed) | Fallback: parse the whole file as one JSON document. |
 | `bp reconcile receipt -` | Read from stdin. The content is parsed identically to `.json`. |
 
-### Exit codes
+### Exit codes (this subcommand)
 
 | Code | Meaning |
 |---|---|
-| 0 | All implemented rules pass within `numeric_policy.tolerance`. |
+| 0 | All 8 per-record rules pass within `numeric_policy.tolerance`. |
 | 1 | At least one reconciliation rule failed. Details on stderr (or stdout under `--json`). |
 | 2 | Usage error, I/O error, malformed JSON, or `>1` record in a `.jsonl` file. |
 | 3 | Invalid CLI argument (e.g. unknown flag). |
+
+Rules 9 + 10 do NOT fire from `bp reconcile receipt` — multi-step
+verification lives in `bp verify multi` (see below).
 
 ### Output
 
@@ -206,16 +214,133 @@ bp generate mazur --out fixtures/mazur.golden.jsonl
 bp generate mazur --check
 ```
 
+## Subcommand: `bp verify general` (v0.3+)
+
+```
+bp verify general <file> [--json] [--verbose] [--warn-as-fail] [--strict] [--color=...]
+```
+
+Generalized verify gate. Equivalent to `bp verify mazur` but for any
+v0.2.0-schema receipt (XOR, iris, or a custom-topology receipt emitted
+by `runGeneralStep`). Composes the same fixed-order short-circuit
+pipeline (sigstore-go pattern):
+
+1. **Schema validation** against `schemas/receipt.v0.2.0.json`.
+2. **Reconciliation** against Rules 1-8 (Rules 9, 10 only fire on the
+   multi-record path).
+3. **Engine reproduction** — re-runs `runGeneralStep` with the receipt's
+   declared topology + inputs and confirms byte-equality.
+4. **Byte equality** against the bundled fixture corresponding to the
+   receipt's `fixture` id (e.g. `fixtures/xor.golden.jsonl` for
+   `fixture: "xor-sigmoid-engine-first-run"`) when one is known.
+5. **`fixture_status` enum checks** (same enums as v0.2 plus
+   `engine_generated_general` for non-Mazur receipts).
+
+The file argument is REQUIRED — unlike `bp verify mazur`, there is no
+single canonical default subject.
+
+### Examples
+
+```bash
+# Verify the bundled iris fixture.
+bp verify general node_modules/@mcptoolshop/backprop-trace/fixtures/iris.golden.jsonl
+
+# Verify a fresh XOR receipt piped from generate.
+bp generate xor | bp verify general -
+
+# JSON output for CI.
+bp verify general fixtures/xor.golden.jsonl --json
+```
+
+## Subcommand: `bp verify multi` (v0.3+)
+
+```
+bp verify multi <file.jsonl> [--json] [--verbose] [--warn-as-fail] [--strict] [--color=...]
+```
+
+Multi-record verify gate. The file argument MUST be a JSONL file
+containing two or more v0.2.0-schema receipts in `step_index` order.
+
+The gate runs in two phases (see
+[`reconciliation.md` "Multi-step receipts"](./reconciliation.md#multi-step-receipts)):
+
+1. **Per-record pass.** Each receipt runs through the same 8-rule
+   reconciliation as `bp verify general`. Any per-record failure
+   surfaces immediately.
+2. **Cross-record pass.** Rule 10 (trace identity) fires first — a
+   mismatched `trace_id` set or non-dense `step_index` sequence
+   short-circuits before Rule 9. Then Rule 9 (parameter chain) fires
+   across adjacent receipts.
+
+Single-record JSONL files are rejected with exit 2 (use `bp verify
+general` for those).
+
+### Examples
+
+```bash
+# Verify a training-run JSONL.
+bp verify multi training-run.jsonl
+
+# JSON output for CI; warn-as-fail to catch soft drift.
+bp verify multi training-run.jsonl --json --warn-as-fail
+```
+
+## Subcommand: `bp generate xor` (v0.3+)
+
+```
+bp generate xor [--out <file>] [--check] [--json] [--color=...]
+```
+
+Re-runs the XOR-sigmoid 2-2-1 engine with the canonical `XOR_INPUT`
+(see [`src/mazur.ts`](../src/mazur.ts)) and emits a canonical JSONL
+receipt. Same mode matrix as `bp generate mazur`: default writes to
+stdout; `--out F` writes to file; `--check` compares against
+`fixtures/xor.golden.jsonl`.
+
+### Examples
+
+```bash
+# Print canonical XOR bytes.
+bp generate xor
+
+# CI byte-equality gate against the committed golden.
+bp generate xor --check
+
+# Pipe into a hash.
+bp generate xor | sha256sum
+```
+
+## Subcommand: `bp generate iris` (v0.3+)
+
+```
+bp generate iris [--out <file>] [--check] [--json] [--color=...]
+```
+
+Re-runs the iris 4-3-3 sigmoid engine with the canonical `IRIS_INPUT`
+(first iris flower `(5.1, 3.5, 1.4, 0.2)` targeting one-hot setosa
+`[1, 0, 0]`). Same mode matrix as `bp generate mazur`. The output
+canonical-byte sha256 is the in-toto attestation seam for an iris
+training trace.
+
+### Examples
+
+```bash
+bp generate iris --out fixtures/iris.golden.jsonl
+bp generate iris --check
+```
+
 ## Subcommand: `bp validate`
 
 ```
 bp validate <file> [--json] [--verbose] [--color=...]
 ```
 
-Schema-only validation. Runs the receipt against the bundled
-`schemas/receipt.v0.1.0.json` via Ajv (2020-12 draft) and reports
-the first validation error (fail-fast; full-list support is reserved
-for v0.3+).
+Schema-only validation. The validator auto-detects the receipt's
+`schema_version` and dispatches against either
+`schemas/receipt.v0.1.0.json` (Mazur receipts) or
+`schemas/receipt.v0.2.0.json` (v0.3 generalized + multi-step receipts)
+via Ajv (2020-12 draft). Reports the first validation error (fail-fast;
+full-list `--all` support is reserved for v0.4+).
 
 | Code | Meaning |
 |---|---|
@@ -275,10 +400,26 @@ Distinguishing these matters for CI: `set -e` shells stop on any nonzero,
 but a pipeline that retries on transient I/O errors (`2`) should not retry
 on a deliberate verification failure (`1`).
 
+## Exit codes
+
+Every subcommand follows the same 4-bucket convention:
+
+| Code | Meaning |
+|---|---|
+| 0 | Success / pass |
+| 1 | Verification or reconciliation failure (the receipt is bad, not the tool) |
+| 2 | I/O error, malformed JSON, unexpected file shape, or missing required argument |
+| 3 | Invalid CLI argument or unsupported flag combination |
+
+`bp verify multi <file.jsonl>` additionally returns exit 2 when the
+input contains fewer than 2 records (use `bp verify general` for single-
+record JSONL). `bp generate xor / iris --check` returns exit 1 on byte
+drift, exit 2 on golden-file read errors.
+
 ## Where the rules live
 
-The 8 reconciliation rules `bp reconcile receipt` and `bp verify mazur`
-check are documented at:
+The 10 reconciliation rules `bp reconcile receipt`, `bp verify mazur`,
+`bp verify general`, and `bp verify multi` check are documented at:
 
 - Rule 1: [`docs/reconciliation.md#rule-1-output-error-signal-consistency`](./reconciliation.md#rule-1-output-error-signal-consistency)
 - Rule 2: [`docs/reconciliation.md#rule-2-downstream-contribution-and-backpropagated-sum`](./reconciliation.md#rule-2-downstream-contribution-and-backpropagated-sum)
@@ -288,9 +429,12 @@ check are documented at:
 - Rule 6: [`docs/reconciliation.md#rule-6-weight-progression`](./reconciliation.md#rule-6-weight-progression)
 - Rule 7: [`docs/reconciliation.md#rule-7-final-state-consistency`](./reconciliation.md#rule-7-final-state-consistency)
 - Rule 8: [`docs/reconciliation.md#rule-8-provenance-reference-consistency`](./reconciliation.md#rule-8-provenance-reference-consistency)
+- Rule 9: [`docs/reconciliation.md#rule-9-multi-step-parameter-chain`](./reconciliation.md#rule-9-multi-step-parameter-chain) (v0.3+; fires only under `bp verify multi`)
+- Rule 10: [`docs/reconciliation.md#rule-10-multi-step-trace-identity`](./reconciliation.md#rule-10-multi-step-trace-identity) (v0.3+; fires only under `bp verify multi`)
 
-Each rule ships with a `fixtures/bad/mazur.bad-<kind>.jsonl` fixture per
-the Csmith doctrine — bad receipts precede good receipts. The fixtures
-exercise the rule by mutating exactly one field; the sibling `.meta.json`
-documents the mutation, the targeted invariant, expected cascades, and
-the expected `bp` output.
+Each rule ships with a deliberately-broken bad-* fixture per the Csmith
+doctrine — bad receipts precede good receipts. Rules 1-8 use
+`fixtures/bad/mazur.bad-<kind>.jsonl`; Rules 9, 10 use
+`fixtures/bad/multi-step.bad-{chain,trace-id}.jsonl`. The sibling
+`.meta.json` documents the mutation, the targeted invariant, expected
+cascades, and the expected `bp` output.

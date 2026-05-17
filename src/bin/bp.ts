@@ -2,25 +2,51 @@
 /**
  * bp — backprop-trace CLI
  *
- * v0.2 surface (still no framework, still dep-light dispatch):
+ * v0.3 surface (still no framework, still dep-light dispatch):
  *
  *   bp reconcile receipt <file>      Run the reconciler on a receipt JSON/JSONL.
- *                                    Exit 0 if all 8 rules pass within tolerance.
+ *                                    Exit 0 if all rules pass within tolerance.
  *                                    Exit 1 with stderr describing failures.
  *
- *   bp verify mazur [<file>]         Full gate per docs/reconciliation.md:264:
+ *   bp verify mazur [<file>]         Full Mazur gate per docs/reconciliation.md:264:
  *                                    schema-validate + reconcile + engine-reproduce
  *                                    + byte-equal-vs-golden + fixture_status enum
  *                                    + published-anchor drift (hard vs soft gate).
  *                                    Default subject: fixtures/mazur.golden.jsonl.
+ *                                    v0.1.0-schema receipts.
+ *
+ *   bp verify general <file>         Generalized verify gate. Works on any
+ *                                    v0.2.0-schema receipt (XOR, iris, arbitrary
+ *                                    user-authored topology). Composes:
+ *                                    schema-validate + reconcile (Rules 1-8) +
+ *                                    verifyGeneralEngineReproduces. Skips Mazur-
+ *                                    specific checks (byte-equal vs Mazur golden,
+ *                                    published-anchor drift).
+ *
+ *   bp verify multi <file.jsonl>     Multi-record verify. Reads N-record JSONL,
+ *                                    validates + reconciles each record (Rules
+ *                                    1-8), then runs reconcileMultiStep for the
+ *                                    parameter-chain (Rule 9) and trace-identity
+ *                                    (Rule 10) cross-record checks.
  *
  *   bp generate mazur                Re-run the Mazur 2-2-2 engine and emit the
  *                                    canonical JSONL receipt to stdout, or to
  *                                    --out <file>, or compare against the golden
  *                                    with --check (exit 1 on drift).
  *
- *   bp validate <file>               Schema-validate a receipt against
- *                                    schemas/receipt.v0.1.0.json. No math.
+ *   bp generate xor                  Re-run the XOR-sigmoid 2-2-1 engine and emit
+ *                                    the canonical JSONL receipt. Same mode
+ *                                    dispatch as `generate mazur`; --check compares
+ *                                    against fixtures/xor.golden.jsonl.
+ *
+ *   bp generate iris                 Re-run the iris 4-3-3 sigmoid engine and emit
+ *                                    the canonical JSONL receipt. Same mode
+ *                                    dispatch as `generate mazur`; --check compares
+ *                                    against fixtures/iris.golden.jsonl.
+ *
+ *   bp validate <file>               Schema-validate a receipt against the schema
+ *                                    matching its declared schema_version
+ *                                    (auto-detects v0.1.0 vs v0.2.0). No math.
  *
  *   bp --version | -v                Print package version, exit 0.
  *   bp --help    | -h                Print usage, exit 0.
@@ -35,9 +61,10 @@
  *                                    output. Honors NO_COLOR. Default: auto
  *                                    (color iff the destination is a TTY).
  *
- *   <file> = "-"                     For reconcile/validate, read receipt JSON
- *                                    from stdin (assume .json shape; no .jsonl
- *                                    extension sniffing).
+ *   <file> = "-"                     For reconcile / validate / verify general,
+ *                                    read JSON from stdin (assume .json shape;
+ *                                    no .jsonl extension sniffing). For verify
+ *                                    multi, read JSONL from stdin.
  *
  * Exit codes (4-bucket; aligns with study-swarm + shellcheck convention):
  *   0  success / pass
@@ -48,6 +75,16 @@
  * The CLI is itself a consumer of the public library API — every domain
  * primitive comes from "../index.js" (the published barrel) so the surface
  * tested by the CLI matches the surface a third-party caller would see.
+ *
+ * v0.3 import strategy: the v0.3 generalized-engine surface
+ * (runGeneralStep, emitGeneralReceipt, XOR_INPUT, IRIS_INPUT,
+ * reconcileMultiStep, verifyGeneralEngineReproduces) is consumed via the
+ * namespace import `bplib`. Named-import would fail at ESM load time on a
+ * missing binding — namespace import returns `undefined` at access time,
+ * so the existing v0.1/v0.2 subcommands keep loading cleanly while the
+ * Math + Library + Reconciler agents land their exports. The new
+ * subcommands surface a clear runtime error pointing at the missing
+ * export until those agents finish.
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -56,12 +93,14 @@ import { createRequire } from "node:module";
 import {
   reconcileReceipt,
   type ReconciliationFailure,
+  type MazurReceipt,
   validateReceiptSchema,
   verifyEngineReproduces,
   runMazurStep,
   emitMazurReceipt,
   MAZUR_INPUT,
 } from "../index.js";
+import * as bplib from "../index.js";
 
 const require = createRequire(import.meta.url);
 // Path resolves identically from both src/bin/bp.ts (test via tsx) and
@@ -71,8 +110,11 @@ const pkg = require("../../package.json") as { version: string };
 
 /**
  * Human-readable label per reconciliation rule index. Matches
- * docs/reconciliation.md "The eight rules" section. All 8 rules are wired
- * as of v0.2; rule 0 is the structural-failure sentinel.
+ * docs/reconciliation.md "The ten rules" section. All 10 rules are
+ * wired as of v0.3; rule 0 is the structural-failure sentinel. Rules 1-8
+ * are per-step (fire on `bp verify mazur` and `bp verify general` and
+ * once per record under `bp verify multi`); Rules 9, 10 are cross-step
+ * (fire only on `bp verify multi`).
  */
 const RULE_LABELS: Record<number, string> = {
   0: "structural failure",
@@ -84,6 +126,8 @@ const RULE_LABELS: Record<number, string> = {
   6: "weight_after inconsistent with weight_before + update",
   7: "parameters_after inconsistent with parameters_before + update",
   8: "factor value disagrees with provenance",
+  9: "multi-step parameter chain violation (parameters_before != prior parameters_after)",
+  10: "multi-step trace identity violation (trace_id or step_index)",
 };
 
 // =============================================================================
@@ -261,7 +305,7 @@ function readReceipt(file: string): unknown {
     if (allLinesParseStandalone && lineRecords.length > 0) {
       if (lineRecords.length !== 1) {
         const err = new Error(
-          `v0.1 bp reconcile receipt accepts only single-record JSONL files; got ${lineRecords.length} records`,
+          `single-record JSONL is required here; got ${lineRecords.length} records. Use 'bp verify multi <file.jsonl>' for multi-record JSONL.`,
         );
         (err as Error & { code?: string }).code = "BP_JSONL_MULTI_RECORD";
         throw err;
@@ -279,9 +323,48 @@ function readReceipt(file: string): unknown {
 }
 
 /**
- * Translate I/O / parse errors thrown by readReceipt into the canonical
- * exit-2 envelope. Centralized here so reconcile + validate share the
- * recovery hints verbatim.
+ * Read a multi-record JSONL file and return the parsed records (one per
+ * non-empty line). Used by `bp verify multi`.
+ *
+ * Unlike `readReceipt`, this function does NOT fall back to whole-file
+ * JSON parsing — multi-record JSONL strictly requires one JSON document
+ * per line. The special filename "-" reads from stdin.
+ *
+ * Throws on I/O errors and on per-line JSON SyntaxError with the line
+ * number annotated — callers translate to exit-2 via exitOnReadError.
+ */
+function readMultiRecordJsonl(file: string): unknown[] {
+  let raw: string;
+  if (file === "-") {
+    raw = readFileSync(0, "utf-8");
+  } else {
+    raw = readFileSync(file, "utf-8");
+  }
+  const lines = raw.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length === 0) {
+    const err = new Error(
+      `bp verify multi: ${file === "-" ? "stdin" : file} contains no JSON records (empty or whitespace-only).`,
+    );
+    (err as Error & { code?: string }).code = "BP_JSONL_EMPTY";
+    throw err;
+  }
+  return lines.map((line, i) => {
+    try {
+      return JSON.parse(line);
+    } catch (err) {
+      const message = `Invalid JSON at line ${i + 1}: ${(err as Error).message}`;
+      const wrapped = new Error(message);
+      (wrapped as Error & { code?: string }).code = "BP_JSONL_PARSE_ERROR";
+      throw wrapped;
+    }
+  });
+}
+
+/**
+ * Translate I/O / parse errors thrown by readReceipt and
+ * readMultiRecordJsonl into the canonical exit-2 envelope. Centralized
+ * here so reconcile + validate + verify share the recovery hints
+ * verbatim.
  */
 function exitOnReadError(err: unknown, file: string): never {
   const e = err as NodeJS.ErrnoException;
@@ -303,12 +386,22 @@ function exitOnReadError(err: unknown, file: string): never {
       "EISDIR",
     );
   }
-  if ((e as Error & { code?: string }).code === "BP_JSONL_MULTI_RECORD") {
+  const codeStr = (e as Error & { code?: string }).code;
+  if (codeStr === "BP_JSONL_MULTI_RECORD") {
     exitWithUsageError(e.message, "BP_JSONL_MULTI_RECORD");
+  }
+  if (codeStr === "BP_JSONL_EMPTY") {
+    exitWithUsageError(e.message, "BP_JSONL_EMPTY");
+  }
+  if (codeStr === "BP_JSONL_PARSE_ERROR") {
+    exitWithUsageError(
+      `${e.message}. Hint: each line of a multi-record JSONL file must be a standalone JSON object.`,
+      "BP_JSONL_PARSE_ERROR",
+    );
   }
   if (err instanceof SyntaxError) {
     exitWithUsageError(
-      `invalid JSON in ${file}: ${err.message}. Hint: validate the receipt structure against schemas/receipt.v0.1.0.json before reconciling.`,
+      `invalid JSON in ${file}: ${err.message}. Hint: validate the receipt structure against schemas/receipt.v0.1.0.json or schemas/receipt.v0.2.0.json before reconciling.`,
       "INVALID_JSON",
     );
   }
@@ -353,15 +446,48 @@ function describeReceipt(receipt: unknown): { schemaVersion?: string; fixtureId?
 // renderers
 // =============================================================================
 
+/**
+ * Render a reconciliation-failure value (stored / recomputed / delta /
+ * tolerance) without assuming it's a number.
+ *
+ * Rules 1-8 emit numeric stored/recomputed (the historic shape, and what
+ * the ReconciliationFailure type declares). Rule 10 (trace identity, new
+ * in v0.3) may emit string values when the mismatch is on a `trace_id`
+ * (a 128-bit hex string, not a number) or on a `step_index` rendered as
+ * a labelled string for clarity. Centralizing the coercion here keeps
+ * the renderer tolerant of both shapes without leaking string-handling
+ * into the per-rule code paths.
+ *
+ * For non-number values delta + tolerance have no meaningful engineering-
+ * form readout — formatValue falls back to a plain String() coercion. The
+ * Reconciler agent will widen the ReconciliationFailure type to mirror
+ * this in v0.3.
+ */
+function formatValue(v: unknown): string {
+  if (typeof v === "number") return String(v);
+  return String(v);
+}
+
+/**
+ * Render delta/tolerance specifically — numeric values use the engineering-
+ * form exponential readout (9 decimal places, matching v0.2's display
+ * convention); non-numeric values (Rule 10 trace-id / step-index) fall
+ * back to plain String() coercion since exponentiation is meaningless.
+ */
+function formatDeltaOrTolerance(v: unknown): string {
+  if (typeof v === "number") return v.toExponential(9);
+  return String(v);
+}
+
 function renderFailure(f: ReconciliationFailure): string {
   const label = RULE_LABELS[f.rule] ?? "rule mismatch";
   const lines = [
     `Rule ${f.rule}: ${label} on ${f.parameter_id ?? "(unknown parameter)"}`,
     `  field_path:          ${f.field_path}`,
-    `  stored gradient:     ${f.stored}`,
-    `  recomputed gradient: ${f.recomputed}`,
-    `  delta:               ${f.delta.toExponential(9)}`,
-    `  tolerance:           ${f.tolerance.toExponential(9)}`,
+    `  stored gradient:     ${formatValue(f.stored)}`,
+    `  recomputed gradient: ${formatValue(f.recomputed)}`,
+    `  delta:               ${formatDeltaOrTolerance(f.delta)}`,
+    `  tolerance:           ${formatDeltaOrTolerance(f.tolerance)}`,
   ];
   if (f.cascade_of_rule !== undefined) {
     lines.push(
@@ -381,10 +507,14 @@ function usageText(): string {
     `bp — backprop-trace CLI v${pkg.version}`,
     "",
     "Usage:",
-    "  bp reconcile receipt <file>     Reconcile a receipt against the 8 rules",
-    "  bp verify mazur [<file>]        Full gate: schema + reconcile + byte-equal + drift",
-    "  bp generate mazur               Re-run engine, emit canonical bytes",
-    "  bp validate <file>              Schema-validate a receipt",
+    "  bp reconcile receipt <file>     Reconcile a receipt (Rules 1-8)",
+    "  bp verify mazur [<file>]        Full Mazur gate (v0.1 receipts)",
+    "  bp verify general <file>        Generalized verify (v0.2 receipts)",
+    "  bp verify multi <file.jsonl>    Multi-record verify (Rules 1-8 per record + Rules 9, 10)",
+    "  bp generate mazur [--out <file>]  Re-run Mazur engine, emit canonical bytes",
+    "  bp generate xor   [--out <file>]  Re-run XOR engine, emit canonical bytes",
+    "  bp generate iris  [--out <file>]  Re-run iris engine, emit canonical bytes",
+    "  bp validate <file>              Schema-validate (auto-detects v0.1 vs v0.2)",
     "  bp --version                    Print version",
     "  bp --help                       Print this message",
     "",
@@ -392,10 +522,10 @@ function usageText(): string {
     "  --json                          Machine-readable JSON output",
     "  --verbose, -V                   Diagnostic stderr",
     "  --color=auto|never|always       Color output (auto detects TTY; honors NO_COLOR)",
-    "  --out <file>                    (generate mazur only) write to file",
-    "  --check                         (generate mazur only) compare vs golden, exit 1 on drift",
-    "  --warn-as-fail                  (verify mazur only) treat WARNs as failures",
-    "  --strict                        (verify mazur only) treat any non-PASS as failure",
+    "  --out <file>                    (generate) write to file",
+    "  --check                         (generate) compare vs golden, exit 1 on drift",
+    "  --warn-as-fail                  (verify) treat WARNs as failures",
+    "  --strict                        (verify) treat any non-PASS as failure",
     "  -                               (file arg) read from stdin",
     "  --help, -h                      Print this message",
     "",
@@ -408,7 +538,11 @@ function usageText(): string {
     "EXAMPLES",
     "  bp reconcile receipt fixtures/mazur.golden.jsonl",
     "  bp verify mazur",
+    "  bp verify general fixtures/xor.golden.jsonl",
+    "  bp verify multi fixtures/training-run.jsonl",
     "  bp generate mazur --check",
+    "  bp generate xor   --out my-xor.jsonl",
+    "  bp generate iris  --check",
     "  bp validate fixtures/mazur.golden.jsonl",
     "  echo '{...}' | bp validate -",
     "",
@@ -426,8 +560,8 @@ function receiptUsageText(): string {
     "",
     "  <file>  Path to a receipt JSON document. Accepted extensions:",
     "            .json   — parsed as a single JSON document.",
-    "            .jsonl  — parsed as JSONL containing exactly one record",
-    "                      (v0.1 limitation).",
+    "            .jsonl  — parsed as JSONL containing exactly one record.",
+    "                      For multi-record JSONL use 'bp verify multi'.",
     "            -       — read JSON from stdin.",
     "",
     "  Options:",
@@ -439,6 +573,74 @@ function receiptUsageText(): string {
     "    1  At least one rule failed; details on stderr (or stdout with --json).",
     "    2  Usage or I/O error (missing file, unreadable, invalid JSON,",
     "       or >1 record in a .jsonl file).",
+    "",
+  ].join("\n");
+}
+
+function verifyGeneralUsageText(): string {
+  return [
+    "Usage: bp verify general <file> [--json] [--verbose] [--warn-as-fail] [--strict]",
+    "",
+    "  Generalized verify gate for v0.2-schema receipts. Composes:",
+    "    1. Schema validation against schemas/receipt.v0.2.0.json",
+    "    2. Reconciliation against Rules 1-8 (per-step)",
+    "    3. Engine reproduction via verifyGeneralEngineReproduces",
+    "",
+    "  This subcommand intentionally skips Mazur-specific checks:",
+    "    - No byte-equal vs a Mazur golden fixture",
+    "    - No published-anchor drift (Mazur-only)",
+    "    - Multi-step Rules 9, 10 fire only on 'bp verify multi'",
+    "",
+    "  <file>  Path to a v0.2-schema receipt (.json or .jsonl, single",
+    "          record), or '-' to read from stdin.",
+    "",
+    "  Options:",
+    "    --json           Emit machine-readable JSON to stdout.",
+    "    --verbose, -V    Diagnostic stderr.",
+    "    --warn-as-fail   Treat WARN findings as failures.",
+    "    --strict         Treat any non-PASS finding (WARN, SKIP) as failure.",
+    "",
+    "  Exit codes:",
+    "    0  All checks pass.",
+    "    1  At least one check failed.",
+    "    2  Usage or I/O error.",
+    "    3  Invalid CLI argument.",
+    "",
+  ].join("\n");
+}
+
+function verifyMultiUsageText(): string {
+  return [
+    "Usage: bp verify multi <file.jsonl> [--json] [--verbose] [--warn-as-fail] [--strict]",
+    "",
+    "  Multi-record verify for training-run JSONL. Each line of the input",
+    "  file is parsed as a v0.2-schema receipt representing one training",
+    "  step. The gate runs:",
+    "",
+    "    Per record:",
+    "      1. Schema validation",
+    "      2. Reconciliation against Rules 1-8",
+    "",
+    "    Cross record:",
+    "      3. Rule 9  — parameter chain (parameters_before equals prior",
+    "                   record's parameters_after within tolerance)",
+    "      4. Rule 10 — trace identity (shared trace_id, sequential",
+    "                   step_index 0..N-1)",
+    "",
+    "  <file.jsonl>  Path to a multi-record JSONL file, or '-' to read",
+    "                from stdin.",
+    "",
+    "  Options:",
+    "    --json           Emit machine-readable JSON to stdout.",
+    "    --verbose, -V    Diagnostic stderr (record count, schema_versions).",
+    "    --warn-as-fail   Treat WARN findings as failures.",
+    "    --strict         Treat any non-PASS finding (WARN, SKIP) as failure.",
+    "",
+    "  Exit codes:",
+    "    0  All per-record + cross-record checks pass.",
+    "    1  At least one check failed.",
+    "    2  Usage or I/O error (missing file, bad JSON on a line, empty file).",
+    "    3  Invalid CLI argument.",
     "",
   ].join("\n");
 }
@@ -495,11 +697,56 @@ function generateUsageText(): string {
   ].join("\n");
 }
 
+function generateXorUsageText(): string {
+  return [
+    "Usage: bp generate xor [--out <file>] [--check] [--json] [--verbose]",
+    "",
+    "  Re-run the XOR-sigmoid 2-2-1 engine and emit the canonical JSONL",
+    "  receipt.",
+    "",
+    "  Default (no flags): write the canonical bytes to stdout.",
+    "  --out <file>     Write to <file> instead of stdout.",
+    "  --check          Compare against fixtures/xor.golden.jsonl;",
+    "                   exit 0 if byte-equal, exit 1 on drift.",
+    "  --json           In --check mode, emit a JSON envelope to stdout",
+    "                   reporting ok/false and drift_offset.",
+    "",
+    "  Exit codes:",
+    "    0  Success (bytes written or --check passed).",
+    "    1  Drift detected under --check.",
+    "    2  Usage or I/O error.",
+    "",
+  ].join("\n");
+}
+
+function generateIrisUsageText(): string {
+  return [
+    "Usage: bp generate iris [--out <file>] [--check] [--json] [--verbose]",
+    "",
+    "  Re-run the iris 4-3-3 sigmoid engine and emit the canonical JSONL",
+    "  receipt for the canonical first iris sample.",
+    "",
+    "  Default (no flags): write the canonical bytes to stdout.",
+    "  --out <file>     Write to <file> instead of stdout.",
+    "  --check          Compare against fixtures/iris.golden.jsonl;",
+    "                   exit 0 if byte-equal, exit 1 on drift.",
+    "  --json           In --check mode, emit a JSON envelope to stdout",
+    "                   reporting ok/false and drift_offset.",
+    "",
+    "  Exit codes:",
+    "    0  Success (bytes written or --check passed).",
+    "    1  Drift detected under --check.",
+    "    2  Usage or I/O error.",
+    "",
+  ].join("\n");
+}
+
 function validateUsageText(): string {
   return [
     "Usage: bp validate <file> [--json] [--verbose]",
     "",
-    "  Validate a receipt against schemas/receipt.v0.1.0.json.",
+    "  Validate a receipt against the schema matching its declared",
+    "  schema_version. Auto-detects v0.1.0 vs v0.2.0.",
     "  Schema only — no math reconciliation, no engine reproduction.",
     "",
     "  <file>  Path to a receipt (.json or .jsonl), or '-' to read from stdin.",
@@ -517,15 +764,56 @@ function validateUsageText(): string {
 }
 
 /**
- * Levenshtein-light suggestion for unknown subcommand. Hand-rolled
- * because the v0.2 surface only has four real top-level tokens.
+ * Levenshtein-light suggestion for unknown top-level subcommand. Hand-
+ * rolled because the v0.3 surface still has only four real top-level
+ * tokens (reconcile, verify, generate, validate). The example string
+ * for each top-level verb summarizes the full subnoun set so a user
+ * who typed `bp verfy` sees the three valid `verify` shapes inline.
  */
 function suggestSubcommand(unknown: string): string | null {
   const candidates: Array<{ verb: string; example: string }> = [
     { verb: "reconcile", example: "bp reconcile receipt <file>" },
-    { verb: "verify", example: "bp verify mazur" },
-    { verb: "generate", example: "bp generate mazur" },
+    { verb: "verify", example: "bp verify mazur | general <file> | multi <file.jsonl>" },
+    { verb: "generate", example: "bp generate mazur | xor | iris" },
     { verb: "validate", example: "bp validate <file>" },
+  ];
+  for (const c of candidates) {
+    if (c.verb.startsWith(unknown) || unknown.startsWith(c.verb)) {
+      return c.example;
+    }
+  }
+  return null;
+}
+
+/**
+ * Suggest the canonical form of a known `verify` subnoun. Recognizes
+ * `mazur`, `general`, `multi`. Returns the closest match's full example,
+ * or null if no match.
+ */
+function suggestVerifySubnoun(unknown: string): string | null {
+  const candidates: Array<{ verb: string; example: string }> = [
+    { verb: "mazur", example: "bp verify mazur" },
+    { verb: "general", example: "bp verify general <file>" },
+    { verb: "multi", example: "bp verify multi <file.jsonl>" },
+  ];
+  for (const c of candidates) {
+    if (c.verb.startsWith(unknown) || unknown.startsWith(c.verb)) {
+      return c.example;
+    }
+  }
+  return null;
+}
+
+/**
+ * Suggest the canonical form of a known `generate` subnoun. Recognizes
+ * `mazur`, `xor`, `iris`. Returns the closest match's full example, or
+ * null if no match.
+ */
+function suggestGenerateSubnoun(unknown: string): string | null {
+  const candidates: Array<{ verb: string; example: string }> = [
+    { verb: "mazur", example: "bp generate mazur" },
+    { verb: "xor", example: "bp generate xor" },
+    { verb: "iris", example: "bp generate iris" },
   ];
   for (const c of candidates) {
     if (c.verb.startsWith(unknown) || unknown.startsWith(c.verb)) {
@@ -621,8 +909,12 @@ function runVerifyMazur(opts: {
     throw err;
   }
 
-  // 2. Schema validation (FT-C-001 / FT-F-001).
-  const validation = validateReceiptSchema(receipt);
+  // 2. Schema validation (FT-C-001 / FT-F-001). bp verify mazur is the
+  // v0.1.0-pinned Mazur path — force-dispatch against schemas/receipt.v0.1.0.json
+  // so the typed-narrow to MazurReceipt below is sound regardless of what
+  // schema_version field the input declares. The CLI agent's v0.3 work
+  // adds a sibling `bp verify general` for v0.2.0 receipts.
+  const validation = validateReceiptSchema(receipt, { version: "0.1.0" });
   if (validation.ok) {
     checks.push({ name: "schema", status: "pass" });
   } else {
@@ -640,7 +932,11 @@ function runVerifyMazur(opts: {
   if (!validation.ok) {
     return finalizeReport(checks, opts);
   }
-  const typedReceipt = validation.receipt;
+  // validation.receipt is typed `unknown` by the multi-version validator;
+  // the explicit { version: "0.1.0" } dispatch above means Ajv asserted the
+  // input structurally conforms to MazurReceipt's schema, so the cast is
+  // sound. CLI agent's v0.3 work splits this into per-schema-version helpers.
+  const typedReceipt = validation.receipt as MazurReceipt;
 
   // 3. Reconciliation (engine math).
   const reconciliation = reconcileReceipt(typedReceipt);
@@ -900,26 +1196,32 @@ function renderVerifyReport(report: VerifyReport): string {
 }
 
 // =============================================================================
-// generate mazur (FT-C-002)
+// generate (FT-C-002 mazur / FT-C-007 xor / FT-C-008 iris)
 // =============================================================================
 
-function runGenerateMazur(): void {
-  // Always re-run the engine and emit canonical bytes; downstream branches
-  // dispatch on --check / --out.
-  const bytes = emitMazurReceipt(runMazurStep(MAZUR_INPUT));
+/**
+ * Shared --check / --out / stdout dispatch for all `bp generate <topology>`
+ * subcommands. The three topologies (Mazur, XOR, iris) differ only in
+ * which engine produces the bytes and which golden fixture --check
+ * compares against; centralizing the dispatch here keeps the human-facing
+ * behavior identical across topologies and makes adding a fourth (e.g.
+ * xor-relu in v0.4) a one-line addition at the call site.
+ */
+function emitGenerated(args: { bytes: string; label: string; goldenPath: string }): void {
+  const { bytes, label, goldenPath } = args;
 
   if (checkMode) {
     let goldenBytes: string;
     try {
-      goldenBytes = readFileSync("fixtures/mazur.golden.jsonl", "utf-8");
+      goldenBytes = readFileSync(goldenPath, "utf-8");
     } catch (err) {
-      exitOnReadError(err, "fixtures/mazur.golden.jsonl");
+      exitOnReadError(err, goldenPath);
     }
     if (bytes === goldenBytes) {
       if (jsonMode) {
         process.stdout.write(`${JSON.stringify({ ok: true })}\n`);
       } else if (verboseMode) {
-        verboseLog("generate mazur --check: byte-equal");
+        verboseLog(`generate ${label} --check: byte-equal`);
       }
       process.exit(0);
     }
@@ -940,7 +1242,7 @@ function runGenerateMazur(): void {
     } else {
       const useColor = shouldUseColor(process.stderr);
       process.stderr.write(
-        `${color("generate mazur --check: drift detected", `${BOLD}${RED}`, useColor)}\n`,
+        `${color(`generate ${label} --check: drift detected`, `${BOLD}${RED}`, useColor)}\n`,
       );
       process.stderr.write(`  drift_offset:   ${driftOffset}\n`);
       process.stderr.write(`  emitted_length: ${bytes.length}\n`);
@@ -958,7 +1260,7 @@ function runGenerateMazur(): void {
     if (jsonMode) {
       process.stdout.write(`${JSON.stringify({ ok: true, out: outFile, bytes: bytes.length })}\n`);
     } else if (verboseMode) {
-      verboseLog(`generate mazur: wrote ${bytes.length} bytes to ${outFile}`);
+      verboseLog(`generate ${label}: wrote ${bytes.length} bytes to ${outFile}`);
     }
     process.exit(0);
   }
@@ -966,6 +1268,395 @@ function runGenerateMazur(): void {
   // Default: write to stdout.
   process.stdout.write(bytes);
   process.exit(0);
+}
+
+function runGenerateMazur(): void {
+  // Always re-run the engine and emit canonical bytes; downstream branches
+  // dispatch on --check / --out.
+  const bytes = emitMazurReceipt(runMazurStep(MAZUR_INPUT));
+  emitGenerated({
+    bytes,
+    label: "mazur",
+    goldenPath: "fixtures/mazur.golden.jsonl",
+  });
+}
+
+/**
+ * Require a v0.3 namespace member at the moment of use, surfacing a
+ * focused error if the Math / Library / Reconciler agent hasn't landed
+ * its export yet. The error path exits with code 2 (usage/I/O) and
+ * names the missing export so the operator can identify which agent
+ * still needs to finish.
+ *
+ * This pattern is preferred over `import { runGeneralStep }` because a
+ * top-level named import from an ESM module errors at module-load time
+ * if the binding is missing — which would break the existing v0.1/v0.2
+ * subcommand surface even when the user is only running `bp verify
+ * mazur`. Lazy resolution defers the error to invocation time.
+ */
+function requireLibExport<T>(name: string): T {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const v = (bplib as unknown as Record<string, unknown>)[name];
+  if (v === undefined) {
+    exitWithUsageError(
+      `library export '${name}' is not available. This subcommand requires the v0.3 generalized-engine surface (Math + Library + Reconciler agents). Hint: ensure src/index.ts exports it, then rebuild.`,
+      "MISSING_LIB_EXPORT",
+    );
+  }
+  return v as T;
+}
+
+function runGenerateXor(): void {
+  // Lazy-resolve the v0.3 exports so the binary still loads cleanly
+  // even if the Math agent hasn't shipped XOR_INPUT / runGeneralStep /
+  // emitGeneralReceipt yet.
+  const runGeneralStep = requireLibExport<(input: unknown) => unknown>("runGeneralStep");
+  const emitGeneralReceipt = requireLibExport<(r: unknown) => string>("emitGeneralReceipt");
+  const XOR_INPUT = requireLibExport<unknown>("XOR_INPUT");
+
+  const bytes = emitGeneralReceipt(runGeneralStep(XOR_INPUT));
+  emitGenerated({
+    bytes,
+    label: "xor",
+    goldenPath: "fixtures/xor.golden.jsonl",
+  });
+}
+
+function runGenerateIris(): void {
+  const runGeneralStep = requireLibExport<(input: unknown) => unknown>("runGeneralStep");
+  const emitGeneralReceipt = requireLibExport<(r: unknown) => string>("emitGeneralReceipt");
+  const IRIS_INPUT = requireLibExport<unknown>("IRIS_INPUT");
+
+  const bytes = emitGeneralReceipt(runGeneralStep(IRIS_INPUT));
+  emitGenerated({
+    bytes,
+    label: "iris",
+    goldenPath: "fixtures/iris.golden.jsonl",
+  });
+}
+
+// =============================================================================
+// verify general (v0.3, FT-C-005)
+// =============================================================================
+
+/**
+ * Generalized verify gate. Works on any v0.2-schema receipt (XOR, iris,
+ * arbitrary user-authored topology). Composes schema validation, Rules
+ * 1-8 reconciliation, and engine-reproduction via the generalized engine
+ * path. Skips Mazur-specific checks (byte-equal vs golden, published-
+ * anchor drift) — those are scope-only for `bp verify mazur`.
+ *
+ * Multi-step Rules 9, 10 are NOT run here. They require the full per-
+ * record list and fire only on `bp verify multi`.
+ */
+function runVerifyGeneral(opts: {
+  receiptPath: string;
+  warnAsFail: boolean;
+  strict: boolean;
+}): VerifyReport {
+  const checks: VerifyCheck[] = [];
+
+  // 1. Read + parse the candidate receipt.
+  let receipt: unknown;
+  try {
+    receipt = readReceipt(opts.receiptPath);
+  } catch (err) {
+    throw err;
+  }
+
+  // 2. Schema validation. Without an explicit version override the
+  // validator dispatches on the receipt's declared schema_version
+  // (Library agent's v0.3 work auto-routes "0.2.0" receipts to
+  // schemas/receipt.v0.2.0.json). A receipt that declares "0.1.0" still
+  // validates (the Mazur 8-rule subset) but the engine-reproduction
+  // check below will likely fail since v0.1 receipts don't carry the
+  // unit_order / parameter_order needed by the general engine — the
+  // operator is best served by routing v0.1 receipts to `bp verify mazur`.
+  const validation = validateReceiptSchema(receipt);
+  if (validation.ok) {
+    checks.push({ name: "schema", status: "pass" });
+  } else {
+    checks.push({
+      name: "schema",
+      status: "fail",
+      message: `schema validation failed (${validation.errors.length} error(s))`,
+      evidence: validation.errors,
+    });
+  }
+
+  if (!validation.ok) {
+    return finalizeReport(checks, opts);
+  }
+  const typedReceipt = validation.receipt;
+
+  // 3. Reconciliation (Rules 1-8).
+  const reconciliation = reconcileReceipt(typedReceipt);
+  if (reconciliation.ok) {
+    checks.push({ name: "reconcile", status: "pass" });
+  } else {
+    checks.push({
+      name: "reconcile",
+      status: "fail",
+      message: `${reconciliation.failures.length} rule failure(s)`,
+      evidence: reconciliation.failures,
+    });
+  }
+
+  // 4. Engine reproduction via the generalized engine path. Library
+  // agent exposes verifyGeneralEngineReproduces; it consumes the
+  // receipt's topology declaration (unit_order + parameter_order +
+  // activation choices) to drive the engine, then compares the emitted
+  // bytes against the receipt's canonical form.
+  type GeneralEngineRepro = {
+    matches: boolean;
+    firstDifferingByte: number;
+    ourBytes: { length: number };
+    theirBytes: { length: number };
+  };
+  const verifyGeneralEngineReproduces = requireLibExport<
+    (r: unknown) => GeneralEngineRepro
+  >("verifyGeneralEngineReproduces");
+  try {
+    const engineRepro = verifyGeneralEngineReproduces(typedReceipt);
+    if (engineRepro.matches) {
+      checks.push({ name: "engine-reproduce", status: "pass" });
+    } else {
+      checks.push({
+        name: "engine-reproduce",
+        status: "fail",
+        message: `engine output diverges from receipt at byte ${engineRepro.firstDifferingByte}`,
+        evidence: {
+          first_differing_byte: engineRepro.firstDifferingByte,
+          our_length: engineRepro.ourBytes?.length,
+          their_length: engineRepro.theirBytes?.length,
+        },
+      });
+    }
+  } catch (err) {
+    checks.push({
+      name: "engine-reproduce",
+      status: "fail",
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  return finalizeReport(checks, opts);
+}
+
+// =============================================================================
+// verify multi (v0.3, FT-C-006)
+// =============================================================================
+
+type MultiSubReport = {
+  step_index: number;
+  schema_version?: string;
+  fixture_id?: string;
+  schema: VerifyCheck;
+  reconcile: VerifyCheck;
+};
+
+type VerifyMultiReport = {
+  overall: "pass" | "fail" | "warn";
+  record_count: number;
+  per_record: MultiSubReport[];
+  cross_record_checks: VerifyCheck[];
+};
+
+/**
+ * Multi-record verify gate. Reads an N-record JSONL training run,
+ * validates + reconciles each record (Rules 1-8), then runs the cross-
+ * record reconcileMultiStep helper for Rule 9 (parameter chain) and
+ * Rule 10 (trace identity).
+ *
+ * Each per-record sub-report mirrors the shape of verify general — schema
+ * + reconcile checks per step — so a consumer can pinpoint which step
+ * failed without re-running anything. The cross-record checks live in a
+ * separate flat list so the overall report stays jq-friendly.
+ *
+ * Multi-step rules require ALL records to be structurally valid; if any
+ * record fails schema validation, the cross-record pass is skipped (a
+ * partial chain would yield meaningless Rule 9 / Rule 10 failures).
+ */
+function runVerifyMulti(opts: {
+  receiptsPath: string;
+  warnAsFail: boolean;
+  strict: boolean;
+}): VerifyMultiReport {
+  // 1. Read + parse the multi-record file. Caller translates I/O errors.
+  let records: unknown[];
+  try {
+    records = readMultiRecordJsonl(opts.receiptsPath);
+  } catch (err) {
+    throw err;
+  }
+
+  const perRecord: MultiSubReport[] = [];
+  const typedReceipts: unknown[] = [];
+
+  // 2. Per-record schema + reconcile loop. Collect typed receipts for
+  // the cross-record pass; if a record fails schema, skip its reconcile
+  // step (it's already failed; running reconcile would crash on missing
+  // fields) and DO NOT contribute it to the cross-record list (multi-
+  // step rules require a structurally valid record).
+  for (let i = 0; i < records.length; i += 1) {
+    const rec = records[i];
+    const desc = describeReceipt(rec);
+    const validation = validateReceiptSchema(rec);
+
+    const schemaCheck: VerifyCheck = validation.ok
+      ? { name: `schema[${i}]`, status: "pass" }
+      : {
+          name: `schema[${i}]`,
+          status: "fail",
+          message: `schema validation failed (${validation.errors.length} error(s))`,
+          evidence: validation.errors,
+        };
+
+    let reconcileCheck: VerifyCheck;
+    if (validation.ok) {
+      const r = reconcileReceipt(validation.receipt);
+      reconcileCheck = r.ok
+        ? { name: `reconcile[${i}]`, status: "pass" }
+        : {
+            name: `reconcile[${i}]`,
+            status: "fail",
+            message: `${r.failures.length} rule failure(s)`,
+            evidence: r.failures,
+          };
+      typedReceipts.push(validation.receipt);
+    } else {
+      reconcileCheck = {
+        name: `reconcile[${i}]`,
+        status: "skip",
+        message: "skipped — schema validation failed for this record",
+      };
+    }
+
+    perRecord.push({
+      step_index: i,
+      schema_version: desc.schemaVersion,
+      fixture_id: desc.fixtureId,
+      schema: schemaCheck,
+      reconcile: reconcileCheck,
+    });
+  }
+
+  // 3. Cross-record reconciliation (Rules 9, 10). Only fires if every
+  // record passed schema — Rule 9 traverses parameters_before/after
+  // chains and Rule 10 checks trace_id/step_index, neither of which is
+  // safe on a structurally invalid record.
+  const crossChecks: VerifyCheck[] = [];
+  const allRecordsValidated = typedReceipts.length === records.length;
+  if (!allRecordsValidated) {
+    crossChecks.push({
+      name: "multi-step-rules-9-10",
+      status: "skip",
+      message:
+        "skipped — at least one record failed schema validation; multi-step rules require all records to be structurally valid",
+    });
+  } else {
+    type MultiStepResult =
+      | { ok: true }
+      | { ok: false; failures: ReconciliationFailure[] };
+    const reconcileMultiStep = requireLibExport<
+      (receipts: unknown[]) => MultiStepResult
+    >("reconcileMultiStep");
+    try {
+      const multi = reconcileMultiStep(typedReceipts);
+      if (multi.ok) {
+        crossChecks.push({ name: "multi-step-rules-9-10", status: "pass" });
+      } else {
+        // reconcileMultiStep returns the same ReconciliationFailure
+        // shape; failures with rule === 9 or rule === 10 are the new
+        // multi-step rules. Anything else would indicate the helper
+        // also surfaced per-record failures (the per-record loop above
+        // would have already caught those; downstream consumers may
+        // double-count, which is acceptable for a fail signal).
+        crossChecks.push({
+          name: "multi-step-rules-9-10",
+          status: "fail",
+          message: `${multi.failures.length} cross-record rule failure(s)`,
+          evidence: multi.failures,
+        });
+      }
+    } catch (err) {
+      crossChecks.push({
+        name: "multi-step-rules-9-10",
+        status: "fail",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // 4. Compute overall verdict using the same gating logic as verify
+  // mazur / verify general — but over the union of all per-record +
+  // cross-record checks.
+  const allChecks: VerifyCheck[] = [];
+  for (const sub of perRecord) {
+    allChecks.push(sub.schema, sub.reconcile);
+  }
+  for (const c of crossChecks) {
+    allChecks.push(c);
+  }
+  const rolled = finalizeReport(allChecks, opts);
+
+  return {
+    overall: rolled.overall,
+    record_count: records.length,
+    per_record: perRecord,
+    cross_record_checks: crossChecks,
+  };
+}
+
+function renderVerifyMultiReport(report: VerifyMultiReport): string {
+  const useColor = shouldUseColor(process.stderr);
+  const lines: string[] = [];
+  const header =
+    report.overall === "pass"
+      ? color(`verify multi passed (${report.record_count} record(s))`, `${BOLD}${GREEN}`, useColor)
+      : report.overall === "warn"
+        ? color(`verify multi passed with warnings (${report.record_count} record(s))`, `${BOLD}${YELLOW}`, useColor)
+        : color(`verify multi failed (${report.record_count} record(s))`, `${BOLD}${RED}`, useColor);
+  lines.push(header);
+  lines.push("");
+
+  const tagOf = (s: VerifyCheckStatus): string =>
+    s === "pass"
+      ? color("PASS", GREEN, useColor)
+      : s === "warn"
+        ? color("WARN", YELLOW, useColor)
+        : s === "skip"
+          ? color("SKIP", YELLOW, useColor)
+          : color("FAIL", RED, useColor);
+
+  for (const sub of report.per_record) {
+    const idTag = sub.fixture_id ? ` (${sub.fixture_id})` : "";
+    lines.push(`record ${sub.step_index}${idTag}:`);
+    for (const check of [sub.schema, sub.reconcile]) {
+      lines.push(`  [${tagOf(check.status)}] ${check.name}${check.message ? `: ${check.message}` : ""}`);
+      if (check.status === "fail" && check.evidence !== undefined) {
+        const evidence = JSON.stringify(check.evidence, null, 2)
+          .split("\n")
+          .map((l) => `    ${l}`)
+          .join("\n");
+        lines.push(evidence);
+      }
+    }
+  }
+  lines.push("");
+  lines.push("cross-record:");
+  for (const check of report.cross_record_checks) {
+    lines.push(`  [${tagOf(check.status)}] ${check.name}${check.message ? `: ${check.message}` : ""}`);
+    if (check.status === "fail" && check.evidence !== undefined) {
+      const evidence = JSON.stringify(check.evidence, null, 2)
+        .split("\n")
+        .map((l) => `    ${l}`)
+        .join("\n");
+      lines.push(evidence);
+    }
+  }
+  lines.push("");
+  return lines.join("\n");
 }
 
 // =============================================================================
@@ -1136,81 +1827,209 @@ if (argv[0] === "reconcile") {
 }
 
 // -----------------------------------------------------------------------------
-// bp verify mazur [<file>]
+// bp verify mazur [<file>] | bp verify general <file> | bp verify multi <file.jsonl>
 // -----------------------------------------------------------------------------
 
 if (argv[0] === "verify") {
   if (argv[1] === undefined) {
     exitWithUsageError(
-      "incomplete command 'verify'. Did you mean 'bp verify mazur'? Run 'bp --help' for usage.",
-    );
-  }
-  if (argv[1] !== "mazur") {
-    exitWithUsageError(
-      `unknown subcommand 'verify ${argv[1]}'. Did you mean 'bp verify mazur'? Run 'bp --help' for usage.`,
-    );
-  }
-  if (argv[2] === "--help" || argv[2] === "-h") {
-    process.stdout.write(verifyUsageText());
-    process.exit(0);
-  }
-  const candidateFile = argv[2];
-  const receiptPath =
-    typeof candidateFile === "string" && candidateFile.length > 0
-      ? candidateFile
-      : "fixtures/mazur.golden.jsonl";
-
-  // Reject flag-shaped args except the bare `-` stdin sentinel.
-  if (receiptPath.startsWith("-") && receiptPath !== "-") {
-    exitWithUsageError(
-      `refusing to treat ${JSON.stringify(receiptPath)} as a filename (starts with '-'). ` +
-        `Use 'bp verify mazur --help' for usage.`,
-      "INVALID_FILE_ARG",
-      3,
+      "incomplete command 'verify'. Did you mean 'bp verify mazur', 'bp verify general <file>', or 'bp verify multi <file.jsonl>'? Run 'bp --help' for usage.",
     );
   }
 
-  verboseLog(`verify subject: ${receiptPath}`);
+  // ---------------------------------------------------------------------------
+  // bp verify mazur [<file>]
+  // ---------------------------------------------------------------------------
+  if (argv[1] === "mazur") {
+    if (argv[2] === "--help" || argv[2] === "-h") {
+      process.stdout.write(verifyUsageText());
+      process.exit(0);
+    }
+    const candidateFile = argv[2];
+    const receiptPath =
+      typeof candidateFile === "string" && candidateFile.length > 0
+        ? candidateFile
+        : "fixtures/mazur.golden.jsonl";
 
-  let report: VerifyReport;
-  try {
-    report = runVerifyMazur({
-      receiptPath,
-      warnAsFail,
-      strict: strictMode,
-    });
-  } catch (err) {
-    exitOnReadError(err, receiptPath);
+    // Reject flag-shaped args except the bare `-` stdin sentinel.
+    if (receiptPath.startsWith("-") && receiptPath !== "-") {
+      exitWithUsageError(
+        `refusing to treat ${JSON.stringify(receiptPath)} as a filename (starts with '-'). ` +
+          `Use 'bp verify mazur --help' for usage.`,
+        "INVALID_FILE_ARG",
+        3,
+      );
+    }
+
+    verboseLog(`verify subject: ${receiptPath}`);
+
+    let report: VerifyReport;
+    try {
+      report = runVerifyMazur({
+        receiptPath,
+        warnAsFail,
+        strict: strictMode,
+      });
+    } catch (err) {
+      exitOnReadError(err, receiptPath);
+    }
+
+    if (jsonMode) {
+      process.stdout.write(`${JSON.stringify({ ok: report.overall !== "fail", report })}\n`);
+    } else {
+      process.stderr.write(renderVerifyReport(report));
+    }
+    process.exit(report.overall === "fail" ? 1 : 0);
   }
 
-  if (jsonMode) {
-    process.stdout.write(`${JSON.stringify({ ok: report.overall !== "fail", report })}\n`);
-  } else {
-    process.stderr.write(renderVerifyReport(report));
+  // ---------------------------------------------------------------------------
+  // bp verify general <file>
+  // ---------------------------------------------------------------------------
+  if (argv[1] === "general") {
+    if (argv[2] === "--help" || argv[2] === "-h") {
+      process.stdout.write(verifyGeneralUsageText());
+      process.exit(0);
+    }
+    const candidateFile = argv[2];
+    if (typeof candidateFile !== "string" || candidateFile.length === 0) {
+      if (jsonMode) {
+        exitWithUsageError(
+          "missing required argument <file> for 'verify general'. Run 'bp verify general --help' for usage.",
+          "MISSING_FILE_ARG",
+        );
+      }
+      process.stderr.write(verifyGeneralUsageText());
+      process.exit(2);
+    }
+    if (candidateFile.startsWith("-") && candidateFile !== "-") {
+      exitWithUsageError(
+        `refusing to treat ${JSON.stringify(candidateFile)} as a filename (starts with '-'). ` +
+          `Use 'bp verify general --help' for usage.`,
+        "INVALID_FILE_ARG",
+        3,
+      );
+    }
+
+    verboseLog(`verify general subject: ${candidateFile}`);
+
+    let report: VerifyReport;
+    try {
+      report = runVerifyGeneral({
+        receiptPath: candidateFile,
+        warnAsFail,
+        strict: strictMode,
+      });
+    } catch (err) {
+      exitOnReadError(err, candidateFile);
+    }
+
+    if (jsonMode) {
+      process.stdout.write(`${JSON.stringify({ ok: report.overall !== "fail", report })}\n`);
+    } else {
+      process.stderr.write(renderVerifyReport(report));
+    }
+    process.exit(report.overall === "fail" ? 1 : 0);
   }
-  process.exit(report.overall === "fail" ? 1 : 0);
+
+  // ---------------------------------------------------------------------------
+  // bp verify multi <file.jsonl>
+  // ---------------------------------------------------------------------------
+  if (argv[1] === "multi") {
+    if (argv[2] === "--help" || argv[2] === "-h") {
+      process.stdout.write(verifyMultiUsageText());
+      process.exit(0);
+    }
+    const candidateFile = argv[2];
+    if (typeof candidateFile !== "string" || candidateFile.length === 0) {
+      if (jsonMode) {
+        exitWithUsageError(
+          "missing required argument <file.jsonl> for 'verify multi'. Run 'bp verify multi --help' for usage.",
+          "MISSING_FILE_ARG",
+        );
+      }
+      process.stderr.write(verifyMultiUsageText());
+      process.exit(2);
+    }
+    if (candidateFile.startsWith("-") && candidateFile !== "-") {
+      exitWithUsageError(
+        `refusing to treat ${JSON.stringify(candidateFile)} as a filename (starts with '-'). ` +
+          `Use 'bp verify multi --help' for usage.`,
+        "INVALID_FILE_ARG",
+        3,
+      );
+    }
+
+    verboseLog(`verify multi subject: ${candidateFile}`);
+
+    let report: VerifyMultiReport;
+    try {
+      report = runVerifyMulti({
+        receiptsPath: candidateFile,
+        warnAsFail,
+        strict: strictMode,
+      });
+    } catch (err) {
+      exitOnReadError(err, candidateFile);
+    }
+
+    if (jsonMode) {
+      process.stdout.write(`${JSON.stringify({ ok: report.overall !== "fail", report })}\n`);
+    } else {
+      process.stderr.write(renderVerifyMultiReport(report));
+    }
+    process.exit(report.overall === "fail" ? 1 : 0);
+  }
+
+  // Unknown verify subnoun — fuzzy-suggest the closest match.
+  const verifySubnoun = argv[1];
+  const verifySuggestion = suggestVerifySubnoun(verifySubnoun);
+  exitWithUsageError(
+    verifySuggestion
+      ? `unknown subcommand 'verify ${verifySubnoun}'. Did you mean '${verifySuggestion}'? Run 'bp --help' for usage.`
+      : `unknown subcommand 'verify ${verifySubnoun}'. Expected 'mazur', 'general', or 'multi'. Run 'bp --help' for usage.`,
+  );
 }
 
 // -----------------------------------------------------------------------------
-// bp generate mazur
+// bp generate mazur | bp generate xor | bp generate iris
 // -----------------------------------------------------------------------------
 
 if (argv[0] === "generate") {
   if (argv[1] === undefined) {
     exitWithUsageError(
-      "incomplete command 'generate'. Did you mean 'bp generate mazur'? Run 'bp --help' for usage.",
+      "incomplete command 'generate'. Did you mean 'bp generate mazur', 'bp generate xor', or 'bp generate iris'? Run 'bp --help' for usage.",
     );
   }
-  if (argv[1] !== "mazur") {
-    exitWithUsageError(
-      `unknown subcommand 'generate ${argv[1]}'. Did you mean 'bp generate mazur'? Run 'bp --help' for usage.`,
-    );
+  if (argv[1] === "mazur") {
+    if (argv[2] === "--help" || argv[2] === "-h") {
+      process.stdout.write(generateUsageText());
+      process.exit(0);
+    }
+    runGenerateMazur();
   }
-  if (argv[2] === "--help" || argv[2] === "-h") {
-    process.stdout.write(generateUsageText());
-    process.exit(0);
+  if (argv[1] === "xor") {
+    if (argv[2] === "--help" || argv[2] === "-h") {
+      process.stdout.write(generateXorUsageText());
+      process.exit(0);
+    }
+    runGenerateXor();
   }
-  runGenerateMazur();
+  if (argv[1] === "iris") {
+    if (argv[2] === "--help" || argv[2] === "-h") {
+      process.stdout.write(generateIrisUsageText());
+      process.exit(0);
+    }
+    runGenerateIris();
+  }
+
+  // Unknown generate subnoun — fuzzy-suggest the closest match.
+  const generateSubnoun = argv[1];
+  const generateSuggestion = suggestGenerateSubnoun(generateSubnoun);
+  exitWithUsageError(
+    generateSuggestion
+      ? `unknown subcommand 'generate ${generateSubnoun}'. Did you mean '${generateSuggestion}'? Run 'bp --help' for usage.`
+      : `unknown subcommand 'generate ${generateSubnoun}'. Expected 'mazur', 'xor', or 'iris'. Run 'bp --help' for usage.`,
+  );
 }
 
 // -----------------------------------------------------------------------------

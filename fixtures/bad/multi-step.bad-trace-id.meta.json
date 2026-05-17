@@ -1,0 +1,42 @@
+{
+  "schema_version": "0.2.0",
+  "fixture": "multi-step.bad-trace-id.meta",
+  "describes": "fixtures/bad/multi-step.bad-trace-id.jsonl",
+  "based_on": "Two XOR-sigmoid 2-2-1 first-step receipts produced by src/general-engine.ts. Step 0's input is the canonical XOR_INPUT (operator-chosen init w_x1_h1=0.1, etc. — same as fixtures/xor.golden.jsonl). Step 1's parameters_before correctly chains from step 0's parameters_after (Rule 9 stays clean), but step 1's trace_id differs from step 0's so Rule 10 fires.",
+  "mutation": {
+    "field_path": "[1].trace_id",
+    "original": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "mutated": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "rationale": "Two visually-distinct lowercase-hex 128-bit identifiers. The 'aaaa...' / 'bbbb...' pattern is unambiguous — any human reading the bad fixture sees the mismatch immediately. The schema requires trace_id to match /^[0-9a-f]{32}$/; both values satisfy the pattern, so the per-record schema validation PASSES on both steps. The failure is a CROSS-RECORD invariant only detectable when the verifier reads both records together.",
+    "what_was_NOT_mutated": [
+      "step 0 (entire receipt)",
+      "step 1's step_index (= 1, sequential after step 0's 0)",
+      "step 1's parameters_before (correctly chains from step 0's parameters_after — Rule 9 PASSES)",
+      "step 1's forward / loss / backward / updates / parameters_after / post_update_forward / post_update_loss — all engine-computed and internally consistent (Rules 1-8 PASS standalone)"
+    ]
+  },
+  "single_target_invariant": "Reconciliation produces exactly one Rule 10 failure naming both trace_ids in the mismatch. Rule 9 (parameter chain) MUST NOT fire — step 1's parameters_before correctly chains from step 0's parameters_after. Per-step Rules 1-8 MUST pass on both step 0 AND step 1 (each receipt is internally consistent on its own — the mutation only breaks the cross-step trace identity).",
+  "expected_verify_outcome": {
+    "command": "bp verify multi fixtures/bad/multi-step.bad-trace-id.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "Rule 10",
+      "trace_id",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ],
+    "stderr_must_NOT_contain": [
+      "Rule 9",
+      "w_x1_h1",
+      "chain"
+    ],
+    "stderr_section_count": {
+      "Rule 10:": 1
+    }
+  },
+  "rule_10_specification": "For multi-record JSONL containing N >= 2 receipts, ALL receipts MUST share the same trace_id AND step_index MUST be sequential (0, 1, 2, ..., N-1 — monotonic and dense; no gaps, no duplicates, no out-of-order indices). Rule 10 covers two distinct failure modes: trace_id mismatch (this fixture) and step_index gap / duplicate / out-of-order. Single-record JSONL skips Rule 10 entirely (there is no cross-record invariant to check). The trace_id pattern follows W3C TraceContext: 128-bit lowercase hex (32 characters).",
+  "alternative_rule_10_failure_modes": "Future bad-fixture work could cover the OTHER Rule 10 violation paths: (a) step_index gap (records have step_index 0, 1, 3 — missing 2); (b) step_index duplicate (records have 0, 1, 1); (c) step_index out-of-order (records have 0, 2, 1); (d) step_index reset (records have 0, 1, 0); (e) missing step_index on one record but present on another (illegal because schema's allOf requires both or neither). v0.3.0 ships only the trace_id-mismatch case as the minimum gate; the others are deferred to v0.3.x.",
+  "purpose": "Anti-cross-run-concatenation gate. Without Rule 10, a malicious actor could concatenate single-step receipts from independent training runs and pass them off as a multi-step trace — defeating the entire Proof-of-Learning chain-integrity claim. The trace_id field is the load-bearing W3C-TraceContext-inspired identifier that binds receipts into a single training run. Written BEFORE the multi-record verifier so the verifier cannot be co-developed against engine output.",
+  "v0_3_extensions": "v0.3.x may add: a 3+ step bad fixture mixing two different trace_ids in arbitrary positions; a fixture with valid trace_ids but invalid step_index sequence; a fixture combining Rule 9 + Rule 10 failures (both fire — verifier should report both, not just one).",
+  "error_message_format_note": "Rule 10 failure messages should follow the existing renderFailure format from src/bin/bp.ts but include BOTH offending trace_id values so the operator can immediately see which receipts to investigate. Suggested form: 'Rule 10: trace_id mismatch — record 0 trace_id=<aaaa...>, record 1 trace_id=<bbbb...>'. Step-index violations follow analogous shape: 'Rule 10: step_index gap — record 0 step_index=0, record 1 step_index=3 (expected 1)'."
+}
