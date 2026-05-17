@@ -1,3 +1,7 @@
+<p align="center">
+  <a href="README.ja.md">日本語</a> | <a href="README.zh.md">中文</a> | <a href="README.es.md">Español</a> | <a href="README.fr.md">Français</a> | <a href="README.hi.md">हिन्दी</a> | <a href="README.it.md">Italiano</a> | <a href="README.pt-BR.md">Português (BR)</a>
+</p>
+
 # @mcptoolshop/backprop-trace
 
 Deterministic training-trace engine — produces canonical JSONL receipts of single backprop steps, verified by an 8-rule reconciler (all 8 rules wired in v0.2).
