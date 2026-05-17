@@ -7,6 +7,26 @@
  * Csmith / CompCert lineage cited there). The reconciler answers one
  * question: does the math the receipt claims to have done actually add up?
  *
+ * v0.4 note: Rules 1-10 cover per-neuron bias updates as a one-factor
+ * special case of Rule 4. No Rule 11 needed for v0.4.
+ * `bias_sharing: 'per_neuron'` (v0.4) extends the schema corner; the math
+ * is unchanged. Per Agent B's analysis the existing rules fire byte-
+ * identically on per-neuron bias receipts:
+ *   - Rule 4: factors has length 1 (`[{value: signal_u}]`).
+ *     `multiplyFactorsLeftToRight` returns `factors[0].value` when the
+ *     array has a single entry (the loop runs zero times).
+ *   - Rule 5/6/7: work on any update, including bias updates; per-neuron
+ *     bias parameters appear in `parameter_order` and have matching
+ *     entries in `updates[]`, so Rule 7's update-path branch fires.
+ *   - Rule 8: bias factor's `from` references
+ *     `backward.<layer>_error_signals.<unit>.signal_value` — a plain
+ *     dotted path that `resolvePath` already handles.
+ * The v0.4 receipt-schema widening (Optimizer.factors.minItems and
+ * OutputErrorSignal.factors.minItems relaxed from 2 to 1) is matched here
+ * by relaxing the defense-in-depth length floor in `checkRule1` and
+ * `checkRule4` from `< 2` to `< 1`. v0.1-shape Mazur receipts (always
+ * `factors.length === 2`) remain byte-identical.
+ *
  * v0.1 wired Rule 4 (update.gradient) only.
  * v0.2 added Rules 1-3 and 5-8 — the full single-receipt math surface.
  * v0.3 lands two cross-cutting upgrades:
@@ -290,14 +310,17 @@ type Receipt = {
  * that declares a different product_order can be routed to a different
  * helper rather than secretly mis-multiplying).
  *
- * @param factors  Array of `{ value: number }`. Schema requires minItems 2,
- *                 but this helper accepts any length so it can be reused
- *                 outside Rule 4 in v0.2+.
+ * @param factors  Array of `{ value: number }`. Schema requires
+ *                 `minItems: 1` in v0.4 (relaxed from 2 to support
+ *                 per-neuron bias single-factor gradients), but this helper
+ *                 accepts any length >= 1 so it can be reused outside Rule
+ *                 4 in v0.2+. A single-factor array correctly returns
+ *                 `factors[0].value` (the body loop runs zero times).
  * @returns        The running product `((factors[0] * factors[1]) * factors[2]) ...`
  *                 evaluated strictly left-to-right with V8's binary64 *
  *                 operator (no FMA, no re-association). Returns `NaN` for
  *                 an empty input array — callers must flag empty factors
- *                 as a structural failure (the schema's minItems 2 catches
+ *                 as a structural failure (the schema's minItems 1 catches
  *                 this upstream of the reconciler). NaN/Infinity in any
  *                 factor.value PROPAGATES through the product chain by
  *                 IEEE-754 arithmetic; downstream NaN-checks in
@@ -510,7 +533,7 @@ function isValidTolerancePolicy(t: unknown): t is TolerancePolicy {
  * The function is tolerant of malformed receipts: instead of throwing, it
  * surfaces a typed Rule-0 (structural-failure) entry with a developer-
  * facing `message` explaining what was wrong (e.g. wrong product_order,
- * missing tolerance, fewer than 2 factors, NaN gradient). This keeps the
+ * missing tolerance, empty factors array, NaN gradient). This keeps the
  * caller on a single discriminated-union code path.
  *
  * @param receipt  An unknown value, expected (but not enforced) to have
@@ -722,7 +745,13 @@ function checkRule1(
       continue
     }
     const factors = unit.factors
-    if (!Array.isArray(factors) || factors.length < 2) {
+    // E-A-012 (v0.4): defense-in-depth length check. Schema guarantees
+    // minItems >= 1 on factors in v0.4 (relaxed from 2 to support per-neuron
+    // bias single-factor products); reject only the genuinely-empty case so
+    // a malformed receipt that reaches this point surfaces as a Rule-0
+    // failure instead of an out-of-bounds factors[0]! access in
+    // multiplyFactorsLeftToRight.
+    if (!Array.isArray(factors) || factors.length < 1) {
       failures.push({
         rule: 0,
         parameter_id: unitId,
@@ -734,7 +763,7 @@ function checkRule1(
         message:
           `backward.output_error_signals.${unitId}.factors has ` +
           (Array.isArray(factors) ? `${factors.length} entries` : `non-array type ${typeof factors}`) +
-          `. v0.3 receipts require >= 2 factors per output error signal (schema minItems: 2).`,
+          `. v0.4 receipts require >= 1 factor per output error signal (schema minItems: 1 — relaxed from v0.3's 2 to support per-neuron bias).`,
       })
       continue
     }
@@ -987,10 +1016,13 @@ function checkRule4(
       continue
     }
     const factors = update.optimizer.factors
-    // E-A-012: defense-in-depth length check. Schema guarantees minItems 2
-    // on factors, but if a malformed receipt reaches this point we surface
-    // a Rule-0 failure instead of trusting factors[0]!.
-    if (!Array.isArray(factors) || factors.length < 2) {
+    // E-A-012 (v0.4): defense-in-depth length check. Schema guarantees
+    // minItems >= 1 on factors in v0.4 (relaxed from 2 to support per-neuron
+    // bias single-factor SGD updates — gradient = signal_u for the bias
+    // parameter). Reject only the genuinely-empty case; a single-factor
+    // array is multiplied correctly by multiplyFactorsLeftToRight (which
+    // returns factors[0].value when the array has one entry).
+    if (!Array.isArray(factors) || factors.length < 1) {
       failures.push({
         rule: 0,
         parameter_id: update.parameter_id,
@@ -1002,7 +1034,7 @@ function checkRule4(
         message:
           `updates[${i}].optimizer.factors has ` +
           (Array.isArray(factors) ? `${factors.length} entries` : `non-array type ${typeof factors}`) +
-          `. v0.3 receipts require >= 2 factors per optimizer (schema minItems: 2).`,
+          `. v0.4 receipts require >= 1 factor per optimizer (schema minItems: 1 — relaxed from v0.3's 2 to support per-neuron bias).`,
       })
       continue
     }

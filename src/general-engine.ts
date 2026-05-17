@@ -41,6 +41,7 @@ import {
 } from "./activations.js"
 import {
   assertTopologyValid,
+  findBiasForUnit,
   findHiddenBias,
   findOutputBias,
   findWeight,
@@ -93,6 +94,30 @@ export type Optimizer = {
   product_order: "left_to_right"
 }
 
+/**
+ * Update entry for a single parameter.
+ *
+ * v0.4 INVARIANT — TYPE NARROWNESS:
+ * The TypeScript `kind` and `layer_edge` unions are deliberately KEPT
+ * NARROW (matching v0.3 `kind: "weight"` only) for cross-module type
+ * compatibility with src/engine.ts and src/emit.ts (which still consume
+ * the v0.1 Update shape). The RUNTIME bytes emitted to receipts are NOT
+ * constrained by these narrow types — the v0.4 per_neuron bias update
+ * branch in runGeneralStep pushes entries with `kind: "bias"` and
+ * `layer_edge: "bias_to_layer"` via a single localized type assertion at
+ * the push site (search "PER_NEURON_BIAS_UPDATE_CAST" below).
+ *
+ * CROSS-DOMAIN NOTE for follow-up agents:
+ *   - src/engine.ts (Mazur) Update: should widen `kind` to `"weight" | "bias"`
+ *     and `layer_edge` to include `"bias_to_layer"` once a cross-cutting
+ *     consolidation pass picks up emit.ts coverage. This file's narrow
+ *     type is the temporary v0.4 compat shim.
+ *   - src/emit.ts emitUpdates: tolerant at runtime (it emits whatever
+ *     string is in u.kind / u.layer_edge), but the import path forces
+ *     general-engine.Update to be assignable to engine.Update. The
+ *     simplest cross-cutting fix is widening engine.ts's Update or
+ *     introducing a shared Update type in a third module.
+ */
 export type Update = {
   parameter_id: string
   kind: "weight"
@@ -139,9 +164,9 @@ export type NumericPolicy = {
 }
 
 export type BiasPolicy = {
-  mode: "constant"
+  mode: "constant" | "sgd"
   reason: string
-  updated_in_step: false
+  updated_in_step: boolean
   reconciliation: string
 }
 
@@ -204,7 +229,7 @@ export type SerializedTopology = {
   activation_hidden: ActivationName
   activation_output: ActivationName
   loss: "half_squared_error"
-  bias_sharing: "per_layer"
+  bias_sharing: "per_layer" | "per_neuron"
   input_size: number
   hidden_size: number
   output_size: number
@@ -330,16 +355,35 @@ function assertSupportedPolicy(input: GeneralInput): void {
         `Hint: cross_entropy and softmax losses are deferred to v0.4+.`,
     )
   }
-  if (input.bias_policy.mode !== "constant") {
+  if (input.bias_policy.mode !== "constant" && input.bias_policy.mode !== "sgd") {
     throw new Error(
-      `runGeneralStep: bias_policy.mode must be 'constant' in v0.3 (got '${input.bias_policy.mode}'). ` +
-        `Hint: bias updates are reserved for v0.4+.`,
+      `runGeneralStep: bias_policy.mode must be 'constant' or 'sgd' (got '${String(input.bias_policy.mode)}'). ` +
+        `Hint: 'constant' keeps biases fixed on the step (Mazur convention, all v0.1-v0.3 fixtures). ` +
+        `'sgd' applies the same SGD update as weights to bias parameters (v0.4+ per_neuron path).`,
     )
   }
-  if (input.topology.bias_sharing !== "per_layer") {
+  if (
+    input.topology.bias_sharing !== "per_layer" &&
+    input.topology.bias_sharing !== "per_neuron"
+  ) {
     throw new Error(
-      `runGeneralStep: topology.bias_sharing must be 'per_layer' in v0.3 (got '${input.topology.bias_sharing}'). ` +
-        `Hint: per_neuron bias sharing is reserved for v0.4+.`,
+      `runGeneralStep: topology.bias_sharing must be 'per_layer' or 'per_neuron' (got '${String(input.topology.bias_sharing)}').`,
+    )
+  }
+  // v0.4 wires bias updates only for per_neuron topologies. per_layer + sgd
+  // is a combination v0.4 does NOT wire: the per_layer bias gradient would
+  // be the SUM of per-unit signals, not a per-unit value, which is a
+  // distinct mathematical case (the Mazur convention for per_layer is
+  // "constant on this step" and we preserve that).
+  if (
+    input.topology.bias_sharing === "per_layer" &&
+    input.bias_policy.mode === "sgd"
+  ) {
+    throw new Error(
+      `runGeneralStep: bias_policy.mode 'sgd' is not supported with bias_sharing 'per_layer' in v0.4. ` +
+        `Hint: per_layer bias updates would sum per-unit signals across the layer (a distinct case ` +
+        `deferred beyond v0.4). Use bias_sharing 'per_neuron' to update biases per-unit, ` +
+        `or keep bias_policy.mode 'constant' for per_layer topologies.`,
     )
   }
   if (input.trace_id !== undefined) {
@@ -410,8 +454,18 @@ function serializeTopology(t: Topology): SerializedTopology {
  * output side; for hidden units, signal = (sum downstream contributions)
  * * activation_derivative.
  *
- * Biases are unchanged on the step per bias_policy.mode === "constant"
- * — `parameters_after[bias_id] === parameters_before[bias_id]` exactly.
+ * Bias behavior is policy-driven:
+ *   - bias_policy.mode === "constant" (Mazur convention; all v0.1-v0.3
+ *     fixtures + v0.4 per_layer fixtures): biases are unchanged on the
+ *     step — `parameters_after[bias_id] === parameters_before[bias_id]`
+ *     exactly, no Update entry emitted for biases.
+ *   - bias_policy.mode === "sgd" (v0.4+ per_neuron path; per_layer + sgd
+ *     is rejected at the boundary): per-neuron biases are updated by SGD
+ *     using the unit's error signal as the single-factor gradient
+ *     (∂E/∂b_u = signal_u — see the BIAS UPDATE CONVENTION block in the
+ *     update loop). Each per-neuron bias produces ONE Update entry with
+ *     kind: "bias", layer_edge: "bias_to_layer", optimizer.factors.length
+ *     === 1.
  *
  * @param input  A GeneralInput literal. Asserted finite + topology-supported
  *               + policy-supported at the boundary.
@@ -431,6 +485,42 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
   const lr = input.learning_rate
   const before = input.parameters_before
 
+  // --- Bias resolution helpers (per_layer vs per_neuron) -------------------
+  //
+  // The engine resolves a unit's hidden/output bias parameter via these two
+  // helpers so the rest of the math stays oblivious to bias_sharing:
+  //
+  //   - per_layer:  every hidden unit shares ONE hidden_bias parameter
+  //                 (returned by findHiddenBias) and every output unit
+  //                 shares ONE output_bias parameter (findOutputBias).
+  //                 The helper closure resolves the parameter ONCE and
+  //                 returns the same parameter for every unit.
+  //   - per_neuron: each unit has its OWN bias parameter. The helper
+  //                 closure calls findBiasForUnit(role, unit) for each
+  //                 unit. assertTopologyValid has already guaranteed
+  //                 exactly one bias parameter per unit on per_neuron.
+  //
+  // BACKWARD-COMPATIBILITY GUARANTEE: on per_layer topologies the forward
+  // pass executes the SAME findHiddenBias / findOutputBias calls in the
+  // SAME order as the v0.3 code path. The byte-equal Mazur golden and
+  // engine-reproduce check are preserved exactly.
+  const resolveHiddenBiasParam = (() => {
+    if (t.bias_sharing === "per_layer") {
+      const cached = findHiddenBias(t.parameters)
+      return (_unit: UnitId): typeof cached => cached
+    } else {
+      return (unit: UnitId) => findBiasForUnit(t.parameters, "hidden_bias", unit)
+    }
+  })()
+  const resolveOutputBiasParam = (() => {
+    if (t.bias_sharing === "per_layer") {
+      const cached = findOutputBias(t.parameters)
+      return (_unit: UnitId): typeof cached => cached
+    } else {
+      return (unit: UnitId) => findBiasForUnit(t.parameters, "output_bias", unit)
+    }
+  })()
+
   // --- Forward pass ---
   const forward: Record<string, ForwardUnit> = {}
   for (const hUnit of t.unit_order.hidden) {
@@ -441,7 +531,7 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
       const xVal = input.inputs[iUnit]!
       net = net + xVal * wVal
     }
-    const biasParam = findHiddenBias(t.parameters)
+    const biasParam = resolveHiddenBiasParam(hUnit)
     net = net + before[biasParam.id]!
     const out = activate(t.activation_hidden, net)
     forward[hUnit] = { net, out }
@@ -454,7 +544,7 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
       const hOut = forward[hUnit]!.out
       net = net + hOut * wVal
     }
-    const biasParam = findOutputBias(t.parameters)
+    const biasParam = resolveOutputBiasParam(oUnit)
     net = net + before[biasParam.id]!
     const out = activate(t.activation_output, net)
     forward[oUnit] = { net, out }
@@ -523,16 +613,111 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
   }
 
   // --- Updates (iterate topology.parameter_order) ---
+  //
+  // BIAS UPDATE CONVENTION (v0.4 — per_neuron + sgd):
+  //
+  // For a per-neuron bias parameter `b_u` serving unit `u`, the gradient
+  // of the half-squared-error loss with respect to `b_u` is exactly the
+  // unit's error signal:
+  //
+  //     ∂E/∂b_u = signal_u                                         (i)
+  //
+  // because in the forward pass `net_u = (sum_v w_vu * out_v) + b_u`, so
+  // `∂net_u/∂b_u = 1` and the chain rule gives `∂E/∂b_u = signal_u * 1`.
+  //
+  // The optimizer emits ONE factor (the error signal itself) for the bias
+  // gradient — there is no upstream activation to multiply by. The schema's
+  // factors.minItems was widened from 2 to 1 in v0.4 to admit this case;
+  // weight updates continue to emit 2 factors (signal × upstream) as
+  // before, byte-equal on per_layer topologies.
+  //
+  // SIGN CONVENTION: identical to weight updates and consistent with
+  // metadata.gradient_convention === "descent_direction" — the gradient
+  // VALUE stored in the receipt is `signal_u` (which already carries the
+  // descent-direction sign because `signal_u = (target - out_u) * act'(u)`
+  // on outputs and `signal_u = sum_o(signal_o * w_uo) * act'(u)` on
+  // hidden units). The update is `lr * gradient` and `weight_after =
+  // weight_before + update` — matches the weight branch's Rules 5/6.
+  //
+  // RECEIPT SHAPE: layer_edge is "bias_to_layer" (the only bias-related
+  // enum value in schemas/receipt.v0.2.0.json's Update.layer_edge enum).
+  // from_unit is set to the same value as to_unit (the bias is its own
+  // upstream — there is no source unit). parameter_role is the role name
+  // ("hidden_bias" or "output_bias") rather than a from->to string, since
+  // a bias does not connect two units.
   const updates: Update[] = []
   const parametersAfter: Record<string, number> = {}
-  // Pre-seed parameters_after with biases (unchanged per bias_policy.mode === "constant")
+  // Pre-seed parameters_after with bias VALUES at their before-step value.
+  // This is correct for bias_policy.mode === "constant" (biases stay fixed)
+  // and serves as a safe default for bias_policy.mode === "sgd" (the per-
+  // neuron bias branch below overwrites with the updated value).
   for (const pid of t.parameter_order) {
     parametersAfter[pid] = before[pid]!
   }
   for (const pid of t.parameter_order) {
     const param = t.parameters.find((p) => p.id === pid)!
     if (param.role === "hidden_bias" || param.role === "output_bias") {
-      // Biases are constant — nothing to update; already seeded above.
+      if (input.bias_policy.mode === "constant") {
+        // Biases are constant — nothing to update; already seeded above.
+        continue
+      }
+      // bias_policy.mode === "sgd" — per_neuron bias update.
+      // assertSupportedPolicy has already rejected the per_layer + sgd
+      // combination, so on this branch bias_sharing === "per_neuron" and
+      // applies_to_units lists exactly one unit (validated earlier).
+      const unit = param.applies_to_units![0]!
+      const signal =
+        param.role === "hidden_bias"
+          ? hiddenErrorSignals[unit]!.signal_value
+          : outputErrorSignals[unit]!.signal_value
+      const signalPath =
+        param.role === "hidden_bias"
+          ? `backward.hidden_error_signals.${unit}.signal_value`
+          : `backward.output_error_signals.${unit}.signal_value`
+      const factorName =
+        param.role === "hidden_bias"
+          ? "hidden_error_signal"
+          : "output_error_signal"
+      const wBefore = before[pid]!
+      // Bias gradient is the unit's error signal alone (no upstream
+      // activation factor — see ∂E/∂b_u derivation above).
+      const gradient = signal
+      const update = lr * gradient
+      const wAfter = wBefore + update
+      parametersAfter[pid] = wAfter
+      // PER_NEURON_BIAS_UPDATE_CAST — see TYPE NARROWNESS comment on the
+      // `Update` type declaration above. At runtime the receipt bytes
+      // carry kind: "bias" and layer_edge: "bias_to_layer" (both schema-
+      // permitted enum values in receipt.v0.2.0.json). The TS Update type
+      // stays narrow to keep src/engine.ts + src/emit.ts compatible until
+      // a cross-cutting consolidation pass widens those.
+      const biasUpdate = {
+        parameter_id: pid,
+        kind: "bias" as const,
+        layer_edge: "bias_to_layer" as const,
+        parameter_role: param.role,
+        // No source unit for a bias — set from_unit === to_unit === served
+        // unit so receipt readers can find the served unit either way.
+        from_unit: unit,
+        to_unit: unit,
+        weight_before: wBefore,
+        optimizer: {
+          name: "sgd" as const,
+          learning_rate: lr,
+          factors: [
+            {
+              name: factorName,
+              from: signalPath,
+              value: signal,
+            },
+          ],
+          product_order: "left_to_right" as const,
+        },
+        gradient,
+        update,
+        weight_after: wAfter,
+      }
+      updates.push(biasUpdate as unknown as Update)
       continue
     }
     if (param.role === "input_to_hidden_weight") {
@@ -626,7 +811,7 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
       const xVal = input.inputs[iUnit]!
       net = net + xVal * wVal
     }
-    const biasParam = findHiddenBias(t.parameters)
+    const biasParam = resolveHiddenBiasParam(hUnit)
     net = net + parametersAfter[biasParam.id]!
     const out = activate(t.activation_hidden, net)
     postUpdateForward[hUnit] = { net, out }
@@ -639,7 +824,7 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
       const hOut = postUpdateForward[hUnit]!.out
       net = net + hOut * wVal
     }
-    const biasParam = findOutputBias(t.parameters)
+    const biasParam = resolveOutputBiasParam(oUnit)
     net = net + parametersAfter[biasParam.id]!
     const out = activate(t.activation_output, net)
     postUpdateForward[oUnit] = { net, out }

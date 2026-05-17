@@ -1,0 +1,55 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "xor.bad-bias-gradient.meta",
+  "describes": "fixtures/bad/xor.bad-bias-gradient.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/xor-per-neuron-bias.golden.jsonl (engine-emitted v0.4 canonical bytes, per-neuron biases on h1/h2/y with bias_policy.mode=sgd). The fixture differs from the golden in exactly two places: the fixture_status block (3 fields) and the single targeted numeric value.",
+  "mutation": {
+    "field_path": "updates[6].gradient",
+    "parameter_id": "b_h1",
+    "update_kind": "bias",
+    "original": 0.00618790217,
+    "mutated": 0.00618890217,
+    "delta_absolute": 1.0e-6,
+    "delta_vs_tolerance_multiplier": "~16162x (effective tolerance is rtol * |max(stored, recomputed)| = 1e-8 * ~6.19e-3 ~= 6.19e-11 under the v0.3+ hybrid {atol: 1e-12, rtol: 1e-8} policy; delta 1e-6 is ~16162x the applied tolerance for this magnitude)",
+    "what_was_NOT_mutated": [
+      "updates[6].optimizer.factors[0].value (0.00618790217 — Rule 4 recompute multiplies the unmutated single factor and finds it disagrees with the mutated stored gradient)",
+      "updates[6].optimizer.factors[0].from ('backward.hidden_error_signals.h1.signal_value' — Rule 8 resolves this path and finds the unmutated signal_value; provenance reference is still consistent with the factor.value itself, so Rule 8 does NOT fire here)",
+      "updates[6].update (0.00309395108 — derived from the ORIGINAL gradient, so it will cascade to Rule 5 since stored update no longer equals stored learning_rate * mutated stored gradient)",
+      "updates[6].weight_after (0.103093951 — derived from the ORIGINAL update; the stored sum is still internally consistent with stored update so Rule 6 does NOT cascade here under the reconciler's stored-values implementation choice)",
+      "all other parameter updates' factor / gradient / update / weight_after values",
+      "backward.output_error_signals.y.signal_value, backward.hidden_error_signals.h1.signal_value, backward.hidden_error_signals.h2.signal_value (all backward outputs unchanged)",
+      "forward / loss / parameters_before / parameters_after"
+    ]
+  },
+  "single_target_invariant": "Reconciliation produces exactly one Rule 4 failure naming parameter b_h1 with field_path = 'updates[6].gradient'. Rule 5 is the structural cascade because the stored update was derived from the ORIGINAL gradient and is no longer consistent with stored learning_rate * mutated stored gradient — labeled cascade_of_rule = 4 by the reconciler. No other rule may fire under the receipt's hybrid {atol: 1e-12, rtol: 1e-8} tolerance.",
+  "reconciliation_check_targeted_first": "Rule 4: update.gradient == product(optimizer.factors) — for a per-neuron bias update, factors has length 1 ([{value: signal_u}]) and multiplyFactorsLeftToRight returns factors[0].value (the loop body runs zero times). Schema's Optimizer.factors.minItems was widened from 2 to 1 in v0.4 to admit this single-factor case.",
+  "cascading_failures_observed": [
+    "Rule 5 on updates[6].update (b_h1): stored update (0.00309395108) was derived from the ORIGINAL gradient; recomputed = stored learning_rate * mutated stored gradient = 0.5 * 0.00618890217 ~= 0.003094451085 differs from stored by ~5e-7 (cascade_of_rule: 4)."
+  ],
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/xor.bad-bias-gradient.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 4",
+      "b_h1",
+      "updates[6].gradient"
+    ],
+    "stderr_must_NOT_contain": [
+      "Rule 1",
+      "Rule 2",
+      "Rule 3",
+      "Rule 8"
+    ],
+    "stderr_section_count": {
+      "Rule 4:": 1
+    },
+    "stderr_may_also_contain": [
+      "Rule 5",
+      "cascades from Rule"
+    ]
+  },
+  "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures. The fixture_status block being deliberately_corrupted / expected_to_fail_reconciliation must NOT mask the Rule 4 failure.",
+  "purpose": "Anti-circularity (Csmith / CompCert lineage) extended into the v0.4 per-neuron bias corner: proves the reconciler checks Rule 4 (update.gradient == product(optimizer.factors)) on bias updates by detecting a 1e-6 mismatch between the stored bias gradient and the product of (unmutated) optimizer factors. Per Agent B's analysis the existing rules fire byte-identically on per-neuron bias updates — this fixture provides the contract test.",
+  "v0_4_note": "Per-neuron bias updates use a one-factor optimizer (factors = [{value: signal_u}]). The single factor is the unit's error signal (∂E/∂b_u = signal_u — see BIAS UPDATE CONVENTION block in src/general-engine.ts). Rule 4 fires the same way as for weight updates; the factor count does not change the comparison."
+}

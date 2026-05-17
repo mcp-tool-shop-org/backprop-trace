@@ -1,0 +1,50 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "xor.bad-bias-mode-mismatch.meta",
+  "describes": "fixtures/bad/xor.bad-bias-mode-mismatch.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/xor-per-neuron-bias.golden.jsonl (engine-emitted v0.4 canonical bytes, per-neuron biases on h1/h2/y with bias_policy.mode=sgd). The fixture differs from the golden in exactly two places: the fixture_status block (3 fields) and the single targeted string-enum field.",
+  "mutation": {
+    "field_path": "bias_policy.mode",
+    "parameter_id": null,
+    "original": "sgd",
+    "mutated": "constant",
+    "kind": "string_enum_change",
+    "what_was_NOT_mutated": [
+      "bias_policy.reason ('v0.4 per-neuron bias path: each per-neuron bias parameter is updated by SGD...' — still claims SGD, now contradicts mode)",
+      "bias_policy.updated_in_step (true — still claims biases were updated, contradicts mode='constant')",
+      "bias_policy.reconciliation ('for every per_neuron bias parameter b_u, parameters_after[b_u] === parameters_before[b_u] + learning_rate * signal_u...' — still describes the SGD reconciliation rule, contradicts mode='constant')",
+      "updates[6], updates[7], updates[8] (the three per-neuron bias updates with kind='bias' — still present with non-zero gradient/update/weight_after; under mode='constant' these should NOT exist)",
+      "parameters_after.b_h1, b_h2, b_y (still hold the SGD-updated values, contradicting mode='constant' which would require them to equal parameters_before)",
+      "all weight updates and weight parameters_after entries",
+      "forward / loss / backward"
+    ]
+  },
+  "single_target_invariant": "Receipt declares bias_policy.mode='constant' but emits three per-neuron bias updates with non-zero updates and parameters_after bias values that differ from parameters_before. This is a STRUCTURAL inconsistency: under bias_policy.mode='constant', the engine never emits Update entries for bias parameters (see src/general-engine.ts update loop: 'if (input.bias_policy.mode === \"constant\") { continue }') and parameters_after[bias_id] === parameters_before[bias_id] exactly.",
+  "reconciliation_check_targeted_first": "Aspirational Rule 0 (structural cross-consistency): receipt must NOT contain Update entries for bias parameters when bias_policy.mode === 'constant', and parameters_after[bias_id] must equal parameters_before[bias_id] exactly under mode='constant'.",
+  "current_reconciler_behavior_2026_05_16": "The v0.4-ship reconciler in src/reconcile.ts does NOT yet have a cross-consistency Rule 0 between bias_policy.mode and the updates[] / parameters_after contents. Walking the rules:\n  - Rule 4/5/6 see internally-consistent bias updates (gradient = factor.value, update = lr * gradient, weight_after = weight_before + update) and PASS.\n  - Rule 7 walks parameters_after; for each bias parameter it finds the corresponding bias update in updatesById and goes through the 'updated parameter' branch, computing recomputed = before + u.update (= the SGD-updated value, which equals stored after). PASS. The 'bias-constant branch' (parameter not in updates, exact zero-delta check) is NOT entered because the bias parameter IS in updates.\n  - Rule 8 sees the same factor.value as before; signal_value at backward.hidden_error_signals.h1.signal_value is unchanged. PASS.\n  - Schema validation also passes: schema permits mode='constant' with updated_in_step=true (no cross-field check) and the bias updates emit valid Update shapes.\nResult: `bp reconcile receipt` exits 0 on this fixture today. The structural inconsistency is detectable only via `bp verify general` (engine-reproduce), which re-runs the engine with mode='constant' and produces a different byte stream (no bias updates emitted).",
+  "expected_verify_outcome_current": {
+    "command": "bp reconcile receipt fixtures/bad/xor.bad-bias-mode-mismatch.jsonl",
+    "exit_code_nonzero": false,
+    "reason": "Reconciler has no Rule 0 cross-consistency check between bias_policy.mode and updates[] / parameters_after content as of v0.4.0 ship. Detection currently happens at the engine-reproduce layer.",
+    "alternate_command": "bp verify general fixtures/bad/xor.bad-bias-mode-mismatch.jsonl",
+    "alternate_exit_code_nonzero": true,
+    "alternate_stderr_must_contain": [
+      "verification failed",
+      "engine-reproduce",
+      "diverges"
+    ]
+  },
+  "expected_verify_outcome_aspirational": {
+    "command": "bp reconcile receipt fixtures/bad/xor.bad-bias-mode-mismatch.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 0",
+      "bias_policy.mode"
+    ],
+    "stderr_explanation": "A future reconciler patch should add a Rule 0 check that fires when (a) bias_policy.mode === 'constant' AND updates[] contains any entry with kind === 'bias', OR (b) bias_policy.mode === 'constant' AND parameters_after[bias_id] !== parameters_before[bias_id] for any bias parameter. Either condition implies a contradiction between the policy declaration and the receipt content."
+  },
+  "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures.",
+  "purpose": "Anti-circularity (Csmith / CompCert lineage) extended into the v0.4 per-neuron bias corner: this fixture documents an inconsistency between bias_policy.mode and receipt content that the v0.4-ship reconciler does NOT yet detect, but `bp verify general`'s engine-reproduce check DOES catch. Provides the test artifact for a future Rule 0 cross-consistency expansion. Tests targeting this fixture should either (a) assert the engine-reproduce path catches it OR (b) gate on a planned Rule 0 implementation.",
+  "v0_4_note": "Per the v0.4 consolidator-decision, the per-neuron bias slice 'wires the already-declared-but-unused schema corners (Update.kind: \"bias\", BiasPolicy.mode: \"sgd\", bias_sharing: \"per_neuron\")'. Bias updates only emit when mode === 'sgd' AND bias_sharing === 'per_neuron'; mode='constant' (with any bias_sharing) keeps biases fixed and emits no bias Update entries. This fixture exists to assert that the engine's structural invariant is enforced — currently by engine-reproduce, aspirationally by Rule 0."
+}

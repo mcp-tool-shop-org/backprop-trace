@@ -1,15 +1,25 @@
-# Receipt schemas — field-by-field guide
+# Schemas — field-by-field guide
 
-backprop-trace ships two receipt schemas:
+backprop-trace ships TWO families of schemas:
+
+**Receipt schemas (engine OUTPUTS):**
 
 - **`schemas/receipt.v0.1.0.json`** — the original Mazur 2-2-2 schema
   (v0.1 / v0.2 wave). Pinned. Fixed unit/parameter key sets.
 - **`schemas/receipt.v0.2.0.json`** — the generalized + multi-step schema
-  (v0.3 wave). Required `unit_order` + `parameter_order` for arbitrary
-  topologies; hybrid-tolerance object form for `numeric_policy.tolerance`;
-  optional `trace_id` + `step_index` for multi-step receipts.
+  (v0.3 wave; v0.4 widens it additively for per-neuron bias). Required
+  `unit_order` + `parameter_order` for arbitrary topologies;
+  hybrid-tolerance object form for `numeric_policy.tolerance`; optional
+  `trace_id` + `step_index` for multi-step receipts.
 
-Both schemas are JSON Schema draft 2020-12 (`$schema:
+**Input-config schema (engine INPUTS, v0.4+):**
+
+- **`schemas/topology-input.v0.4.0.json`** — validates the JSON files that
+  `bp generate from-config` and `bp validate-input` consume. SEPARATE from
+  the receipt schemas; `additionalProperties: false` FORBIDS receipt-only
+  fields. See "Topology input schema (v0.4+)" below.
+
+All schemas are JSON Schema draft 2020-12 (`$schema:
 "https://json-schema.org/draft/2020-12/schema"`), `additionalProperties:
 false` at every level, and `x-order`-annotated for canonical emission.
 
@@ -482,19 +492,142 @@ reconciler also verifies key-set consistency before walking the rules.
   introduce a `right_to_left` option).
 - `optimizer.name: "sgd"` is still the only permitted optimizer.
 - `bias_policy.mode: ["constant", "sgd"]` enum unchanged (the "sgd"
-  bias-update path is reserved for v0.4+; v0.3 receipts ship `mode:
-  "constant"`).
+  bias-update path is exercised by v0.4 per-neuron-bias receipts).
+
+## Receipt schema v0.2.0 — v0.4 additive widening
+
+v0.4 does NOT introduce a v0.3.0 receipt schema file. Per the v0.4
+study-swarm doctrine ratchet, the per-neuron-bias slice fits within the
+v0.2.0 receipt schema with two narrowly-scoped additive relaxations:
+
+### `topology.bias_sharing.enum` widened
+
+v0.2.0 (v0.3 wave): `["per_layer"]`. v0.4 widening: `["per_layer",
+"per_neuron"]`. Existing per-layer receipts validate bit-identically; new
+per-neuron-bias receipts emit `bias_sharing: "per_neuron"` and include a
+distinct bias parameter per hidden + output unit in `parameter_order`,
+`parameters_before`, and `parameters_after`.
+
+### `OutputErrorSignal.factors.minItems` relaxed
+
+v0.2.0 (v0.3 wave): `minItems: 2`. v0.4 widening: `minItems: 1`. The
+per-neuron bias gradient is a **one-factor product** — the unit's error
+signal directly, with no `dnet/dbias` multiplier (the `dnet/dbias` chain
+factor is conventionally `1` and is folded out at the schema level rather
+than stored as a redundant `value: 1` factor). Existing two-factor and
+three-factor receipts validate unchanged.
+
+### Why no v0.3.0 receipt schema
+
+A bumped receipt schema would force a `schema_version` flip in every
+receipt — including byte-equal Mazur receipts that the v0.4 slice does not
+change. Per the law stack, schema files are frozen once shipped: any
+addition that BREAKS prior receipts requires a new file. Both v0.4
+widenings (enum extension + minItems relaxation) only ACCEPT a strict
+superset of v0.2.0-conforming receipts. They are safe in place.
+
+The next true v0.3.0 receipt schema lands when v0.5 reshapes
+`OutputErrorSignal.factors` for softmax+CE (the Jacobian's vector-valued
+shape doesn't fit the current 2-factor decomposition — see the v0.4
+consolidator-decision.md "what NOT to build yet" list).
+
+## Topology input schema (v0.4+)
+
+`schemas/topology-input.v0.4.0.json` validates the JSON files consumed by
+`bp generate from-config` and `bp validate-input`. It is the **input-side
+analog** of the receipt schemas — the schema engine INPUTS bind to,
+distinct from the schema engine OUTPUTS bind to.
+
+### The two-schema split
+
+- **Receipt schemas** (`receipt.v0.1.0.json`, `receipt.v0.2.0.json`)
+  validate engine OUTPUTS. Required fields include `forward`, `loss`,
+  `backward`, `updates`, `parameters_after`, etc. — values the engine
+  computes.
+- **Input schema** (`topology-input.v0.4.0.json`) validates engine
+  INPUTS. Required fields are the topology declaration (`unit_order`,
+  `parameter_order`, `topology`), the optimizer policy
+  (`numeric_policy`, `bias_policy`, `learning_rate`), and the runtime
+  values (`inputs`, `targets`, `parameters_before`). PROHIBITS every
+  receipt-only field via `additionalProperties: false`.
+
+### Why two schemas
+
+The canonical-emission trust boundary requires that authored bytes
+NEVER become receipt bytes. Without the input schema, an attacker could
+author a "receipt" by hand-writing all the `forward`, `loss`, `updates`
+values themselves and route it through `bp verify general` — bypassing
+the engine entirely. The input schema is the schema-level enforcement:
+fields like `forward`, `loss`, `backward`, `updates`, `parameters_after`,
+`post_update_forward`, `post_update_loss`, `fixture_status` are
+EXPLICITLY rejected at validation time with a named-field error.
+
+The engine is the only authorized source for those values. The input
+schema makes that boundary inspectable in the schema file itself, not
+just in the engine's runtime asserts. Agent D's HIGH-severity risk in the
+v0.4 consolidator-decision.md ("canonical-emission trust leakage") is
+mitigated by this structural choice.
+
+### Input schema top-level shape
+
+The input schema's `x-order` (canonical key order for input configs that
+choose to be canonically encoded — input configs do NOT need to be
+canonically encoded, but the engine's scaffold output is):
+
+```
+schema_version
+fixture
+metadata
+numeric_policy
+bias_policy
+topology
+learning_rate
+inputs
+targets
+parameters_before
+unit_order
+parameter_order
+```
+
+Every field above corresponds 1:1 to a field of the same name in the
+receipt schemas. The values flow through the engine unchanged. The fields
+the engine FILLS IN — `forward`, `loss`, `backward`, `updates`,
+`parameters_after`, `post_update_forward`, `post_update_loss`,
+`fixture_status` — are the ones the input schema PROHIBITS.
+
+### `schema_version: "0.4.0"`
+
+Input configs declare `schema_version: "0.4.0"` (a const enforced by the
+schema). This is the INPUT-schema version, distinct from receipt
+`schema_version` values (`"0.1.0"`, `"0.2.0"`).
+
+### Authoring discipline
+
+- Hand-edit a scaffolded input file (`bp scaffold topology --topology
+  mazur`) rather than constructing from scratch.
+- Use `$schema:
+  "https://raw.githubusercontent.com/mcp-tool-shop-org/backprop-trace/main/schemas/topology-input.v0.4.0.json"`
+  in your input files for IDE autocompletion (VS Code, JSONLint, Ajv-CLI
+  all consume `$schema`).
+- Validate before generating: `bp validate-input my-net.input.json`
+  catches typos and rejected fields faster than waiting for the engine
+  to fail.
+
+See [`docs/authoring.md`](./authoring.md) for the full walkthrough.
 
 ## Reference
 
-- Schema files: `schemas/receipt.v0.1.0.json` (Mazur), `schemas/receipt.v0.2.0.json` (generalized + multi-step)
+- Receipt schema files: `schemas/receipt.v0.1.0.json` (Mazur), `schemas/receipt.v0.2.0.json` (generalized + multi-step; v0.4 additively widened for per-neuron bias)
+- Input-config schema file (v0.4+): `schemas/topology-input.v0.4.0.json`
 - Reconciliation rules: `docs/reconciliation.md`
-- Computation order + hybrid tolerance: `docs/computation-order.md`
+- Computation order + hybrid tolerance + determinism boundary: `docs/computation-order.md`
 - Canonical emission rules: `docs/canonical-emission.md`
 - Topology authoring guide (v0.3+): `docs/topology.md`
+- Authoring custom topologies via CLI (v0.4+): `docs/authoring.md`
 - Multi-step receipts (v0.3+): `docs/multi-step.md`
 - Formatter policy fixture: `fixtures/formatter.policy.golden.json`
 - Mazur golden receipt (engine output): `fixtures/mazur.golden.jsonl`
 - XOR golden receipt (v0.3+): `fixtures/xor.golden.jsonl`
+- XOR per-neuron-bias golden receipt (v0.4+): `fixtures/xor-per-neuron-bias.golden.jsonl`
 - Iris golden receipt (v0.3+): `fixtures/iris.golden.jsonl`
-- Anti-circularity bad fixtures: `fixtures/bad/mazur.bad-*.jsonl` + `fixtures/bad/multi-step.bad-{chain,trace-id}.jsonl`
+- Anti-circularity bad fixtures: `fixtures/bad/mazur.bad-*.jsonl` + `fixtures/bad/multi-step.bad-{chain,trace-id}.jsonl` + `fixtures/bad/xor.bad-bias-*.jsonl` (v0.4+)

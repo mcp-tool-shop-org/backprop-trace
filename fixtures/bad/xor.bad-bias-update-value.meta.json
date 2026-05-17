@@ -1,0 +1,59 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "xor.bad-bias-update-value.meta",
+  "describes": "fixtures/bad/xor.bad-bias-update-value.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/xor-per-neuron-bias.golden.jsonl (engine-emitted v0.4 canonical bytes, per-neuron biases on h1/h2/y with bias_policy.mode=sgd). The fixture differs from the golden in exactly two places: the fixture_status block (3 fields) and the single targeted numeric value.",
+  "mutation": {
+    "field_path": "updates[6].update",
+    "parameter_id": "b_h1",
+    "update_kind": "bias",
+    "original": 0.00309395108,
+    "mutated": 0.00309495108,
+    "delta_absolute": 1.0e-6,
+    "delta_vs_tolerance_multiplier": "~32300x (effective tolerance ~3.09e-11 at this magnitude under {atol: 1e-12, rtol: 1e-8}; delta 1e-6 is ~32310x)",
+    "what_was_NOT_mutated": [
+      "updates[6].gradient (0.00618790217 — Rule 4 still passes: product(factors) still equals stored gradient)",
+      "updates[6].optimizer.learning_rate (0.5 — Rule 5 expects update == 0.5 * gradient)",
+      "updates[6].optimizer.factors[0] (single factor untouched)",
+      "updates[6].weight_before (0.100000000 — left operand of Rule 6 sum)",
+      "updates[6].weight_after (0.103093951 — derived from the ORIGINAL update; Rule 6 will cascade since stored weight_after no longer equals weight_before + mutated update)",
+      "parameters_after.b_h1 (0.103093951 — Rule 7 cascades for the same reason)",
+      "all other parameter updates",
+      "forward / loss / backward / parameters_before"
+    ]
+  },
+  "single_target_invariant": "Reconciliation produces exactly one Rule 5 failure naming updates[6].update on parameter b_h1. Rule 4 must NOT fire (gradient is unchanged). Rules 6 and 7 cascade from Rule 5 — both observe parameter_id 'b_h1' with cascade_of_rule = 5.",
+  "reconciliation_check_targeted_first": "Rule 5: update == optimizer.learning_rate * gradient",
+  "cascading_failures_observed": [
+    "Rule 6 on updates[6].weight_after (b_h1): stored weight_after (0.103093951) was derived from original update; recomputed = weight_before + mutated update differs by ~1e-6 (cascade_of_rule: 5)",
+    "Rule 7 on parameters_after.b_h1: stored parameters_after.b_h1 (0.103093951) was derived from original update; recomputed = parameters_before.b_h1 + mutated update differs by ~1e-6 (cascade_of_rule: 5)"
+  ],
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/xor.bad-bias-update-value.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 5",
+      "b_h1",
+      "updates[6].update"
+    ],
+    "stderr_must_NOT_contain": [
+      "Rule 1",
+      "Rule 2",
+      "Rule 3",
+      "Rule 4",
+      "Rule 8"
+    ],
+    "stderr_section_count": {
+      "Rule 5:": 1
+    },
+    "stderr_may_also_contain": [
+      "Rule 6",
+      "Rule 7",
+      "cascades from Rule"
+    ]
+  },
+  "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures. The fixture_status block being deliberately_corrupted / expected_to_fail_reconciliation must NOT mask the Rule 5 failure.",
+  "purpose": "Anti-circularity (Csmith / CompCert lineage) extended into the v0.4 per-neuron bias corner: proves the reconciler checks Rule 5 (update == lr * gradient) on bias updates by detecting a 1e-6 mismatch (1000x the rtol-scaled tolerance) between stored update and the product of (unmutated) lr * gradient. Cascade into Rules 6, 7 demonstrates the cascade_of_rule wiring works for bias updates too.",
+  "v0_4_note": "Per-neuron bias updates participate in Rule 5/6/7 the same way weight updates do — the bias parameter appears in parameter_order and updates[] alongside weight parameters. Cascade detection wires the same way: a Rule 5 failure on a bias update will cascade to Rule 6 and Rule 7 if those rules read the same stored update value."
+}

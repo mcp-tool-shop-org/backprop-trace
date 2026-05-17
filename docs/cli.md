@@ -1,13 +1,19 @@
 # `bp` CLI reference
 
 The `bp` binary is the user-facing entry point for `@mcptoolshop/backprop-trace`.
-It exposes eight subcommands that compose the library's primitives into the
-common verification flows: reconcile, verify (full gate; Mazur / general /
-multi-step), generate (Mazur / XOR / iris), validate.
+It exposes 13 subcommands that compose the library's primitives into the
+common verification and authoring flows:
+
+- **reconcile** (per-record math check against the 10 rules)
+- **verify** (full gate; Mazur / general / multi-step)
+- **generate** (Mazur / XOR / iris / from-config)
+- **scaffold topology** (write a starter input file; v0.4+)
+- **validate-input** (schema-validate a topology input config; v0.4+)
+- **validate** (schema-validate a receipt)
 
 The CLI is dependency-free (no commander / yargs / citty); the argv dispatch
 is hand-rolled at `src/bin/bp.ts` per the study-swarm CLI-ergonomics finding
-(`commander` and `citty` don't add value at the v0.3 surface size).
+(`commander` and `citty` don't add value at the v0.4 surface size).
 
 ```
 bp <verb> <noun> [args]
@@ -27,10 +33,14 @@ the subcommand-specific text.
 | `bp generate mazur [--out F] [--check]` | Re-run the Mazur engine, emit canonical JSONL | 0 / 1 |
 | `bp generate xor [--out F]` | Re-run the XOR engine, emit canonical JSONL (v0.3+) | 0 / 1 |
 | `bp generate iris [--out F]` | Re-run the iris engine, emit canonical JSONL (v0.3+) | 0 / 1 |
-| `bp validate <file>` | Schema-only validation; auto-detects v0.1.0 vs v0.2.0 | 0 / 1 |
+| `bp generate from-config <file> [--out F] [--check]` | Read a topology+input JSON, emit a canonical receipt (v0.4+) | 0 / 1 |
+| `bp scaffold topology --topology mazur\|xor\|iris [--out F]` | Write a sample input file to bootstrap a new topology (v0.4+) | 0 / 1 |
+| `bp validate-input <file>` | Schema-validate a topology-input config without running the engine (v0.4+) | 0 / 1 |
+| `bp validate <file>` | Schema-only validation of a receipt; auto-detects v0.1.0 vs v0.2.0 | 0 / 1 |
 
 All subcommands accept `-` as the file argument to read from stdin
-(except `generate mazur / xor / iris`, which write rather than read).
+(except `generate mazur / xor / iris`, which write rather than read, and
+`scaffold topology`, which writes but takes no file input).
 
 ## Subcommand: `bp reconcile receipt`
 
@@ -329,18 +339,168 @@ bp generate iris --out fixtures/iris.golden.jsonl
 bp generate iris --check
 ```
 
+## Subcommand: `bp generate from-config` (v0.4+)
+
+```
+bp generate from-config <file> [--out <file>] [--check] [--json] [--color=...]
+```
+
+Read a topology + input config JSON file, validate it against
+`schemas/topology-input.v0.4.0.json`, hand it to `runGeneralStep`, and emit
+a canonical v0.2.0-schema receipt. The authoring tools surface — users can
+drive the engine from JSON without writing any TypeScript.
+
+The input file declares the network topology (`unit_order`,
+`parameter_order`, `topology`, `bias_policy`, `numeric_policy`,
+`learning_rate`) plus the runtime inputs (`inputs`, `targets`,
+`parameters_before`) and an optional `metadata` block. The schema
+PROHIBITS receipt-only fields (`forward`, `loss`, `backward`, `updates`,
+`parameters_after`, `post_update_forward`, `post_update_loss`,
+`fixture_status`) at the `additionalProperties: false` boundary — authored
+bytes can never masquerade as receipt bytes.
+
+| Mode | Behavior |
+|---|---|
+| (none) | Write the canonical bytes to stdout. |
+| `--out F` | Write the canonical bytes to file `F` (truncating). |
+| `--check` | Re-run the engine and compare against an existing `--out` target (or stdout-equivalent); exit 1 on byte drift. |
+
+### Exit codes (this subcommand)
+
+| Code | Meaning |
+|---|---|
+| 0 | Receipt emitted; on `--check`, bytes matched. |
+| 1 | `--check` byte drift detected. |
+| 2 | I/O error, malformed JSON, or input-schema validation failure. |
+| 3 | Invalid CLI argument. |
+
+### Examples
+
+```bash
+# Author a custom topology and verify it
+bp scaffold topology --topology xor --out my-net.input.json
+# (edit my-net.input.json)
+bp validate-input my-net.input.json
+bp generate from-config my-net.input.json --out my-net.golden.jsonl
+bp verify general my-net.golden.jsonl
+
+# CI byte-equality gate against a committed golden
+bp generate from-config my-net.input.json --check --out my-net.golden.jsonl
+
+# Pipe into a hash
+bp generate from-config my-net.input.json | sha256sum
+```
+
+See [`docs/authoring.md`](./authoring.md) for the full walkthrough.
+
+## Subcommand: `bp scaffold topology` (v0.4+)
+
+```
+bp scaffold topology --topology mazur|xor|iris [--out <file>] [--json] [--color=...]
+```
+
+Write a sample input file (the same JSON shape that `bp generate
+from-config` consumes) to bootstrap a new topology. The output is one of
+the in-memory `MAZUR_INPUT` / `XOR_INPUT` / `IRIS_INPUT` literals
+serialized in canonical input-config form. Users edit the produced file
+to describe their own network, then run `bp validate-input` and `bp
+generate from-config`.
+
+| Mode | Behavior |
+|---|---|
+| (none) | Write the input JSON to stdout. |
+| `--out F` | Write the input JSON to file `F` (truncating). |
+
+The `--topology` flag is REQUIRED — there is no default. Only the three
+shipped templates (`mazur`, `xor`, `iris`) are accepted; unknown values
+exit 3.
+
+### Exit codes (this subcommand)
+
+| Code | Meaning |
+|---|---|
+| 0 | Input file written. |
+| 2 | I/O error writing `--out` target. |
+| 3 | Missing or invalid `--topology` value. |
+
+### Examples
+
+```bash
+# Print a starter Mazur input to stdout
+bp scaffold topology --topology mazur
+
+# Write a starter XOR input for editing
+bp scaffold topology --topology xor --out my-xor.input.json
+
+# Round-trip sanity: scaffold → generate → byte-equal to existing golden
+bp scaffold topology --topology mazur --out tmp/mazur.input.json
+bp generate from-config tmp/mazur.input.json --check --out fixtures/mazur.golden.jsonl
+```
+
+NOTE: `bp scaffold receipt` is intentionally NOT implemented — scaffolding
+bytes that look like receipts would make authored bytes a trust source for
+verification. The canonical-emission boundary is preserved: only the
+engine produces receipt bytes.
+
+## Subcommand: `bp validate-input` (v0.4+)
+
+```
+bp validate-input <file> [--json] [--verbose] [--color=...]
+```
+
+Schema-validate a topology + input config file against
+`schemas/topology-input.v0.4.0.json` without running the engine. Uses Ajv
+(2020-12 draft) and reports the first validation error with a field path.
+
+This is the input-side analog of `bp validate` (which validates receipts).
+Together they cover the two artifact families:
+
+- `bp validate <file>` — receipts (engine outputs)
+- `bp validate-input <file>` — input configs (engine inputs)
+
+The input schema's `additionalProperties: false` rejects receipt-only
+fields (`forward`, `loss`, `backward`, `updates`, `parameters_after`,
+`post_update_forward`, `post_update_loss`, `fixture_status`) with a
+named-field error — surfacing the canonical-emission trust-boundary
+violation before the engine sees the file.
+
+| Code | Meaning |
+|---|---|
+| 0 | Input conforms to `topology-input.v0.4.0`. |
+| 1 | Input does not conform; the first error block is on stderr. |
+| 2 | I/O error or malformed JSON. |
+| 3 | Invalid CLI argument. |
+
+### Examples
+
+```bash
+# Validate a scaffolded input
+bp validate-input my-net.input.json
+
+# Pipe from another tool
+some-config-generator | bp validate-input -
+
+# JSON output for CI
+bp validate-input my-net.input.json --json
+```
+
 ## Subcommand: `bp validate`
 
 ```
 bp validate <file> [--json] [--verbose] [--color=...]
 ```
 
-Schema-only validation. The validator auto-detects the receipt's
-`schema_version` and dispatches against either
+Schema-only validation of a RECEIPT. The validator auto-detects the
+receipt's `schema_version` and dispatches against either
 `schemas/receipt.v0.1.0.json` (Mazur receipts) or
-`schemas/receipt.v0.2.0.json` (v0.3 generalized + multi-step receipts)
-via Ajv (2020-12 draft). Reports the first validation error (fail-fast;
-full-list `--all` support is reserved for v0.4+).
+`schemas/receipt.v0.2.0.json` (v0.3 generalized + multi-step receipts +
+v0.4 per-neuron bias receipts via additive widening) via Ajv (2020-12
+draft). Reports the first validation error (fail-fast; full-list `--all`
+support is reserved for v0.5+).
+
+For input configs (NOT receipts), use `bp validate-input` instead — it
+binds to a separate schema (`topology-input.v0.4.0.json`) that
+PROHIBITS receipt-only fields.
 
 | Code | Meaning |
 |---|---|
@@ -374,15 +534,20 @@ matches the [no-color.org](https://no-color.org/) convention.
 
 ## Stdin support
 
-`reconcile receipt`, `validate`, and `verify mazur` accept `-` as the file
+`reconcile receipt`, `validate`, `validate-input`, `verify mazur`, `verify
+general`, `verify multi`, and `generate from-config` accept `-` as the file
 argument to read from stdin:
 
 ```bash
 cat mazur.golden.jsonl | bp reconcile receipt -
 some-other-tool | bp validate -
+config-generator | bp validate-input -
+config-generator | bp generate from-config -
 ```
 
-`generate mazur` does not accept stdin; it has no input to consume.
+`generate mazur`, `generate xor`, `generate iris`, and `scaffold topology`
+do not accept stdin; they have no input to consume (each takes a fixed
+in-memory literal or a `--topology` flag).
 
 ## Exit-code conventions
 

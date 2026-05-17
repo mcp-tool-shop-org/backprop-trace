@@ -1,0 +1,51 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "xor.bad-bias-params-after.meta",
+  "describes": "fixtures/bad/xor.bad-bias-params-after.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/xor-per-neuron-bias.golden.jsonl (engine-emitted v0.4 canonical bytes, per-neuron biases on h1/h2/y with bias_policy.mode=sgd). The fixture differs from the golden in exactly two places: the fixture_status block (3 fields) and the single targeted numeric value.",
+  "mutation": {
+    "field_path": "parameters_after.b_h1",
+    "parameter_id": "b_h1",
+    "original": 0.103093951,
+    "mutated": 0.103094951,
+    "delta_absolute": 1.0e-6,
+    "delta_vs_tolerance_multiplier": "~970x (effective tolerance ~1.03e-9 at this magnitude under {atol: 1e-12, rtol: 1e-8})",
+    "what_was_NOT_mutated": [
+      "parameters_before.b_h1 (0.100000000 — left operand of Rule 7 sum)",
+      "updates[6].update (0.00309395108 — right operand of Rule 7 sum)",
+      "updates[6].weight_after (0.103093951 — Rule 6 still passes; it does not read parameters_after)",
+      "updates[6].gradient + updates[6].optimizer.* (Rules 4 + 5 still pass)",
+      "all other parameters_after entries (only b_h1 mutated)",
+      "all other parameter updates",
+      "forward / loss / backward / parameters_before"
+    ]
+  },
+  "single_target_invariant": "Reconciliation produces exactly one Rule 7 failure naming parameters_after.b_h1 on parameter b_h1. Rule 6 must NOT fire (updates[6].weight_after is internally consistent with weight_before + update). No other rule fires.",
+  "reconciliation_check_targeted_first": "Rule 7: parameters_after[param] == parameters_before[param] + sum(updates targeting param)",
+  "cascading_failures_observed": [],
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/xor.bad-bias-params-after.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 7",
+      "b_h1",
+      "parameters_after.b_h1"
+    ],
+    "stderr_must_NOT_contain": [
+      "Rule 1",
+      "Rule 2",
+      "Rule 3",
+      "Rule 4",
+      "Rule 5",
+      "Rule 6",
+      "Rule 8"
+    ],
+    "stderr_section_count": {
+      "Rule 7:": 1
+    }
+  },
+  "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures. The fixture_status block being deliberately_corrupted / expected_to_fail_reconciliation must NOT mask the Rule 7 failure.",
+  "purpose": "Anti-circularity (Csmith / CompCert lineage) extended into the v0.4 per-neuron bias corner: proves the reconciler checks Rule 7 (final state == parameters_before + sum(updates)) on per-neuron bias parameters by detecting a 1e-6 mismatch (970x the rtol-scaled tolerance) between stored parameters_after.b_h1 and the sum of (unmutated) parameters_before.b_h1 + updates[6].update.",
+  "v0_4_note": "Per-neuron bias updates surface in updates[] alongside weight updates, so Rule 7's 'updated parameter' branch (parameter found in updatesById) handles them identically. The 'bias-policy.mode === constant' branch of Rule 7 — exact zero-delta — is exercised by per_layer fixtures and by mode=constant fixtures, not by this one (this receipt has mode=sgd)."
+}

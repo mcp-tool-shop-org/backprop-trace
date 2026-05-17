@@ -191,6 +191,23 @@ const SHARED_BIAS_POLICY_V03: BiasPolicy = {
 };
 
 /**
+ * v0.4 per-neuron-bias SGD policy. Used by XOR_PER_NEURON_BIAS_INPUT (and
+ * future per-neuron fixtures) to exercise the bias_policy.mode === "sgd"
+ * branch of runGeneralStep.
+ *
+ * v0.4 restriction: this policy is ONLY valid in combination with
+ * topology.bias_sharing === "per_neuron". The engine rejects per_layer +
+ * sgd at the boundary (per_layer bias gradient would be the SUM of per-
+ * unit signals, a distinct case deferred beyond v0.4).
+ */
+const SHARED_BIAS_POLICY_V04_PER_NEURON_SGD: BiasPolicy = {
+  mode: "sgd",
+  reason: "v0.4 per-neuron biases are updated by SGD using the unit's error signal as the single-factor gradient (∂E/∂b_u = signal_u). Closes the previously-declared-but-unused BiasPolicy.mode 'sgd' + Update.kind 'bias' schema corners.",
+  updated_in_step: true,
+  reconciliation: "for each per_neuron bias parameter b serving unit u, parameters_after[b.id] === parameters_before[b.id] + learning_rate * signal_u where signal_u is the unit's error signal in backward.{hidden,output}_error_signals[u].signal_value",
+};
+
+/**
  * Mazur 2-2-2 topology re-expressed in the generalized Topology format.
  *
  * Consumers pass this with the existing MAZUR_INPUT scalars (`learning_rate`,
@@ -304,6 +321,97 @@ export const XOR_INPUT: GeneralInput = {
   fixture: "xor-sigmoid-engine-first-run",
   metadata: {
     source: "src/mazur.ts XOR_INPUT (XOR-sigmoid 2-2-1 engine first-run)",
+    url_reference: "https://www.deeplearningbook.org/contents/mlp.html",
+    gradient_convention: "descent_direction",
+  },
+};
+
+/**
+ * v0.4 per-neuron-bias variant of XOR_TOPOLOGY. Identical to XOR_TOPOLOGY
+ * EXCEPT for the bias surface:
+ *
+ *   per_layer (XOR_TOPOLOGY)            per_neuron (this)
+ *   ------------------------            ----------------
+ *   b_hidden  applies to [h1, h2]       b_h1     applies to [h1]
+ *   b_output  applies to [y]            b_h2     applies to [h2]
+ *                                       b_y      applies to [y]
+ *
+ * parameter_order: weights w_x1_h1..w_h2_y in the same declared order as
+ * XOR_TOPOLOGY (6 weights), THEN the 3 per-neuron biases in the order
+ * [b_h1, b_h2, b_y] (hidden biases first in unit_order, then output bias).
+ *
+ * bias_sharing: "per_neuron". Use with SHARED_BIAS_POLICY_V04_PER_NEURON_SGD
+ * to exercise the v0.4 bias-update branch of runGeneralStep.
+ *
+ * NOTE: this topology is NOT a drop-in replacement for XOR_TOPOLOGY — they
+ * disagree on bias parameter ids and counts. Receipts emitted from this
+ * topology use distinct parameter ids in parameters_before / parameters_after
+ * / updates, so a downstream consumer can tell the two paths apart from the
+ * receipt bytes alone.
+ */
+export const XOR_PER_NEURON_BIAS_TOPOLOGY: Topology = {
+  layers: ["input", "hidden", "output"],
+  unit_order: { input: ["x1", "x2"], hidden: ["h1", "h2"], output: ["y"] },
+  parameter_order: [
+    "w_x1_h1", "w_x2_h1", "w_x1_h2", "w_x2_h2",
+    "w_h1_y", "w_h2_y",
+    "b_h1", "b_h2", "b_y",
+  ],
+  parameters: [
+    { id: "w_x1_h1", role: "input_to_hidden_weight", from_unit: "x1", to_unit: "h1" },
+    { id: "w_x2_h1", role: "input_to_hidden_weight", from_unit: "x2", to_unit: "h1" },
+    { id: "w_x1_h2", role: "input_to_hidden_weight", from_unit: "x1", to_unit: "h2" },
+    { id: "w_x2_h2", role: "input_to_hidden_weight", from_unit: "x2", to_unit: "h2" },
+    { id: "w_h1_y",  role: "hidden_to_output_weight", from_unit: "h1", to_unit: "y" },
+    { id: "w_h2_y",  role: "hidden_to_output_weight", from_unit: "h2", to_unit: "y" },
+    { id: "b_h1", role: "hidden_bias", applies_to_units: ["h1"] },
+    { id: "b_h2", role: "hidden_bias", applies_to_units: ["h2"] },
+    { id: "b_y",  role: "output_bias", applies_to_units: ["y"] },
+  ],
+  activation_hidden: "sigmoid",
+  activation_output: "sigmoid",
+  loss: "half_squared_error",
+  bias_sharing: "per_neuron",
+  input_size: 2,
+  hidden_size: 2,
+  output_size: 1,
+};
+
+/**
+ * v0.4 canonical XOR per-neuron-bias first-run input. Mirrors XOR_INPUT
+ * (same sample x1=1, x2=0, target y=1; same learning_rate 0.5; same
+ * initial weights w_x1_h1=0.10, ..., w_h2_y=0.35) but with distinct
+ * per-neuron bias initials: b_h1=0.10, b_h2=0.15, b_y=0.20.
+ *
+ * Initial bias choice rationale: distinct values so a downstream byte-
+ * inspecting consumer can confirm each per-neuron bias is read and
+ * updated independently (a topology bug that aliased b_h1 and b_h2 would
+ * produce identical bias values in parameters_after).
+ *
+ * Uses SHARED_BIAS_POLICY_V04_PER_NEURON_SGD (mode: "sgd") so the engine
+ * emits Update entries for each per-neuron bias (kind: "bias",
+ * layer_edge: "bias_to_layer", optimizer.factors.length === 1).
+ *
+ * Authoring constraint (v0.4 consolidator §7 risk 1): the .golden.jsonl
+ * receipt for this input MUST be engine-authored via the v0.4
+ * `bp generate from-config` path — NEVER hand-constructed. The Fixtures
+ * agent owns that authoring step.
+ */
+export const XOR_PER_NEURON_BIAS_INPUT: GeneralInput = {
+  topology: XOR_PER_NEURON_BIAS_TOPOLOGY,
+  learning_rate: 0.5,
+  inputs: { x1: 1, x2: 0 },
+  targets: { y: 1 },
+  parameters_before: {
+    w_x1_h1: 0.10, w_x2_h1: 0.15, w_x1_h2: 0.20, w_x2_h2: 0.25,
+    w_h1_y:  0.30, w_h2_y:  0.35,
+    b_h1: 0.10, b_h2: 0.15, b_y: 0.20,
+  },
+  numeric_policy: SHARED_NUMERIC_POLICY_V03,
+  bias_policy: SHARED_BIAS_POLICY_V04_PER_NEURON_SGD,
+  fixture: "xor-per-neuron-bias-engine-first-run",
+  metadata: {
+    source: "src/mazur.ts XOR_PER_NEURON_BIAS_INPUT (XOR-sigmoid 2-2-1 per-neuron-bias engine first-run)",
     url_reference: "https://www.deeplearningbook.org/contents/mlp.html",
     gradient_convention: "descent_direction",
   },

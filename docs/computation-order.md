@@ -237,3 +237,62 @@ Computation order lives inside the contract layer. The schema declares
 `product_order` and `summation_order` as required fields; this doc
 specifies what those values mean. The engine implements them; the
 reconciler verifies them.
+
+## Determinism boundary (v0.4+)
+
+Computation order pins WHAT the engine multiplies and sums and in what
+sequence. The determinism boundary pins WHERE that contract holds and
+where it does NOT. They are complementary: the in-engine ordering rules
+above are necessary but not sufficient for byte equality across
+environments — the substrate has to cooperate.
+
+### What's contractual
+
+- Byte-equal `post_update_loss.total` on the pinned Node 22 ×
+  {ubuntu, macos, windows} matrix
+- Mazur 2-2-2 golden fixture: `0.29102777369359933`
+- Per-rule reconciliation passes via the hybrid tolerance contract
+  documented above
+
+### What's NOT contractual
+
+- Cross-engine (Bun, Deno, browsers) — different math implementations
+- Cross-Node-major (24.x, 26.x, ...) — V8 fdlibm may be re-ported
+- Arbitrary V8 minor bumps — ECMA-262 §21.3 leaves `Math.exp`
+  precision implementation-defined
+  (https://tc39.es/ecma262/#sec-math.exp)
+- Bit-stability of values that flow through `Math.exp` (sigmoid, tanh,
+  softmax) across V8 versions
+
+A `Math.exp(-0.5)` canary test fires on the CI matrix as an
+early-warning siren if V8's fdlibm port drifts within 22.x. The test
+pins observed constants; a failure means "investigate V8 changelog,"
+not "engine bug." The v0.4 CI matrix adds one explicit
+`node-version: '22.11.0'` cell alongside the existing `22.x` cells so
+the canary observes both a moving target (`22.x`) and a fixed
+reference (`22.11.0`) on every run.
+
+### Out of scope for v0.4
+
+- Custom `Math.exp` (polynomial / lookup table) — would make
+  backprop-trace authoritative over math semantics, not just
+  observation; the verifier loses neutrality
+- Decimal arithmetic (Decimal128 / decimal.js) — would fork the engine
+  into two semantics (binary64 vs decimal) and the receipt's
+  `number_encoding: "decimal"` claim already covers the formatter
+  output without dragging arithmetic to a different substrate
+- Bun/Deno/browser CI cells — guaranteed byte-equal breakage on first
+  run; adding cells that are expected to fail erodes the value of the
+  ones that pass
+
+The v0.4 study-swarm consolidator-decision.md (Agent E's path) makes
+these defers explicit: "v0.4 must NOT be a determinism wave — would
+force the verifier into thesis-changing territory like polynomial
+Math.exp or decimal.js." The CI canary is the smallest move that gives
+the engine an early-warning siren for the substrate's actual behavior
+without claiming engineering control over what the substrate does.
+
+Cross-reference: README's "Determinism boundary" section mirrors this
+content for users who never open the doc directory. The two are
+load-bearing for the same contract; if one drifts from the other,
+update both.

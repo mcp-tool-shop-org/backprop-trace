@@ -1,7 +1,7 @@
 {
   "name": "@mcptoolshop/backprop-trace",
-  "version": "0.3.0",
-  "description": "v0.3 wires generalized N-input N-hidden N-output topology + hybrid tolerance + multi-step training receipts alongside the existing Mazur 2-2-2 spine.",
+  "version": "0.4.0",
+  "description": "Deterministic backprop training-trace engine — v0.4 adds authoring tools (bp generate from-config / bp scaffold topology / bp validate-input) and per-neuron bias on top of the v0.3 generalized N-input N-hidden N-output topology + hybrid tolerance + multi-step receipt spine.",
   "type": "module",
   "license": "MIT",
   "author": "mcp-tool-shop <64996768+mcp-tool-shop@users.noreply.github.com>",
@@ -27,7 +27,10 @@
     "proof-of-learning",
     "reconciler",
     "general-topology",
-    "multi-step"
+    "multi-step",
+    "topology-input",
+    "per-neuron-bias",
+    "authoring"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -80,6 +83,10 @@
       "import": "./dist/parse.js",
       "types": "./dist/parse.d.ts"
     },
+    "./parse-input": {
+      "import": "./dist/parse-input.js",
+      "types": "./dist/parse-input.d.ts"
+    },
     "./hash": {
       "import": "./dist/hash.js",
       "types": "./dist/hash.d.ts"
@@ -99,6 +106,7 @@
     "./schema": "./schemas/receipt.v0.1.0.json",
     "./schema/0.1.0": "./schemas/receipt.v0.1.0.json",
     "./schema/0.2.0": "./schemas/receipt.v0.2.0.json",
+    "./schema/0.4.0": "./schemas/topology-input.v0.4.0.json",
     "./package.json": "./package.json"
   },
   "bin": {

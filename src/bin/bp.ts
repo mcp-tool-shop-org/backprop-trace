@@ -172,6 +172,7 @@ const strictMode = hasFlag("--strict");
 const checkMode = hasFlag("--check");
 const outFile = valueFlag("--out");
 const colorOpt = valueFlag("--color");
+const topologyOpt = valueFlag("--topology");
 
 // Validate --color value early so the user gets exit-3 with a clear message
 // before any subcommand work begins.
@@ -196,6 +197,12 @@ function stripFlags(args: string[]): string[] {
       continue;
     }
     if (a.startsWith("--out=")) continue;
+    if (a === "--topology") {
+      // skip the next token (the value)
+      i += 1;
+      continue;
+    }
+    if (a.startsWith("--topology=")) continue;
     out.push(a);
   }
   return out;
@@ -507,23 +514,35 @@ function usageText(): string {
     `bp — backprop-trace CLI v${pkg.version}`,
     "",
     "Usage:",
-    "  bp reconcile receipt <file>     Reconcile a receipt (Rules 1-8)",
-    "  bp verify mazur [<file>]        Full Mazur gate (v0.1 receipts)",
-    "  bp verify general <file>        Generalized verify (v0.2 receipts)",
-    "  bp verify multi <file.jsonl>    Multi-record verify (Rules 1-8 per record + Rules 9, 10)",
-    "  bp generate mazur [--out <file>]  Re-run Mazur engine, emit canonical bytes",
-    "  bp generate xor   [--out <file>]  Re-run XOR engine, emit canonical bytes",
-    "  bp generate iris  [--out <file>]  Re-run iris engine, emit canonical bytes",
-    "  bp validate <file>              Schema-validate (auto-detects v0.1 vs v0.2)",
-    "  bp --version                    Print version",
-    "  bp --help                       Print this message",
+    "  Reconcile / verify:",
+    "    bp reconcile receipt <file>     Reconcile a receipt (Rules 1-8)",
+    "    bp verify mazur [<file>]        Full Mazur gate (v0.1 receipts)",
+    "    bp verify general <file>        Generalized verify (v0.2 receipts)",
+    "    bp verify multi <file.jsonl>    Multi-record verify (Rules 1-8 per record + Rules 9, 10)",
+    "    bp validate <file>              Schema-validate receipt (auto-detects v0.1 vs v0.2)",
+    "",
+    "  Generate canonical receipt bytes:",
+    "    bp generate mazur [--out <file>]              Re-run Mazur engine",
+    "    bp generate xor   [--out <file>]              Re-run XOR engine",
+    "    bp generate iris  [--out <file>]              Re-run iris engine",
+    "    bp generate from-config <file> [--out <file>] Re-run engine from a topology+input JSON",
+    "",
+    "  Author / validate topology+input configs (v0.4):",
+    "    bp scaffold topology --topology mazur|xor|iris [--out <file>]",
+    "                                    Write a starter GeneralInput JSON for editing",
+    "    bp validate-input <file>        Schema-validate a topology+input config",
+    "",
+    "  Meta:",
+    "    bp --version                    Print version",
+    "    bp --help                       Print this message",
     "",
     "OPTIONS",
     "  --json                          Machine-readable JSON output",
     "  --verbose, -V                   Diagnostic stderr",
     "  --color=auto|never|always       Color output (auto detects TTY; honors NO_COLOR)",
-    "  --out <file>                    (generate) write to file",
+    "  --out <file>                    (generate / scaffold) write to file",
     "  --check                         (generate) compare vs golden, exit 1 on drift",
+    "  --topology <name>               (scaffold topology) which seed topology to write",
     "  --warn-as-fail                  (verify) treat WARNs as failures",
     "  --strict                        (verify) treat any non-PASS as failure",
     "  -                               (file arg) read from stdin",
@@ -543,6 +562,11 @@ function usageText(): string {
     "  bp generate mazur --check",
     "  bp generate xor   --out my-xor.jsonl",
     "  bp generate iris  --check",
+    "  bp generate from-config my-topology.json",
+    "  bp generate from-config - < my-topology.json --out my.golden.jsonl",
+    "  bp generate from-config my-topology.json --check --out fixtures/my.golden.jsonl",
+    "  bp scaffold topology --topology xor --out my-xor.input.json",
+    "  bp validate-input my-topology.json",
     "  bp validate fixtures/mazur.golden.jsonl",
     "  echo '{...}' | bp validate -",
     "",
@@ -763,6 +787,100 @@ function validateUsageText(): string {
   ].join("\n");
 }
 
+function generateFromConfigUsageText(): string {
+  return [
+    "Usage: bp generate from-config <file> [--out <file>] [--check] [--json] [--verbose]",
+    "",
+    "  Read a topology+input JSON config, run the generalized engine (Math",
+    "  agent's runGeneralStep), and emit the canonical v0.2.0-schema JSONL",
+    "  receipt. Reuses the same emission pipeline as `bp generate xor|iris`",
+    "  so authored configs and shipped fixtures share one byte-equal contract.",
+    "",
+    "  The input file is validated against schemas/topology-input.v0.4.0.json",
+    "  before the engine runs. Receipt-only fields (forward, loss, updates,",
+    "  parameters_after, post_update_forward, post_update_loss, fixture_status)",
+    "  are explicitly REJECTED by that schema — authored bytes can never",
+    "  masquerade as receipt bytes (trust-boundary mitigation, design memo §7).",
+    "",
+    "  <file>  Path to a topology+input JSON document, or '-' to read JSON",
+    "          from stdin. Use `bp scaffold topology --topology xor` to",
+    "          generate a starter file to edit.",
+    "",
+    "  Default (no flags): write canonical bytes to stdout.",
+    "  --out <file>     Write to <file> instead of stdout.",
+    "  --check          Compare emitted bytes against an existing golden",
+    "                   fixture (path supplied via --out, e.g.",
+    "                   `bp generate from-config my.json --check --out",
+    "                   fixtures/my.golden.jsonl`); exit 0 on byte-equal,",
+    "                   exit 1 on drift.",
+    "  --json           In --check mode, emit a JSON envelope to stdout",
+    "                   reporting ok/false + drift_offset.",
+    "",
+    "  Exit codes:",
+    "    0  Success (bytes written or --check passed).",
+    "    1  Drift detected under --check, or input schema-invalid.",
+    "    2  Usage or I/O error.",
+    "    3  Invalid CLI argument (e.g. --check without --out).",
+    "",
+  ].join("\n");
+}
+
+function scaffoldTopologyUsageText(): string {
+  return [
+    "Usage: bp scaffold topology --topology mazur|xor|iris [--out <file>] [--json]",
+    "",
+    "  Write a starter topology+input JSON config matching one of the",
+    "  shipped fixtures (Mazur 2-2-2, XOR-sigmoid 2-2-1, iris 4-3-3). The",
+    "  emitted file is a valid `bp generate from-config` input — edit it to",
+    "  experiment with weights, learning rates, or activations without",
+    "  touching TypeScript.",
+    "",
+    "  Default (no flags): write the JSON to stdout.",
+    "  --topology mazur|xor|iris   Which seed topology to emit. Required.",
+    "  --out <file>                Write to <file> instead of stdout.",
+    "  --json                      With --out, emit a {ok, output_path}",
+    "                              envelope to stdout (the file itself is",
+    "                              always JSON). Without --out, behaves the",
+    "                              same as the default.",
+    "",
+    "  Note (mazur path): if the library has not yet exported a generalized",
+    "  MAZUR_GENERAL_INPUT binding (Library/Engine agent coordination), this",
+    "  subcommand assembles one at scaffold time by combining the v0.1",
+    "  MAZUR_INPUT scalars with MAZUR_TOPOLOGY. The output is structurally a",
+    "  GeneralInput either way.",
+    "",
+    "  Exit codes:",
+    "    0  Success.",
+    "    2  Usage or I/O error.",
+    "    3  Invalid --topology value, or missing --topology argument.",
+    "",
+  ].join("\n");
+}
+
+function validateInputUsageText(): string {
+  return [
+    "Usage: bp validate-input <file> [--json] [--verbose]",
+    "",
+    "  Schema-validate a topology+input config against",
+    "  schemas/topology-input.v0.4.0.json. Schema-only — does NOT run the",
+    "  engine. Use `bp generate from-config <file>` to run the engine.",
+    "",
+    "  <file>  Path to a topology+input JSON document (.json or .jsonl with",
+    "          exactly one record), or '-' to read JSON from stdin.",
+    "",
+    "  Options:",
+    "    --json         Emit machine-readable JSON with errors[] array.",
+    "    --verbose, -V  Diagnostic stderr.",
+    "",
+    "  Exit codes:",
+    "    0  Input is structurally valid.",
+    "    1  Input failed schema validation.",
+    "    2  Usage or I/O error.",
+    "    3  Invalid CLI argument.",
+    "",
+  ].join("\n");
+}
+
 /**
  * Levenshtein-light suggestion for unknown top-level subcommand. Hand-
  * rolled because the v0.3 surface still has only four real top-level
@@ -771,17 +889,47 @@ function validateUsageText(): string {
  * who typed `bp verfy` sees the three valid `verify` shapes inline.
  */
 function suggestSubcommand(unknown: string): string | null {
+  // `validate` is a proper prefix of `validate-input`. Two-pass match:
+  // 1. EXACT or `unknown.startsWith(verb)` wins first (matches the user's
+  //    actual typed prefix — `validat` -> `validate`, `validate-inp` ->
+  //    `validate-input`).
+  // 2. Else fall through to `verb.startsWith(unknown)` (matches short typos
+  //    like `gen` -> `generate`).
   const candidates: Array<{ verb: string; example: string }> = [
     { verb: "reconcile", example: "bp reconcile receipt <file>" },
     { verb: "verify", example: "bp verify mazur | general <file> | multi <file.jsonl>" },
-    { verb: "generate", example: "bp generate mazur | xor | iris" },
+    { verb: "generate", example: "bp generate mazur | xor | iris | from-config <file>" },
+    { verb: "scaffold", example: "bp scaffold topology --topology mazur|xor|iris" },
+    { verb: "validate-input", example: "bp validate-input <file>" },
     { verb: "validate", example: "bp validate <file>" },
   ];
+  // Pass 1 (user-typo bias): the user typed something the system doesn't
+  // recognize. Prefer the SHORTEST known verb that starts with the typed
+  // input — that's the canonical "you meant this" suggestion. `validat`
+  // -> `validate` (not `validate-input`); `gen` -> `generate`.
+  let bestSuffix: { verb: string; example: string } | null = null;
   for (const c of candidates) {
-    if (c.verb.startsWith(unknown) || unknown.startsWith(c.verb)) {
-      return c.example;
+    if (c.verb.startsWith(unknown)) {
+      if (bestSuffix === null || c.verb.length < bestSuffix.verb.length) {
+        bestSuffix = c;
+      }
     }
   }
+  if (bestSuffix) return bestSuffix.example;
+  // Pass 2 (overlong-input bias): if no known verb starts with the typed
+  // input, see whether the typed input itself starts with a known verb
+  // (likely the user typed extra characters after a real verb name).
+  // Prefer the LONGEST matching verb so `validate-inp` picks
+  // `validate-input` over `validate`.
+  let bestPrefix: { verb: string; example: string } | null = null;
+  for (const c of candidates) {
+    if (unknown.startsWith(c.verb)) {
+      if (bestPrefix === null || c.verb.length > bestPrefix.verb.length) {
+        bestPrefix = c;
+      }
+    }
+  }
+  if (bestPrefix) return bestPrefix.example;
   return null;
 }
 
@@ -814,6 +962,28 @@ function suggestGenerateSubnoun(unknown: string): string | null {
     { verb: "mazur", example: "bp generate mazur" },
     { verb: "xor", example: "bp generate xor" },
     { verb: "iris", example: "bp generate iris" },
+    { verb: "from-config", example: "bp generate from-config <file>" },
+  ];
+  for (const c of candidates) {
+    if (c.verb.startsWith(unknown) || unknown.startsWith(c.verb)) {
+      return c.example;
+    }
+  }
+  return null;
+}
+
+/**
+ * Suggest the canonical form of a known `scaffold` subnoun. Currently
+ * accepts only `topology` (per design memo §7: scaffolding receipt bytes
+ * is explicitly disallowed — only INPUT scaffolding is permitted because
+ * authored bytes must NEVER masquerade as receipt bytes).
+ */
+function suggestScaffoldSubnoun(unknown: string): string | null {
+  const candidates: Array<{ verb: string; example: string }> = [
+    {
+      verb: "topology",
+      example: "bp scaffold topology --topology mazur|xor|iris [--out <file>]",
+    },
   ];
   for (const c of candidates) {
     if (c.verb.startsWith(unknown) || unknown.startsWith(c.verb)) {
@@ -1333,6 +1503,316 @@ function runGenerateIris(): void {
     label: "iris",
     goldenPath: "fixtures/iris.golden.jsonl",
   });
+}
+
+// =============================================================================
+// generate from-config (v0.4)
+// =============================================================================
+
+/**
+ * Read the raw text of a topology+input config file, supporting `-` for
+ * stdin. Translates I/O errors via exitOnReadError.
+ */
+function readInputConfigText(file: string): string {
+  try {
+    if (file === "-") return readFileSync(0, "utf-8");
+    return readFileSync(file, "utf-8");
+  } catch (err) {
+    exitOnReadError(err, file === "-" ? "<stdin>" : file);
+  }
+}
+
+/**
+ * Discriminated-union shape returned by the library's parseTopologyInput.
+ *
+ * The Library agent's src/parse-input.ts is responsible for combining
+ * JSON.parse with Ajv validation against schemas/topology-input.v0.4.0.json
+ * and returning this shape. Mirrors src/parse.ts ParseResult: callers
+ * pattern-match on `ok` rather than try/catch. The CLI consumes it through
+ * the lazy `requireLibExport` resolver so the binary still loads cleanly
+ * if the Library agent hasn't shipped the export yet — invocation surfaces
+ * a focused MISSING_LIB_EXPORT error pointing at `parseTopologyInput`.
+ *
+ * The `error.errors` array carries the structured Ajv errors so the CLI
+ * can render JSON or human-readable per-error diagnostics. Each entry's
+ * shape matches src/validate.ts SchemaError (instancePath / schemaPath /
+ * keyword / message / params); the type below names only the fields the
+ * CLI itself reads (kind, message, errors).
+ */
+type ParseTopologyInputResult =
+  | { ok: true; input: unknown }
+  | {
+      ok: false;
+      error: {
+        kind: "JSON_SYNTAX" | "SCHEMA_VIOLATION";
+        message: string;
+        errors?: Array<{
+          instancePath?: string;
+          schemaPath?: string;
+          keyword?: string;
+          message?: string;
+          params?: Record<string, unknown>;
+        }>;
+      };
+    };
+
+function runGenerateFromConfig(file: string): void {
+  // Lazy-resolve the v0.4 library surface. parseTopologyInput is the
+  // Library agent's new export; runGeneralStep + emitGeneralReceipt are
+  // the v0.3 generalized-engine entrypoints. Each resolution surfaces a
+  // distinct MISSING_LIB_EXPORT diagnostic if its agent hasn't shipped yet.
+  const parseTopologyInput = requireLibExport<
+    (text: string) => ParseTopologyInputResult
+  >("parseTopologyInput");
+  const runGeneralStep = requireLibExport<(input: unknown) => unknown>("runGeneralStep");
+  const emitGeneralReceipt = requireLibExport<(r: unknown) => string>("emitGeneralReceipt");
+
+  verboseLog(`processing ${file === "-" ? "<stdin>" : file}`);
+
+  const text = readInputConfigText(file);
+  const parsed = parseTopologyInput(text);
+  if (!parsed.ok) {
+    // Schema / JSON failure on input. Exit 1 ("verification failure"
+    // bucket) matches `bp validate` / `bp validate-input` semantics —
+    // a schema-rejecting input is a verification failure, not an I/O
+    // error. Render the structured error list under --json so CI
+    // consumers see the same shape as `bp validate-input --json`.
+    if (jsonMode) {
+      process.stdout.write(
+        `${JSON.stringify({
+          ok: false,
+          error: {
+            kind: parsed.error.kind,
+            message: parsed.error.message,
+            errors: parsed.error.errors ?? [],
+          },
+        })}\n`,
+      );
+      process.exit(1);
+    }
+    const useColor = shouldUseColor(process.stderr);
+    process.stderr.write(
+      `${color(`generate from-config: input rejected (${parsed.error.kind})`, `${BOLD}${RED}`, useColor)}\n`,
+    );
+    process.stderr.write(`  ${parsed.error.message}\n`);
+    for (const e of parsed.error.errors ?? []) {
+      const path = e.instancePath || "(root)";
+      process.stderr.write(
+        `  ${color("error", RED, useColor)} at ${path}: ${e.message ?? "(no message)"}\n`,
+      );
+      if (e.params && Object.keys(e.params).length > 0) {
+        process.stderr.write(`    params: ${JSON.stringify(e.params)}\n`);
+      }
+    }
+    process.stderr.write("\n");
+    process.exit(1);
+  }
+
+  // Engine run + canonical emission. Any thrown error here surfaces as a
+  // usage-error envelope rather than crashing the CLI — runGeneralStep
+  // throws on parameter_order / unit_order mismatches that schema validation
+  // cannot catch (those are runtime invariants enforced by the engine).
+  let bytes: string;
+  try {
+    bytes = emitGeneralReceipt(runGeneralStep(parsed.input));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    exitWithUsageError(
+      `generate from-config: engine rejected input: ${msg}. Hint: validate the input first with 'bp validate-input <file>'; if that passes, the failure is a runtime invariant (parameter_order / unit_order / finite-numeric check) that the schema does not enforce.`,
+      "ENGINE_RUNTIME_ERROR",
+    );
+  }
+
+  // --check mode is only meaningful when paired with --out so the user
+  // names the golden to compare against. Validate that pairing here rather
+  // than in emitGenerated (which receives a synthetic goldenPath from the
+  // mazur/xor/iris call sites and would otherwise read the wrong file).
+  if (checkMode) {
+    if (outFile === undefined || outFile === "") {
+      exitWithUsageError(
+        "generate from-config --check requires --out <file> to name the golden fixture to compare against. Example: bp generate from-config my.json --check --out fixtures/my.golden.jsonl",
+        "MISSING_CHECK_GOLDEN",
+        3,
+      );
+    }
+    emitGenerated({
+      bytes,
+      label: "from-config",
+      goldenPath: outFile,
+    });
+    // emitGenerated calls process.exit; the line below is unreachable.
+    return;
+  }
+
+  emitGenerated({
+    bytes,
+    label: "from-config",
+    // Unused when --check is absent; emitGenerated only reads goldenPath
+    // inside the --check branch. Pass the file argument back as a
+    // placeholder so verbose diagnostics stay legible.
+    goldenPath: outFile ?? file,
+  });
+}
+
+// =============================================================================
+// scaffold topology (v0.4)
+// =============================================================================
+
+/**
+ * Emit a canonical pretty-printed JSON string for a GeneralInput literal.
+ *
+ * Two-space indent + trailing LF. The output is deliberately NOT the
+ * canonical-emission JSONL shape (that is reserved for receipts) — scaffold
+ * outputs are author-facing source files, not engine-produced artifacts.
+ *
+ * The key order is the natural object-literal order from src/mazur.ts (or
+ * the synthesized MAZUR_GENERAL_INPUT below): topology, learning_rate,
+ * inputs, targets, parameters_before, numeric_policy, bias_policy,
+ * fixture?, metadata?. JSON.stringify preserves insertion order for the
+ * already-constructed input object.
+ */
+function formatInputAsJson(input: unknown): string {
+  return `${JSON.stringify(input, null, 2)}\n`;
+}
+
+function runScaffoldTopology(): void {
+  if (topologyOpt === undefined) {
+    exitWithUsageError(
+      "scaffold topology requires --topology <name>. Expected one of: mazur, xor, iris. Run 'bp scaffold topology --help' for usage.",
+      "MISSING_TOPOLOGY_ARG",
+      3,
+    );
+  }
+  if (!["mazur", "xor", "iris"].includes(topologyOpt)) {
+    exitWithUsageError(
+      `unknown topology '${topologyOpt}'. Expected one of: mazur, xor, iris.`,
+      "INVALID_TOPOLOGY_ARG",
+      3,
+    );
+  }
+
+  // Resolve the seed input. xor + iris are already GeneralInput literals
+  // exported from src/mazur.ts. mazur is a MazurInput (v0.1 shape) — prefer
+  // the library's MAZUR_GENERAL_INPUT export if Library/Engine has shipped
+  // it; otherwise fall back to assembling one here from the v0.1 MAZUR_INPUT
+  // scalars + MAZUR_TOPOLOGY. Either path yields a structurally-valid
+  // GeneralInput (validate-input round-trip + generate-from-config use it
+  // directly).
+  let input: unknown;
+  if (topologyOpt === "xor") {
+    input = requireLibExport<unknown>("XOR_INPUT");
+  } else if (topologyOpt === "iris") {
+    input = requireLibExport<unknown>("IRIS_INPUT");
+  } else {
+    // mazur — try Library agent's MAZUR_GENERAL_INPUT first.
+    const direct = (bplib as unknown as Record<string, unknown>)["MAZUR_GENERAL_INPUT"];
+    if (direct !== undefined) {
+      input = direct;
+    } else {
+      // Fallback: synthesize from the v0.1 MAZUR_INPUT + the v0.3
+      // MAZUR_TOPOLOGY. The v0.1 scalars (learning_rate, inputs, targets,
+      // parameters_before) carry over byte-equal; numeric_policy and
+      // bias_policy are the v0.1 shapes (tolerance: scalar 1e-9) which
+      // the v0.4 topology-input schema accepts via the legacy scalar
+      // tolerance form. The output is a structurally-valid GeneralInput.
+      const MAZUR_TOPOLOGY = requireLibExport<unknown>("MAZUR_TOPOLOGY");
+      input = {
+        topology: MAZUR_TOPOLOGY,
+        learning_rate: MAZUR_INPUT.learning_rate,
+        inputs: { ...MAZUR_INPUT.inputs },
+        targets: { ...MAZUR_INPUT.targets },
+        parameters_before: { ...MAZUR_INPUT.parameters_before },
+        numeric_policy: MAZUR_INPUT.numeric_policy,
+        bias_policy: MAZUR_INPUT.bias_policy,
+        fixture: "mazur-2-2-2-engine-first-run",
+        metadata: {
+          source: "src/bin/bp.ts scaffold topology --topology mazur (synthesized from MAZUR_INPUT + MAZUR_TOPOLOGY; library MAZUR_GENERAL_INPUT export not yet available)",
+          url_reference:
+            "https://mattmazur.com/2015/03/17/a-step-by-step-backpropagation-example/",
+          gradient_convention: "descent_direction",
+        },
+      };
+    }
+  }
+
+  const text = formatInputAsJson(input);
+
+  if (outFile !== undefined && outFile !== "") {
+    try {
+      writeFileSync(outFile, text);
+    } catch (err) {
+      exitOnReadError(err, outFile);
+    }
+    if (jsonMode) {
+      process.stdout.write(
+        `${JSON.stringify({ ok: true, output_path: outFile, bytes: text.length })}\n`,
+      );
+    } else if (verboseMode) {
+      verboseLog(`scaffold topology ${topologyOpt}: wrote ${text.length} bytes to ${outFile}`);
+    }
+    process.exit(0);
+  }
+
+  // Default: write the JSON to stdout. --json without --out emits the
+  // same JSON (the output IS JSON) — there's no separate envelope wrapper
+  // since the stdout payload would otherwise be ambiguous.
+  process.stdout.write(text);
+  process.exit(0);
+}
+
+// =============================================================================
+// validate-input (v0.4)
+// =============================================================================
+
+function runValidateInput(file: string): void {
+  const parseTopologyInput = requireLibExport<
+    (text: string) => ParseTopologyInputResult
+  >("parseTopologyInput");
+
+  verboseLog(`processing ${file === "-" ? "<stdin>" : file}`);
+
+  const text = readInputConfigText(file);
+  const parsed = parseTopologyInput(text);
+
+  if (parsed.ok) {
+    if (jsonMode) {
+      process.stdout.write(`${JSON.stringify({ ok: true })}\n`);
+    } else {
+      const useColor = shouldUseColor(process.stdout);
+      process.stdout.write(`${color("valid", GREEN, useColor)}\n`);
+    }
+    process.exit(0);
+  }
+
+  if (jsonMode) {
+    process.stdout.write(
+      `${JSON.stringify({
+        ok: false,
+        error: {
+          kind: parsed.error.kind,
+          message: parsed.error.message,
+          errors: parsed.error.errors ?? [],
+        },
+      })}\n`,
+    );
+    process.exit(1);
+  }
+  const useColor = shouldUseColor(process.stderr);
+  process.stderr.write(
+    `${color(`input schema validation failed (${parsed.error.kind})`, `${BOLD}${RED}`, useColor)}\n\n`,
+  );
+  process.stderr.write(`  ${parsed.error.message}\n`);
+  for (const e of parsed.error.errors ?? []) {
+    const path = e.instancePath || "(root)";
+    process.stderr.write(
+      `  ${color("error", RED, useColor)} at ${path}: ${e.message ?? "(no message)"}\n`,
+    );
+    if (e.params && Object.keys(e.params).length > 0) {
+      process.stderr.write(`    params: ${JSON.stringify(e.params)}\n`);
+    }
+  }
+  process.stderr.write("\n");
+  process.exit(1);
 }
 
 // =============================================================================
@@ -1997,7 +2477,7 @@ if (argv[0] === "verify") {
 if (argv[0] === "generate") {
   if (argv[1] === undefined) {
     exitWithUsageError(
-      "incomplete command 'generate'. Did you mean 'bp generate mazur', 'bp generate xor', or 'bp generate iris'? Run 'bp --help' for usage.",
+      "incomplete command 'generate'. Did you mean 'bp generate mazur', 'bp generate xor', 'bp generate iris', or 'bp generate from-config <file>'? Run 'bp --help' for usage.",
     );
   }
   if (argv[1] === "mazur") {
@@ -2021,6 +2501,32 @@ if (argv[0] === "generate") {
     }
     runGenerateIris();
   }
+  if (argv[1] === "from-config") {
+    if (argv[2] === "--help" || argv[2] === "-h") {
+      process.stdout.write(generateFromConfigUsageText());
+      process.exit(0);
+    }
+    const candidateFile = argv[2];
+    if (typeof candidateFile !== "string" || candidateFile.length === 0) {
+      if (jsonMode) {
+        exitWithUsageError(
+          "missing required argument <file> for 'generate from-config'. Run 'bp generate from-config --help' for usage.",
+          "MISSING_FILE_ARG",
+        );
+      }
+      process.stderr.write(generateFromConfigUsageText());
+      process.exit(2);
+    }
+    if (candidateFile.startsWith("-") && candidateFile !== "-") {
+      exitWithUsageError(
+        `refusing to treat ${JSON.stringify(candidateFile)} as a filename (starts with '-'). ` +
+          `Use 'bp generate from-config --help' for usage.`,
+        "INVALID_FILE_ARG",
+        3,
+      );
+    }
+    runGenerateFromConfig(candidateFile);
+  }
 
   // Unknown generate subnoun — fuzzy-suggest the closest match.
   const generateSubnoun = argv[1];
@@ -2028,7 +2534,7 @@ if (argv[0] === "generate") {
   exitWithUsageError(
     generateSuggestion
       ? `unknown subcommand 'generate ${generateSubnoun}'. Did you mean '${generateSuggestion}'? Run 'bp --help' for usage.`
-      : `unknown subcommand 'generate ${generateSubnoun}'. Expected 'mazur', 'xor', or 'iris'. Run 'bp --help' for usage.`,
+      : `unknown subcommand 'generate ${generateSubnoun}'. Expected 'mazur', 'xor', 'iris', or 'from-config'. Run 'bp --help' for usage.`,
   );
 }
 
@@ -2063,6 +2569,67 @@ if (argv[0] === "validate") {
     );
   }
   runValidate(file);
+}
+
+// -----------------------------------------------------------------------------
+// bp scaffold topology --topology mazur|xor|iris [--out <file>] (v0.4)
+// -----------------------------------------------------------------------------
+
+if (argv[0] === "scaffold") {
+  if (argv[1] === undefined) {
+    exitWithUsageError(
+      "incomplete command 'scaffold'. Did you mean 'bp scaffold topology --topology mazur|xor|iris'? Run 'bp --help' for usage.",
+    );
+  }
+  if (argv[1] === "topology") {
+    if (argv[2] === "--help" || argv[2] === "-h") {
+      process.stdout.write(scaffoldTopologyUsageText());
+      process.exit(0);
+    }
+    runScaffoldTopology();
+  }
+
+  // Unknown scaffold subnoun — only `topology` is permitted in v0.4 (see
+  // design memo §7 — scaffolding receipt bytes is explicitly excluded).
+  const scaffoldSubnoun = argv[1];
+  const scaffoldSuggestion = suggestScaffoldSubnoun(scaffoldSubnoun);
+  exitWithUsageError(
+    scaffoldSuggestion
+      ? `unknown subcommand 'scaffold ${scaffoldSubnoun}'. Did you mean '${scaffoldSuggestion}'? Run 'bp --help' for usage.`
+      : `unknown subcommand 'scaffold ${scaffoldSubnoun}'. Expected 'topology'. Run 'bp --help' for usage.`,
+  );
+}
+
+// -----------------------------------------------------------------------------
+// bp validate-input <file> (v0.4)
+// -----------------------------------------------------------------------------
+
+if (argv[0] === "validate-input") {
+  if (argv[1] === "--help" || argv[1] === "-h") {
+    process.stdout.write(validateInputUsageText());
+    process.exit(0);
+  }
+
+  const file = argv[1];
+  if (typeof file !== "string" || file.length === 0) {
+    if (jsonMode) {
+      exitWithUsageError(
+        "missing required argument <file> for 'validate-input'. Run 'bp validate-input --help' for usage.",
+        "MISSING_FILE_ARG",
+      );
+    }
+    process.stderr.write(validateInputUsageText());
+    process.exit(2);
+  }
+  if (file.startsWith("-") && file !== "-" && file !== "--") {
+    exitWithUsageError(
+      `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
+        `Use 'bp validate-input --help' for usage.`,
+      "INVALID_FILE_ARG",
+      3,
+    );
+  }
+  runValidateInput(file);
 }
 
 // -----------------------------------------------------------------------------

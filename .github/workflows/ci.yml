@@ -13,7 +13,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['22.x']
+        # v0.4: pinned 22.11.0 cell as a canary for V8 fdlibm Math.exp
+        # drift within Node 22.x minor bumps. The Math.exp(-0.5) constant
+        # test fires on every cell; observing the fixed 22.11.0 reference
+        # alongside the moving 22.x target is the early-warning siren.
+        node: ['22.x', '22.11.0']
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4

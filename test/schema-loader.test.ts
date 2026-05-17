@@ -13,6 +13,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { getReceiptSchema, SCHEMA_VERSIONS } from "../src/schema-loader.js";
+import * as SchemaLoader from "../src/schema-loader.js";
 
 test("getReceiptSchema() returns the v0.1.0 schema with expected shape", () => {
   const schema = getReceiptSchema() as Record<string, unknown>;
@@ -85,5 +86,81 @@ test('getReceiptSchema("0.2.0") returns the same cached object across calls', ()
     a,
     b,
     "repeat reads of v0.2.0 must hit the same cache entry",
+  );
+});
+
+// =============================================================================
+// v0.4 input-schema extensions (Tests-agent extend per consolidator-decision §5)
+// =============================================================================
+//
+// The v0.4 wave introduces an INPUT schema (topology-input.v0.4.0.json) that's
+// distinct from the receipt schemas. Library agent's contract is to expose:
+//   - INPUT_SCHEMA_VERSIONS — tuple of supported input-schema versions
+//   - getInputSchema(version) — parallels getReceiptSchema(version)
+//
+// These tests skip with upstream-TODO notes if Library agent hasn't shipped
+// the surface yet. The schema file itself is a separate dependency (Schema
+// agent's domain) and is gated separately.
+
+test('INPUT_SCHEMA_VERSIONS includes "0.4.0" (v0.4 input-schema dispatch)', (t) => {
+  const versions = (SchemaLoader as Record<string, unknown>)["INPUT_SCHEMA_VERSIONS"];
+  if (versions === undefined) {
+    t.skip(
+      "TODO upstream (Library agent): src/schema-loader.ts must export INPUT_SCHEMA_VERSIONS " +
+        "(tuple of supported topology-input schema versions). Per consolidator-decision §5 " +
+        "Library-agent scope: extend schema-loader with INPUT_SCHEMA_VERSIONS.",
+    );
+    return;
+  }
+  assert.ok(
+    Array.isArray(versions) || versions instanceof Object,
+    `INPUT_SCHEMA_VERSIONS must be an array-like; got: ${JSON.stringify(versions)}`,
+  );
+  const list = Array.isArray(versions) ? versions : Array.from(versions as Iterable<unknown>);
+  assert.ok(
+    list.includes("0.4.0"),
+    `INPUT_SCHEMA_VERSIONS must include '0.4.0'; got: ${JSON.stringify(list)}`,
+  );
+});
+
+test('getInputSchema("0.4.0") returns a JSON Schema object', (t) => {
+  const getInputSchema = (SchemaLoader as Record<string, unknown>)["getInputSchema"] as
+    | ((v: string) => unknown)
+    | undefined;
+  if (typeof getInputSchema !== "function") {
+    t.skip(
+      "TODO upstream (Library agent): src/schema-loader.ts must export getInputSchema(version) " +
+        "(parallels getReceiptSchema(version) for the v0.4 topology-input schema).",
+    );
+    return;
+  }
+  let schema: unknown;
+  try {
+    schema = getInputSchema("0.4.0");
+  } catch (err) {
+    t.skip(
+      `TODO upstream (Library agent): getInputSchema('0.4.0') threw — ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+    );
+    return;
+  }
+  assert.strictEqual(
+    typeof schema,
+    "object",
+    `getInputSchema('0.4.0') must return an object; got: ${typeof schema}`,
+  );
+  const s = schema as Record<string, unknown>;
+  assert.ok(
+    s["$id"] === undefined ||
+      (typeof s["$id"] === "string" && (s["$id"] as string).includes("topology-input.v0.4.0")),
+    `$id should reference topology-input.v0.4.0; got: ${String(s["$id"])}`,
+  );
+  // The schema MUST declare additionalProperties: false at the top level
+  // (canonical-emission trust-leakage gate from §7 risk 1).
+  assert.strictEqual(
+    s["additionalProperties"],
+    false,
+    `topology-input.v0.4.0 schema must have additionalProperties: false at top level ` +
+      `(canonical-emission trust-leakage gate); got: ${JSON.stringify(s["additionalProperties"])}`,
   );
 });

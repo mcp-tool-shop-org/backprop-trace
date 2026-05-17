@@ -97,6 +97,31 @@ const FILENAME_KIND_TO_RULE: Record<string, number> = {
   "provenance": 8,
   "chain": 9,
   "trace-id": 10,
+  // v0.4 per-neuron bias fixture name patterns (Agent F's contract from
+  // consolidator-decision §5). Each maps to the rule the bad fixture is
+  // designed to surface:
+  //   - bad-bias-gradient        => Rule 4 (update.gradient consistency)
+  //   - bad-bias-update-value    => Rule 5 (update == lr * gradient)
+  //   - bad-bias-weight-after    => Rule 6 (weight_after == weight_before + update)
+  //   - bad-bias-params-after    => Rule 7 (parameters_after sum consistency)
+  //   - bad-bias-provenance      => Rule 8 (factor.from resolves to factor.value)
+  //   - bad-bias-mode-mismatch   => Rule 0 (structural: bias_policy.mode vs updates[*].kind)
+  //
+  // Both v0.2-prefixed and v0.3-unprefixed keys are listed so meta-less
+  // fixtures (which use the unprefixed kind capture from
+  // `<prefix>.bad-<kind>.jsonl`) and meta-bearing fixtures both resolve.
+  "bad-bias-gradient": 4,
+  "bad-bias-update-value": 5,
+  "bad-bias-weight-after": 6,
+  "bad-bias-params-after": 7,
+  "bad-bias-provenance": 8,
+  "bad-bias-mode-mismatch": 0,
+  "bias-gradient": 4,
+  "bias-update-value": 5,
+  "bias-weight-after": 6,
+  "bias-params-after": 7,
+  "bias-provenance": 8,
+  "bias-mode-mismatch": 0,
 };
 
 /**

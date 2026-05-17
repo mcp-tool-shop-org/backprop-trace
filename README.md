@@ -4,7 +4,7 @@
 
 # @mcptoolshop/backprop-trace
 
-Deterministic training-trace engine — produces canonical JSONL receipts of single backprop steps, verified by a 10-rule reconciler (all 10 rules wired in v0.3).
+Deterministic training-trace engine — produces canonical JSONL receipts of single backprop steps, verified by a 10-rule reconciler (all 10 rules wired in v0.3; v0.4 adds authoring tools so you can drive the engine from a JSON config and ships per-neuron bias).
 
 ## Why backprop-trace?
 
@@ -45,17 +45,20 @@ npm install @mcptoolshop/backprop-trace
 
 ## CLI usage
 
-v0.3 ships eight subcommands. Full reference: [`docs/cli.md`](./docs/cli.md).
+v0.4 ships 13 subcommands (v0.3's 8 + `verify multi` + `verify general` + 3 new authoring commands). Full reference: [`docs/cli.md`](./docs/cli.md).
 
 ```
-bp reconcile receipt <file>     Reconcile a receipt against the 10 rules.
-bp verify mazur [<file>]        Full gate (Mazur): schema + reconcile + engine-reproduce + byte-equal + drift.
-bp verify general <file>        Generalized verify gate for any v0.2.0-schema receipt (XOR, iris, custom).
-bp verify multi <file.jsonl>    Multi-record verify; runs Rules 9, 10 + per-record Rules 1-8.
-bp generate mazur [--out F]     Re-run the Mazur engine, emit canonical bytes.
-bp generate xor [--out F]       Re-run the XOR engine, emit canonical bytes.
-bp generate iris [--out F]      Re-run the iris engine, emit canonical bytes.
-bp validate <file>              Schema-only validation (auto-detects v0.1 vs v0.2).
+bp reconcile receipt <file>          Reconcile a receipt against the 10 rules.
+bp verify mazur [<file>]             Full gate (Mazur): schema + reconcile + engine-reproduce + byte-equal + drift.
+bp verify general <file>             Generalized verify gate for any v0.2.0-schema receipt (XOR, iris, custom).
+bp verify multi <file.jsonl>         Multi-record verify; runs Rules 9, 10 + per-record Rules 1-8.
+bp generate mazur [--out F]          Re-run the Mazur engine, emit canonical bytes.
+bp generate xor [--out F]            Re-run the XOR engine, emit canonical bytes.
+bp generate iris [--out F]           Re-run the iris engine, emit canonical bytes.
+bp generate from-config <file>       Read a topology+input JSON, emit a canonical receipt. (v0.4+)
+bp scaffold topology --topology T    Write a sample input file (T = mazur|xor|iris). (v0.4+)
+bp validate-input <file>             Schema-validate an input config without running the engine. (v0.4+)
+bp validate <file>                   Schema-only validation of a receipt (auto-detects v0.1 vs v0.2).
 ```
 
 ### Quick demos
@@ -111,7 +114,7 @@ if (!v.matches) { console.error('diverges at byte', v.firstDifferingByte); }
 
 See [`docs/attestation.md`](./docs/attestation.md) for the in-toto v1 mapping.
 
-Subpath imports are exported (`./reconcile`, `./engine`, `./general-engine`, `./mazur`, `./topology`, `./activations`, `./emit`, `./format`, `./runtime-format`, `./validate`, `./parse`, `./hash`, `./schema-loader`, `./verify-engine`, `./extract`, `./schema`, `./schema/0.1.0`, `./schema/0.2.0`).
+Subpath imports are exported (`./reconcile`, `./engine`, `./general-engine`, `./mazur`, `./topology`, `./activations`, `./emit`, `./format`, `./runtime-format`, `./validate`, `./parse`, `./parse-input`, `./hash`, `./schema-loader`, `./verify-engine`, `./extract`, `./schema`, `./schema/0.1.0`, `./schema/0.2.0`, `./schema/0.4.0`).
 
 ## What this is
 
@@ -135,6 +138,43 @@ Cross-engine portability (Hermes, JSC, Bun-JSC) is **not tested**. The widely-ci
 
 v0.3 is pinned to Node 22.x. ReLU and identity activations are exact arithmetic; sigmoid inherits the Math.exp ULP envelope. Hybrid tolerance (`atol = 1e-12`, `rtol = 1e-9`) covers the v0.1 product drift previously documented in `fixtures/bad/mazur.bad-gradient.meta.json`.
 
+## Determinism boundary
+
+What's contractual:
+
+- Byte-equal `post_update_loss.total` on the pinned Node 22 × {ubuntu, macos, windows} matrix
+- Mazur 2-2-2 golden fixture: `0.29102777369359933`
+- Per-rule reconciliation passes via the hybrid tolerance contract documented in [`docs/computation-order.md`](./docs/computation-order.md)
+
+What's NOT contractual:
+
+- Cross-engine (Bun, Deno, browsers) — different math implementations
+- Cross-Node-major (24.x, 26.x, ...) — V8 fdlibm may be re-ported
+- Arbitrary V8 minor bumps — ECMA-262 §21.3 leaves `Math.exp` precision implementation-defined
+- Bit-stability of values that flow through `Math.exp` (sigmoid, tanh, softmax) across V8 versions
+
+A `Math.exp(-0.5)` canary test fires on the CI matrix as an early-warning siren if V8's fdlibm port drifts within 22.x. The test pins observed constants; a failure means "investigate V8 changelog," not "engine bug."
+
+Out of scope for v0.4:
+
+- Custom `Math.exp` (polynomial / lookup table) — would make backprop-trace authoritative over math semantics, not just observation
+- Decimal arithmetic (Decimal128 / decimal.js) — would fork the engine into two semantics
+- Bun/Deno/browser CI cells — guaranteed byte-equal breakage on first run
+
+## Authoring custom topologies (v0.4+)
+
+You can drive the engine from a JSON config — no TypeScript edits required:
+
+```bash
+bp scaffold topology --topology xor --out my-net.input.json
+# edit my-net.input.json to your topology
+bp validate-input my-net.input.json
+bp generate from-config my-net.input.json --out my-net.golden.jsonl
+bp verify general my-net.golden.jsonl
+```
+
+See [`docs/authoring.md`](./docs/authoring.md) for the full walkthrough — input vs receipt schemas, the canonical-emission trust boundary, and v0.4 limitations.
+
 ## The ten rules
 
 1. Output error signal consistency
@@ -156,35 +196,39 @@ From `docs/canonical-emission.md`:
 
 > Contract precedes engine. Formatter policy precedes runtime formatting. Bad receipts precede good receipts. Runtime formatting precedes Mazur. Mazur precedes diagnostics.
 
-## v0.3 scope
+## v0.4 scope
 
-- Generalized N-input N-hidden N-output topology (Mazur 2-2-2, XOR 2-2-1, iris 4-3-3 ship as fixtures; layer sizes 1-64)
+- Generalized N-input N-hidden N-output topology (Mazur 2-2-2, XOR 2-2-1, XOR 2-2-1 per-neuron-bias, iris 4-3-3 ship as fixtures; layer sizes 1-64)
 - Sigmoid / identity / ReLU activations
 - Half-squared-error (MSE) loss only
-- Per-layer biases (per-neuron deferred)
+- Per-layer biases AND per-neuron biases (new in v0.4)
 - SGD optimizer (no momentum, no Adam, no weight decay)
 - Hybrid tolerance (`atol + rtol`, symmetric max form)
 - Single-step + multi-step training receipts (`trace_id` + `step_index` overlay)
+- Authoring tools (`bp generate from-config`, `bp scaffold topology`, `bp validate-input`) so users can drive the engine from JSON without TypeScript edits (new in v0.4)
 - CPU-only (no GPU determinism claims)
 - V8 / Node 22.x only
 
-Alternative losses (cross-entropy, softmax), per-neuron biases, richer
-optimizers (momentum, Adam), and tanh activation are reserved for v0.4+
-(see [`CHANGELOG.md`](./CHANGELOG.md) for what landed in v0.3).
+Alternative losses (cross-entropy, softmax), richer
+optimizers (momentum, Adam, weight decay, batching), tanh activation, and
+attestation envelopes (DSSE / in-toto / Sigstore) are reserved for v0.5+
+(see [`CHANGELOG.md`](./CHANGELOG.md) for what landed in v0.4 and the
+explicit doctrine-ratchet no-go list).
 
 ## Links
 
 - [`docs/quickstart.md`](./docs/quickstart.md) — five-minute walk-through (Mazur, XOR, iris)
-- [`docs/cli.md`](./docs/cli.md) — `bp` subcommand reference (v0.3+)
+- [`docs/cli.md`](./docs/cli.md) — `bp` subcommand reference (v0.4+ now includes the three authoring subcommands)
+- [`docs/authoring.md`](./docs/authoring.md) — author a custom topology via `bp scaffold` → edit → `bp generate from-config` → `bp verify general` (v0.4+)
 - [`docs/reconciliation.md`](./docs/reconciliation.md) — the ten reconciler rules
 - [`docs/topology.md`](./docs/topology.md) — general-topology authoring guide (v0.3+)
 - [`docs/multi-step.md`](./docs/multi-step.md) — multi-step training receipts, `trace_id` + `step_index` (v0.3+)
 - [`docs/canonical-emission.md`](./docs/canonical-emission.md) — byte-level encoding contract
-- [`docs/computation-order.md`](./docs/computation-order.md) — IEEE 754 ordering rules; FMA prohibition; hybrid tolerance (v0.3+)
-- [`docs/schema.md`](./docs/schema.md) — field-by-field walk-through of the receipt schema (v0.1.0 and v0.2.0)
+- [`docs/computation-order.md`](./docs/computation-order.md) — IEEE 754 ordering rules; FMA prohibition; hybrid tolerance (v0.3+); determinism boundary (v0.4+)
+- [`docs/schema.md`](./docs/schema.md) — field-by-field walk-through of the receipt schemas (v0.1.0, v0.2.0) and the v0.4 input schema
 - [`docs/attestation.md`](./docs/attestation.md) — in-toto v1 attestation seam (v0.2+)
-- `fixtures/` — canonical goldens (Mazur, XOR, iris), published ledgers, formatter policy, deliberately-broken bad-* receipts (one per reconciler rule plus multi-step bad-chain and bad-trace-id)
-- `schemas/receipt.v0.1.0.json` + `schemas/receipt.v0.2.0.json` — receipt JSON Schemas (closed, `x-order`-annotated, additive)
+- `fixtures/` — canonical goldens (Mazur, XOR, XOR per-neuron-bias, iris), published ledgers, formatter policy, deliberately-broken bad-* receipts (one per reconciler rule plus multi-step bad-chain, bad-trace-id, and six bad-bias-*)
+- `schemas/receipt.v0.1.0.json` + `schemas/receipt.v0.2.0.json` + `schemas/topology-input.v0.4.0.json` — receipt JSON Schemas + input-config schema (all closed, `x-order`-annotated, additive)
 - [`CONTRIBUTING.md`](./CONTRIBUTING.md) — the law stack, the anti-circularity ratchet, the bad-receipts-precede-good doctrine
 - [`SECURITY.md`](./SECURITY.md) — what counts as a vulnerability for a verifier
 

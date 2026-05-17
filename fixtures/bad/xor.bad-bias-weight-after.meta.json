@@ -1,0 +1,51 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "xor.bad-bias-weight-after.meta",
+  "describes": "fixtures/bad/xor.bad-bias-weight-after.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/xor-per-neuron-bias.golden.jsonl (engine-emitted v0.4 canonical bytes, per-neuron biases on h1/h2/y with bias_policy.mode=sgd). The fixture differs from the golden in exactly two places: the fixture_status block (3 fields) and the single targeted numeric value.",
+  "mutation": {
+    "field_path": "updates[6].weight_after",
+    "parameter_id": "b_h1",
+    "update_kind": "bias",
+    "original": 0.103093951,
+    "mutated": 0.103094951,
+    "delta_absolute": 1.0e-6,
+    "delta_vs_tolerance_multiplier": "~970x (effective tolerance ~1.03e-9 at this magnitude under {atol: 1e-12, rtol: 1e-8}; delta ~1e-6 is well above the rtol-scaled noise floor)",
+    "what_was_NOT_mutated": [
+      "updates[6].weight_before (0.100000000 — left operand of Rule 6 sum)",
+      "updates[6].update (0.00309395108 — right operand of Rule 6 sum)",
+      "updates[6].gradient + updates[6].optimizer.* (Rule 4 + Rule 5 still pass — gradient and update are internally consistent)",
+      "parameters_after.b_h1 (0.103093951 — derived from parameters_before + update; Rule 7 still passes because it uses STORED update, not STORED weight_after)",
+      "all other parameter updates",
+      "forward / loss / backward / parameters_before"
+    ]
+  },
+  "single_target_invariant": "Reconciliation produces exactly one Rule 6 failure naming updates[6].weight_after on parameter b_h1. Rule 5 must NOT fire (update is unchanged). Rule 7 must NOT fire (parameters_after.b_h1 is consistent with parameters_before + STORED update, which is the spec form of Rule 7).",
+  "reconciliation_check_targeted_first": "Rule 6: weight_after == weight_before + update",
+  "cascading_failures_observed": [],
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/xor.bad-bias-weight-after.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 6",
+      "b_h1",
+      "updates[6].weight_after"
+    ],
+    "stderr_must_NOT_contain": [
+      "Rule 1",
+      "Rule 2",
+      "Rule 3",
+      "Rule 4",
+      "Rule 5",
+      "Rule 7",
+      "Rule 8"
+    ],
+    "stderr_section_count": {
+      "Rule 6:": 1
+    }
+  },
+  "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures. The fixture_status block being deliberately_corrupted / expected_to_fail_reconciliation must NOT mask the Rule 6 failure.",
+  "purpose": "Anti-circularity (Csmith / CompCert lineage) extended into the v0.4 per-neuron bias corner: proves the reconciler checks Rule 6 (weight_after == weight_before + update) on bias updates by detecting a 1e-6 mismatch between stored weight_after and the sum of (unmutated) weight_before + update. This is a clean single-rule fixture — no cascades — because Rule 6 reads stored weight_after but Rule 7 reads stored update.",
+  "v0_4_note": "For bias updates, weight_before == parameters_before[bias_id] and weight_after represents the post-update bias value. Rule 6 fires identically whether the parameter is a weight or a bias."
+}

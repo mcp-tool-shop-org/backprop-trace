@@ -19,6 +19,12 @@
     "parameters_before / parameters_after / inputs / targets / forward / backward.{output,hidden}_error_signals / post_update_forward / post_update_loss.per_output all converted from fixed-key Mazur objects to {additionalProperties: ...} for arbitrary unit/parameter ids; key-set conformance to parameter_order/unit_order enforced at runtime by the validator (not by the schema)",
     "fixture_status.authoring_state adds engine_generated_general (parallel to engine_generated for Mazur)"
   ],
+  "x-changes-from-v0.2.0-initial": [
+    "v0.4 widening: topology.bias_sharing.enum extended from [per_layer] to [per_layer, per_neuron] (closes the previously-declared-but-unused per-neuron bias corner)",
+    "v0.4 widening: OutputErrorSignal.factors.minItems relaxed from 2 to 1 (per-neuron bias gradient is a one-factor product; Mazur 2-factor receipts still validate byte-identically since factors.length === 2 in practice)",
+    "v0.4 widening: Optimizer.factors.minItems relaxed from 2 to 1 (parallel relaxation for per-neuron bias single-factor SGD updates)",
+    "v0.4 widenings are mildly-breaking for strict minItems=2 callers, invisible to existing Mazur receipts (factors.length === 2 always); see schemas/topology-input.v0.4.0.json for the new authoring input schema"
+  ],
   "x-order": [
     "schema_version",
     "fixture",
@@ -239,7 +245,7 @@
         "activation_hidden": { "enum": ["sigmoid", "identity", "relu"] },
         "activation_output": { "enum": ["sigmoid", "identity", "relu"] },
         "loss": { "enum": ["half_squared_error"] },
-        "bias_sharing": { "enum": ["per_layer"] }
+        "bias_sharing": { "enum": ["per_layer", "per_neuron"] }
       }
     },
     "UnitNumberMap": {
@@ -304,7 +310,7 @@
       "properties": {
         "factors": {
           "type": "array",
-          "minItems": 2,
+          "minItems": 1,
           "items": { "$ref": "#/$defs/NamedFactor" }
         },
         "product_order": { "const": "left_to_right" },
@@ -383,7 +389,7 @@
             "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
             "factors": {
               "type": "array",
-              "minItems": 2,
+              "minItems": 1,
               "items": { "$ref": "#/$defs/NamedFactor" }
             },
             "product_order": { "const": "left_to_right" }

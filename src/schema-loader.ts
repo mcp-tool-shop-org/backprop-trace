@@ -13,6 +13,20 @@
  * this loader exists so external consumers can introspect the schema
  * itself (e.g. for documentation generation, OpenAPI integration, or
  * client-side validators in other languages).
+ *
+ * v0.4 adds a parallel loader for the *input* schema family
+ * (`schemas/topology-input.v<version>.json`). Input schemas describe the
+ * shape consumed by `bp generate from-config` BEFORE the engine runs;
+ * they intentionally PROHIBIT receipt-only fields (forward, loss,
+ * updates, parameters_after, post_update_forward, post_update_loss,
+ * fixture_status) via the schema's `additionalProperties: false` +
+ * explicit property list. This is the trust-boundary preservation pinned
+ * in the v0.4 consolidator decision §7 (risk 1: canonical-emission
+ * trust leakage). Receipt schemas and input schemas are versioned
+ * independently — they share the same `schemas/` directory but live on
+ * separate version tuples, separate caches, and separate getter
+ * functions. A receipt schema bump does NOT force an input schema bump,
+ * and vice versa.
  */
 
 import { readFileSync } from "node:fs";
@@ -83,5 +97,70 @@ export function getReceiptSchema(version: SchemaVersion = "0.1.0"): object {
   );
   const loaded = JSON.parse(readFileSync(schemaPath, "utf-8")) as object;
   schemaCache.set(version, loaded);
+  return loaded;
+}
+
+/**
+ * Tuple of all topology-input schema versions this package ships. New
+ * versions append here AND require dropping
+ * `schemas/topology-input.v<version>.json` in the package payload.
+ *
+ * v0.4 ships:
+ *   - "0.4.0" — the initial topology+input schema for
+ *     `bp generate from-config`. Validates topology, inputs, targets,
+ *     parameters_before, numeric_policy, bias_policy, learning_rate,
+ *     and optional fixture/metadata/trace_id/step_index. Prohibits
+ *     receipt-only fields via `additionalProperties: false`.
+ *
+ * Input schemas are versioned INDEPENDENTLY from receipt schemas: a
+ * receipt-schema bump (e.g. v0.2.0 → v0.3.0) does NOT force an input
+ * schema bump, and vice versa. Both families coexist in the same
+ * `schemas/` directory but on disjoint version tuples.
+ */
+export const INPUT_SCHEMA_VERSIONS = ["0.4.0"] as const;
+
+/**
+ * Union of currently-shipped topology-input schema versions.
+ */
+export type InputSchemaVersion = (typeof INPUT_SCHEMA_VERSIONS)[number];
+
+const inputSchemaCache = new Map<string, object>();
+
+/**
+ * Load and return the parsed topology-input schema for the given version.
+ *
+ * Cached on first read; subsequent calls return the same object instance
+ * (do NOT mutate the returned object — it is shared across callers).
+ *
+ * Parallel to getReceiptSchema. Reads from
+ * `schemas/topology-input.v<version>.json`.
+ *
+ * @param version  Schema version to load. Defaults to "0.4.0" (the
+ *                 only shipped input schema as of v0.4).
+ * @returns        The parsed JSON-Schema object (NOT the raw text).
+ * @throws         Error if `version` is not in INPUT_SCHEMA_VERSIONS,
+ *                 OR if the corresponding file is missing / unreadable /
+ *                 not valid JSON. Same fail-loud-at-module-load posture
+ *                 as getReceiptSchema.
+ */
+export function getInputSchema(
+  version: InputSchemaVersion = "0.4.0",
+): object {
+  const cached = inputSchemaCache.get(version);
+  if (cached) return cached;
+  if (!INPUT_SCHEMA_VERSIONS.includes(version)) {
+    throw new Error(
+      `Unknown input schema version: ${JSON.stringify(version)}. ` +
+        `Known versions: ${INPUT_SCHEMA_VERSIONS.join(", ")}.`,
+    );
+  }
+  const schemaPath = resolve(
+    __dirname,
+    "..",
+    "schemas",
+    `topology-input.v${version}.json`,
+  );
+  const loaded = JSON.parse(readFileSync(schemaPath, "utf-8")) as object;
+  inputSchemaCache.set(version, loaded);
   return loaded;
 }

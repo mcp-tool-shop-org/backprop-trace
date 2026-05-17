@@ -9,7 +9,81 @@ Note: the `schema_version` field inside receipts (`"0.1.0"`, `"0.2.0"`) is the
 receipt-format version, which is versioned independently of this npm package
 version. A receipt written today against schema 0.1.0 will still validate
 against schema 0.1.0 in v0.5 of the package; v0.3 adds schema 0.2.0 for the
-generalized topology + multi-step path without retiring schema 0.1.0.
+generalized topology + multi-step path without retiring schema 0.1.0. v0.4
+introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
+validates engine INPUTS — distinct from the receipt schemas that validate
+engine OUTPUTS.
+
+## [0.4.0] - 2026-05-16
+
+### Added
+
+- `bp generate from-config <file>` — read a topology+input JSON, produce a
+  canonical receipt. Authoring tools surface (Agent D path from v0.4
+  study-swarm).
+- `bp scaffold topology --topology mazur|xor|iris [--out <file>]` — write a
+  sample input file to bootstrap a new topology.
+- `bp validate-input <file>` — schema-validate an input config without
+  running the engine.
+- Per-neuron bias support: `bias_sharing: "per_neuron"` in Topology,
+  `Update.kind: "bias"` populated, `Update.layer_edge: "bias_to_unit"`
+  populated. Bias updates are one-factor products of the unit's error
+  signal.
+- New library exports: `parseTopologyInput`, `validateTopologyInput`,
+  `validateTopologyInputOrThrow`, `getInputSchema`,
+  `INPUT_SCHEMA_VERSIONS`, `XOR_PER_NEURON_BIAS_INPUT`.
+- NEW: `schemas/topology-input.v0.4.0.json` — input schema separate from
+  receipt schema. `additionalProperties: false` enforces that receipt-only
+  fields (forward, loss, updates, parameters_after, post_update_forward,
+  post_update_loss, fixture_status) are PROHIBITED in input files. The
+  trust boundary is preserved: authored bytes can never become receipt
+  bytes.
+- XOR per-neuron-bias golden fixture + 6 bad-bias-* fixtures (one per
+  applicable rule, per Csmith doctrine).
+- Determinism canary test: `Math.exp(-0.5)` constant pinned across the CI
+  matrix (Agent E's early-warning siren for V8 fdlibm drift).
+- New CI matrix cell: `node-version: '22.11.0'` alongside the existing
+  `22.x` cells.
+- NEW: `docs/authoring.md` walkthrough of authoring a custom topology via
+  `bp scaffold` → edit → `bp generate from-config` → `bp verify general`.
+
+### Changed
+
+- `schemas/receipt.v0.2.0.json` additive widening: `bias_sharing.enum`
+  adds `"per_neuron"`; `OutputErrorSignal.factors.minItems` relaxed from
+  2 to 1 (per-neuron bias gradient is a one-factor product).
+- README: added "Determinism boundary" section documenting the V8/Node 22
+  byte-equal contract scope and the no-go list (Bun/Deno, decimal.js,
+  custom Math.exp, Sigstore embedding).
+
+### Determinism scope (unchanged)
+
+- V8/Node 22 scalar IEEE 754 doubles. ECMA-262 §21.3 leaves Math.exp
+  precision implementation-defined; backprop-trace's byte-equal contract
+  holds on the pinned matrix only.
+- Per-neuron bias adds no new transcendentals; the math is `+`, `*` only.
+
+### Doctrine ratchet
+
+- v0.4 study-swarm output (consolidator-decision.md) explicitly REJECTS
+  softmax+CE (defer to v0.5; factor-decomposition reshape required),
+  `bp attest`/DSSE/in-toto (premature without downstream consumer), tanh
+  (surface area without lift), momentum/Adam/weight-decay/batching
+  (deferred), custom Math.exp / decimal.js / Bun-Deno matrix
+  (thesis-erosion).
+
+### Migration notes (v0.3.0 → v0.4.0)
+
+- v0.1/v0.2 receipts continue to validate against v0.1.0/v0.2.0 schemas.
+- v0.2.0 schema's per_layer-only constraint is widened; existing per_layer
+  receipts still validate.
+- New per-neuron-bias receipts emit `bias_sharing: "per_neuron"` in
+  topology and include per-unit bias parameters in `parameter_order` +
+  `parameters_before` + `parameters_after`.
+- Authoring tooling is opt-in; existing programmatic API (`runGeneralStep`
+  with hand-constructed `GeneralInput`) unchanged.
+
+[0.4.0]: https://github.com/mcp-tool-shop-org/backprop-trace/releases/tag/v0.4.0
 
 ## [0.3.0] - 2026-05-16
 

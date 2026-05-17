@@ -1,0 +1,54 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "xor.bad-bias-provenance.meta",
+  "describes": "fixtures/bad/xor.bad-bias-provenance.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/xor-per-neuron-bias.golden.jsonl (engine-emitted v0.4 canonical bytes, per-neuron biases on h1/h2/y with bias_policy.mode=sgd). The fixture differs from the golden in exactly two places: the fixture_status block (3 fields) and the single targeted numeric value.",
+  "mutation": {
+    "field_path": "updates[6].optimizer.factors[0].value",
+    "parameter_id": "b_h1",
+    "update_kind": "bias",
+    "original": 0.00618790217,
+    "mutated": 0.00618890217,
+    "delta_absolute": 1.0e-6,
+    "delta_vs_tolerance_multiplier": "~16162x (effective tolerance ~6.19e-11 at this magnitude under {atol: 1e-12, rtol: 1e-8})",
+    "what_was_NOT_mutated": [
+      "updates[6].optimizer.factors[0].from ('backward.hidden_error_signals.h1.signal_value' — the provenance pointer Rule 8 resolves)",
+      "updates[6].optimizer.factors[0].name ('hidden_error_signal')",
+      "backward.hidden_error_signals.h1.signal_value (0.00618790217 — Rule 8 resolves the path and finds this UNMUTATED value, then compares against the mutated factor.value)",
+      "updates[6].gradient (0.00618790217 — kept at the original value; Rule 4 cascades because mutated factor multiplied through no longer equals stored gradient)",
+      "updates[7] (b_h2) and updates[8] (b_y) bias factors — unmutated; the same 0.00618790217 value appears in updates[0] (w_x1_h1) and updates[1] (w_x2_h1) as hidden_error_signal factor.value, NOT mutated here",
+      "forward / loss / parameters_*"
+    ],
+    "rule_4_cascade_unavoidable": "Rule 8 mutates a FACTOR value. Rule 4 multiplies factors to recompute gradient. Mutating the single bias factor's value perturbs the Rule-4 product by exactly the same delta (1e-6) because the per-neuron bias gradient is a one-factor product (gradient = factors[0].value). So Rule 4 ALSO fires on b_h1. This is structurally unavoidable for the 'mutate factor.value, leave from intact' fixture design — Rule 4 cannot pass when its inputs are wrong. Rule 8 is the targeted invariant; Rule 4 is the structural cascade. The reconciler distinguishes them via the field_path: Rule 8 reports field_path = the 'from' string ('backward.hidden_error_signals.h1.signal_value'), Rule 4 reports field_path = 'updates[6].gradient'."
+  },
+  "single_target_invariant": "Reconciliation produces exactly one Rule 8 failure naming parameter b_h1 with field_path = 'backward.hidden_error_signals.h1.signal_value' (the 'from' path). One Rule 4 failure on updates[6].gradient is the structural cascade.",
+  "reconciliation_check_targeted_first": "Rule 8: factor.value == value at the path indicated by factor.from",
+  "cascading_failures_observed": [
+    "Rule 4 on updates[6].gradient (b_h1): the single-factor product (= factor.value) no longer matches stored gradient. Structural cascade — cannot be eliminated without making the fixture violate the 'single mutation' contract. Note the special case: for per-neuron bias updates the factor count is 1, so the cascade delta exactly equals the mutation delta (no other factor to multiply against)."
+  ],
+  "expected_verify_outcome": {
+    "command": "bp reconcile receipt fixtures/bad/xor.bad-bias-provenance.jsonl",
+    "exit_code_nonzero": true,
+    "stderr_must_contain": [
+      "reconciliation failed",
+      "Rule 8",
+      "b_h1",
+      "backward.hidden_error_signals.h1.signal_value"
+    ],
+    "stderr_must_NOT_contain": [
+      "Rule 1",
+      "Rule 2",
+      "Rule 3",
+      "Rule 5",
+      "Rule 6",
+      "Rule 7"
+    ],
+    "stderr_section_count": {
+      "Rule 8:": 1,
+      "Rule 4:": 1
+    }
+  },
+  "failure_priority_assertion": "Per docs/reconciliation.md, reconciliation failures report before fixture-lifecycle failures.",
+  "purpose": "Anti-circularity (Csmith / CompCert lineage) extended into the v0.4 per-neuron bias corner: proves the reconciler checks Rule 8 (provenance reference consistency — factor.value resolves to the value at factor.from) on bias updates by detecting a 1e-6 mismatch between the stored single-factor value and the resolved backward.hidden_error_signals.h1.signal_value. The Rule 4 cascade is acceptable and documented.",
+  "v0_4_note": "For per-neuron bias updates the optimizer factor's `from` always points to a backward.<layer>_error_signals.<unit>.signal_value path. Rule 8 fires identically to the weight-update case; the only difference is the factor count (1 instead of 2)."
+}

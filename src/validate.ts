@@ -46,10 +46,14 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ValidateFunction } from "ajv";
 import type { MazurReceipt } from "./engine.js";
+import type { GeneralInput } from "./general-engine.js";
 import {
   getReceiptSchema,
   SCHEMA_VERSIONS,
   type SchemaVersion,
+  getInputSchema,
+  INPUT_SCHEMA_VERSIONS,
+  type InputSchemaVersion,
 } from "./schema-loader.js";
 
 // Compile both schemas once at module load. Ajv compilation is hot:
@@ -94,21 +98,29 @@ ajv.addKeyword({ keyword: "x-order" });
 ajv.addKeyword({ keyword: "x-rule" });
 
 /**
- * Strip the top-level `x-changes-from-v0.1.0` annotation from a loaded
- * schema object if present. The annotation's name contains periods, which
- * violate Ajv's keyword-identifier regex (^[a-z_$][a-z0-9_$:-]*$) so we
- * can't register it via addKeyword. It's purely descriptive metadata
- * (docs-generator change-log) — removing it does not affect any
- * validation semantics. Returns a shallow-clone with the annotation
- * removed; the original cached object is untouched.
+ * Strip top-level `x-changes-from-*` annotations from a loaded schema
+ * object if present. Those annotation names contain periods (e.g.
+ * `x-changes-from-v0.1.0`, `x-changes-from-v0.2.0-initial`) which
+ * violate Ajv's keyword-identifier regex (^[a-z_$][a-z0-9_$:-]*$) so
+ * they can't be registered via addKeyword. They are purely descriptive
+ * metadata (docs-generator change-log) — removing them does not affect
+ * any validation semantics.
+ *
+ * The matcher is the prefix `x-changes-from-` rather than a hard-coded
+ * list so future schema bumps (`x-changes-from-v0.2.0`,
+ * `x-changes-from-v0.3.0`, etc.) drop in without code changes here.
+ * Returns a shallow-clone with matching annotations removed; the
+ * original cached object is untouched.
  */
 function stripInvalidKeywordAnnotations(schema: object): object {
-  if (!("x-changes-from-v0.1.0" in schema)) return schema;
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { ["x-changes-from-v0.1.0"]: _stripped, ...rest } = schema as Record<
-    string,
-    unknown
-  >;
+  const entries = Object.entries(schema as Record<string, unknown>);
+  const hasInvalid = entries.some(([k]) => k.startsWith("x-changes-from-"));
+  if (!hasInvalid) return schema;
+  const rest: Record<string, unknown> = {};
+  for (const [k, v] of entries) {
+    if (k.startsWith("x-changes-from-")) continue;
+    rest[k] = v;
+  }
   return rest;
 }
 
@@ -117,6 +129,20 @@ for (const v of SCHEMA_VERSIONS) {
   validators.set(
     v,
     ajv.compile(stripInvalidKeywordAnnotations(getReceiptSchema(v))),
+  );
+}
+
+// Compile input-schema validators alongside the receipt validators on the
+// SAME Ajv instance. Mirrors the receipt-validator pattern: compile once
+// at module load, cache by version, fail-fast on Ajv-strict violations
+// during compilation. v0.4 ships exactly one input schema ("0.4.0");
+// future input-schema versions append to INPUT_SCHEMA_VERSIONS in
+// schema-loader.ts and land here automatically via the loop.
+const inputValidators = new Map<InputSchemaVersion, ValidateFunction>();
+for (const v of INPUT_SCHEMA_VERSIONS) {
+  inputValidators.set(
+    v,
+    ajv.compile(stripInvalidKeywordAnnotations(getInputSchema(v))),
   );
 }
 
@@ -284,5 +310,130 @@ export function validateReceiptOrThrow(
   throw new Error(
     `Receipt schema validation failed (v${result.schemaVersion}): ${summary}. ` +
       `Hint: full error list available via validateReceiptSchema().`,
+  );
+}
+
+// --- v0.4 topology-input validator ----------------------------------------
+
+/**
+ * Discriminated-union result of validateTopologyInput.
+ *
+ * On `ok: true`, `input` is cast to `GeneralInput`. The cast is sound at
+ * the JSON-shape level: the input schema enforces the same key set + types
+ * that GeneralInput declares. The cast is NOT sound at the engine-semantic
+ * level — Topology's parameter cross-references (parameter_order matches
+ * parameters[].id, from_unit/to_unit reference declared units, etc.) are
+ * NOT enforced by the JSON schema. Those structural invariants are
+ * enforced at engine entry by `assertTopologyValid` inside runGeneralStep.
+ * Callers passing the validated input straight to runGeneralStep get the
+ * full safety net; callers using the input for documentation / display
+ * before engine entry should not assume engine-semantic validity.
+ *
+ * On `ok: false`, `schemaVersion` records which input schema the
+ * validation was dispatched against, mirroring ValidationResult.
+ */
+export type InputValidationResult =
+  | { ok: true; input: GeneralInput; schemaVersion: InputSchemaVersion }
+  | { ok: false; errors: SchemaError[]; schemaVersion: InputSchemaVersion };
+
+/**
+ * Optional caller-supplied overrides for validateTopologyInput.
+ */
+export type ValidateInputOptions = {
+  version?: InputSchemaVersion;
+};
+
+/**
+ * Validate an unknown value against the topology-input schema family.
+ *
+ * Parallel to validateReceiptSchema but pinned to the input schema
+ * family (`schemas/topology-input.v<version>.json`). The dispatch order
+ * is simpler than the receipt validator because the input schema does
+ * NOT carry an in-band `schema_version` discriminator (input files are
+ * authored, not engine-generated; we don't want authors to have to
+ * declare which input-schema version they target — the only one shipped
+ * is v0.4.0):
+ *   1. If `opts.version` is supplied, validate against that exact schema.
+ *   2. Else, default to the latest input schema ("0.4.0").
+ *
+ * Does NOT throw on validation failure. Use validateTopologyInputOrThrow
+ * for the exception-flow convenience wrapper.
+ *
+ * @param input  Any JS value, typically the result of `JSON.parse(file)`.
+ *               Pass it through parseTopologyInput (src/parse-input.ts)
+ *               if you want JSON-syntax errors and schema errors handled
+ *               together.
+ * @param opts   Optional validation overrides.
+ * @returns      `{ ok: true, input, schemaVersion }` on success with the
+ *               input cast to GeneralInput (see InputValidationResult
+ *               for the cast caveat), or
+ *               `{ ok: false, errors, schemaVersion }` with at most one
+ *               error (allErrors: false ⇒ fail-fast).
+ */
+export function validateTopologyInput(
+  input: unknown,
+  opts?: ValidateInputOptions,
+): InputValidationResult {
+  const version: InputSchemaVersion = opts?.version ?? "0.4.0";
+  const validator = inputValidators.get(version);
+  if (!validator) {
+    throw new Error(
+      `Internal: no compiled validator for input schema version ${JSON.stringify(version)}. ` +
+        `This indicates schema-loader.ts INPUT_SCHEMA_VERSIONS was updated without a ` +
+        `matching schemas/topology-input.v${version}.json file.`,
+    );
+  }
+  if (validator(input)) {
+    // The cast is the runtime-trust seam noted in InputValidationResult:
+    // JSON-shape conformance is enforced by Ajv; engine-semantic
+    // invariants (parameter cross-references, finiteness of every
+    // weight, etc.) are enforced by assertTopologyValid inside
+    // runGeneralStep when the input reaches the engine.
+    return {
+      ok: true,
+      input: input as unknown as GeneralInput,
+      schemaVersion: version,
+    };
+  }
+  const errors = (validator.errors ?? []).map((e) => ({
+    instancePath: e.instancePath ?? "",
+    schemaPath: e.schemaPath ?? "",
+    keyword: e.keyword ?? "",
+    message: e.message ?? "",
+    params: (e.params ?? {}) as Record<string, unknown>,
+  }));
+  return { ok: false, errors, schemaVersion: version };
+}
+
+/**
+ * Convenience wrapper that throws if topology-input validation fails.
+ * Error message summarizes every error (1 in fail-fast mode) as
+ * `path: message` joined with `; `. The full structured error list
+ * remains accessible via validateTopologyInput for callers that need
+ * to render JSON / SARIF.
+ *
+ * Returns GeneralInput on success. As with validateTopologyInput, the
+ * type cast is at the JSON-shape level only; engine-semantic
+ * invariants are enforced by assertTopologyValid inside runGeneralStep.
+ *
+ * @throws Error if the input does not satisfy the topology-input
+ *         schema. The thrown Error names the dispatched schema version
+ *         (e.g. "Topology input schema validation failed (v0.4.0): ...").
+ */
+export function validateTopologyInputOrThrow(
+  input: unknown,
+  opts?: ValidateInputOptions,
+): GeneralInput {
+  const result = validateTopologyInput(input, opts);
+  if (result.ok) return result.input;
+  const summary = result.errors
+    .map((e) => `${e.instancePath || "/"}: ${e.message}`)
+    .join("; ");
+  throw new Error(
+    `Topology input schema validation failed (v${result.schemaVersion}): ${summary}. ` +
+      `Hint: full error list available via validateTopologyInput(). ` +
+      `The input must NOT contain receipt-only fields (forward, loss, ` +
+      `updates, parameters_after, post_update_forward, post_update_loss, ` +
+      `fixture_status); those are engine outputs.`,
   );
 }

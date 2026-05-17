@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mcp-tool-shop-org/backprop-trace/schemas/topology-input.v0.4.0.json",
+  "title": "backprop-trace topology+input schema v0.4.0 (input to runGeneralStep)",
+  "description": "This is the INPUT schema for bp generate from-config. The engine consumes this file, runs forward/backward/update math, and produces a receipt validated against schemas/receipt.v0.2.0.json. Receipt-only fields (forward, loss, updates, parameters_after, etc.) MUST NOT appear in this input file -- they are engine outputs, not engine inputs. The trust boundary lives at runGeneralStep: authored bytes never become receipt bytes.",
+  "type": "object",
+  "x-order": [
+    "$schema",
+    "fixture",
+    "metadata",
+    "numeric_policy",
+    "bias_policy",
+    "topology",
+    "learning_rate",
+    "trace_id",
+    "step_index",
+    "inputs",
+    "targets",
+    "parameters_before"
+  ],
+  "additionalProperties": false,
+  "required": [
+    "topology",
+    "learning_rate",
+    "inputs",
+    "targets",
+    "parameters_before",
+    "numeric_policy",
+    "bias_policy"
+  ],
+  "properties": {
+    "$schema": {
+      "description": "Optional dialect identifier. When present, MUST be the canonical JSON Schema 2020-12 URI.",
+      "type": "string",
+      "const": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "fixture": {
+      "description": "Optional human-readable fixture name that flows through to receipt.fixture.",
+      "type": "string"
+    },
+    "metadata": {
+      "description": "Free-form provenance and authoring notes. Flows through to receipt.metadata unchanged. Permissive in v0.4.",
+      "type": "object"
+    },
+    "numeric_policy": { "$ref": "#/$defs/NumericPolicy" },
+    "bias_policy": { "$ref": "#/$defs/BiasPolicy" },
+    "topology": { "$ref": "#/$defs/Topology" },
+    "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
+    "trace_id": {
+      "description": "Optional 128-bit lowercase hex identifier shared across all steps of a multi-step training run. Present iff this input drives a multi-step run; absent for single-step inputs. Pairs with step_index.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "step_index": {
+      "description": "Optional 0-based step index within the trace identified by trace_id. Present iff trace_id is present.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "inputs": {
+      "description": "Object whose keys are arbitrary input unit ids (validated at runtime against topology.unit_order.input) and whose values are numbers.",
+      "type": "object",
+      "additionalProperties": { "type": "number" }
+    },
+    "targets": {
+      "description": "Object whose keys are arbitrary output unit ids (validated at runtime against topology.unit_order.output) and whose values are numbers.",
+      "type": "object",
+      "additionalProperties": { "type": "number" }
+    },
+    "parameters_before": {
+      "description": "Object whose keys are arbitrary parameter ids (validated at runtime against topology.parameter_order) and whose values are numbers. These are the parameter values BEFORE the engine runs the step.",
+      "type": "object",
+      "additionalProperties": { "type": "number" }
+    }
+  },
+  "allOf": [
+    {
+      "description": "step_index requires trace_id and vice versa (multi-step inputs carry both).",
+      "anyOf": [
+        { "not": { "required": ["step_index"] } },
+        { "required": ["trace_id"] }
+      ]
+    },
+    {
+      "anyOf": [
+        { "not": { "required": ["trace_id"] } },
+        { "required": ["step_index"] }
+      ]
+    }
+  ],
+  "$defs": {
+    "UnitOrder": {
+      "description": "Canonical iteration order for units in each layer. Lives inside Topology. Keys of inputs/targets/etc. must conform to these arrays at runtime.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input", "hidden", "output"],
+      "properties": {
+        "input": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } },
+        "hidden": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } },
+        "output": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } }
+      }
+    },
+    "ParameterOrder": {
+      "description": "Canonical iteration order for parameters during emission. Lives inside Topology. Keys of parameters_before must match this set at runtime.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" }
+    },
+    "NumericPolicy": {
+      "type": "object",
+      "x-order": ["number_encoding", "precision_significant_digits", "rounding", "tolerance", "computation_order", "byte_output"],
+      "additionalProperties": false,
+      "required": ["number_encoding", "precision_significant_digits", "rounding", "tolerance"],
+      "properties": {
+        "number_encoding": { "const": "decimal" },
+        "precision_significant_digits": { "type": "integer", "minimum": 1 },
+        "rounding": { "const": "round_half_to_even" },
+        "tolerance": {
+          "description": "Hybrid tolerance. v0.4 inputs SHOULD emit the object form {atol, rtol}. The scalar form is legacy v0.1 compat sugar; the reader treats a scalar value X as {atol: X, rtol: 0}.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["atol", "rtol"],
+              "additionalProperties": false,
+              "properties": {
+                "atol": { "type": "number", "minimum": 0 },
+                "rtol": { "type": "number", "minimum": 0 }
+              }
+            },
+            { "type": "number", "minimum": 0 }
+          ]
+        },
+        "computation_order": { "const": "schema_defined" },
+        "byte_output": {
+          "type": "object",
+          "x-order": ["format", "json_key_order", "trailing_zero_policy", "indent"],
+          "additionalProperties": false,
+          "properties": {
+            "format": { "const": "jsonl" },
+            "json_key_order": { "const": "schema_defined" },
+            "trailing_zero_policy": { "const": "pad_to_significant_digits" },
+            "indent": { "const": "none" }
+          }
+        }
+      }
+    },
+    "BiasPolicy": {
+      "type": "object",
+      "x-order": ["mode", "reason", "updated_in_step", "reconciliation"],
+      "additionalProperties": false,
+      "required": ["mode", "updated_in_step"],
+      "properties": {
+        "mode": { "enum": ["constant", "sgd"] },
+        "reason": { "type": "string" },
+        "updated_in_step": { "type": "boolean" },
+        "reconciliation": { "type": "string" }
+      }
+    },
+    "Topology": {
+      "type": "object",
+      "x-order": ["layers", "input_size", "hidden_size", "output_size", "unit_order", "parameter_order", "parameters", "activation_hidden", "activation_output", "loss", "bias_sharing"],
+      "additionalProperties": false,
+      "required": ["layers", "input_size", "hidden_size", "output_size", "unit_order", "parameter_order", "parameters", "activation_hidden", "activation_output", "loss", "bias_sharing"],
+      "properties": {
+        "layers": { "type": "array", "items": { "type": "string" } },
+        "input_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "hidden_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "output_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "unit_order": { "$ref": "#/$defs/UnitOrder" },
+        "parameter_order": { "$ref": "#/$defs/ParameterOrder" },
+        "parameters": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "role"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "role": { "enum": ["input_to_hidden_weight", "hidden_to_output_weight", "hidden_bias", "output_bias"] },
+              "from_unit": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "to_unit": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "applies_to_units": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" }
+              }
+            }
+          }
+        },
+        "activation_hidden": { "enum": ["sigmoid", "identity", "relu"] },
+        "activation_output": { "enum": ["sigmoid", "identity", "relu"] },
+        "loss": { "enum": ["half_squared_error"] },
+        "bias_sharing": { "enum": ["per_layer", "per_neuron"] }
+      }
+    }
+  }
+}

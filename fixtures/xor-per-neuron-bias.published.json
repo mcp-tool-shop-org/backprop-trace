@@ -1,0 +1,225 @@
+{
+  "schema_version": "0.2.0",
+  "fixture": "xor-per-neuron-bias-2-2-1",
+  "compiled_on": "2026-05-16",
+  "evidence_ledger_for": "fixtures/xor-per-neuron-bias.golden.jsonl",
+  "human_readable_summary": "This ledger records what backprop-trace's V8/Node 22 engine (src/general-engine.ts) produces for one SGD step on the XOR-sigmoid 2-2-1 topology with per-neuron biases (two distinct hidden biases b_h1, b_h2 and one output bias b_y) and bias_policy.mode='sgd' so the biases are updated alongside the weights. Like fixtures/xor.published.json, no canonical published step-1 trace exists for this exact initial-weight configuration; the trace is engine-anchored. Per-neuron bias as a topology surface is widely documented in pedagogy (Goodfellow et al. 2016, Nielsen 2015, Rumelhart-Hinton-Williams 1986) but the field's standard convention is one bias per unit — no published reference fixes specific numeric values for this XOR-with-per-neuron-bias single-step trace. v0.4 establishes one.",
+  "engine_reproduction_source": "fixtures/xor-per-neuron-bias.golden.jsonl is the engine-emitted first-run output of src/general-engine.ts on the operator-chosen XOR_PER_NEURON_BIAS_INPUT input literal (V8/Node 22). The input weights match fixtures/xor.golden.jsonl's XOR_INPUT byte-for-byte; only the bias surface differs (3 per-neuron biases instead of 2 per-layer biases).",
+  "source": {
+    "anchor": "engine-anchored (no published step-1 trace exists for XOR-sigmoid 2-2-1 with per-neuron biases and these specific initial weights)",
+    "literature_grounding": [
+      {
+        "author": "Goodfellow, Bengio, Courville",
+        "title": "Deep Learning, Ch. 6.1 — Example: Learning XOR",
+        "year": 2016,
+        "url": "https://www.deeplearningbook.org/contents/mlp.html",
+        "summary": "Provides the canonical analytical CONVERGED solution for XOR (ReLU, loss=0). Establishes per-neuron biases as the standard topology surface (c = [0, -1] is a per-neuron hidden bias vector). Does NOT provide an arbitrary-init step-1 trace."
+      },
+      {
+        "author": "Rumelhart, Hinton, Williams",
+        "title": "Learning representations by back-propagating errors",
+        "year": 1986,
+        "url": "https://www.nature.com/articles/323533a0",
+        "summary": "Original backprop paper. The gradient-of-bias-equals-error-signal identity (∂E/∂b_u = signal_u) — which is what makes per-neuron bias updates a one-factor SGD product in this fixture's optimizer.factors block — is in the standard backprop derivation."
+      }
+    ],
+    "operator_chosen_init": {
+      "rationale": "Deterministic small monotonically-increasing weights mirroring fixtures/xor.published.json's XOR_INPUT (0.10, 0.15, 0.20, 0.25 for input-to-hidden; 0.30, 0.35 for hidden-to-output). Per-neuron biases chosen distinct so the receipt exercises three different bias-update signal paths: b_h1=0.10, b_h2=0.15, b_y=0.20.",
+      "seed_algorithm": "manual",
+      "weights": {
+        "w_x1_h1": 0.1,
+        "w_x2_h1": 0.15,
+        "w_x1_h2": 0.2,
+        "w_x2_h2": 0.25,
+        "w_h1_y": 0.3,
+        "w_h2_y": 0.35,
+        "b_h1": 0.1,
+        "b_h2": 0.15,
+        "b_y": 0.2
+      },
+      "sample": {
+        "inputs": { "x1": 1, "x2": 0 },
+        "target": { "y": 1 },
+        "truth_table_row": "1 XOR 0 = 1"
+      },
+      "hyperparameters": {
+        "learning_rate": 0.5,
+        "topology": "2 inputs -> 2 hidden (sigmoid, per-neuron bias) -> 1 output (sigmoid, per-neuron bias)",
+        "loss": "half_squared_error",
+        "optimizer": "sgd",
+        "bias_sharing": "per_neuron",
+        "bias_policy": "sgd (v0.4 per-neuron + sgd path: each bias parameter updated by SGD using the unit's error signal as the single-factor gradient)"
+      }
+    }
+  },
+  "claim_type_legend": {
+    "source_published_input": "Constant input or hyperparameter explicitly given in the source",
+    "source_published_loss": "Loss value explicitly given in the source",
+    "source_published_forward": "Forward-pass value explicitly given in the source",
+    "source_published_update": "Post-update parameter value explicitly given in the source",
+    "widely_cited_downstream_anchor": "Value commonly repeated in downstream pedagogy; not given an explicit derivation in the source at this precision",
+    "engine_anchored": "No published source provides this value; the engine's first-run output is the canonical anchor"
+  },
+  "reproduction_status_legend": {
+    "direct": "Constant input; no computation required",
+    "verified": "Engine reproduces this value within tolerance",
+    "drift_observed": "Engine produces a different value; documented in drift_note. Hard-gate value (true/false) governs whether drift fails the build or merely WARNs.",
+    "pending": "Not yet attempted"
+  },
+  "claims": [
+    {
+      "id": "loss_total",
+      "value": 0.0652238232,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.0652238232,
+      "drift_absolute": 0,
+      "provenance": "Half squared error of (target_y - forward.y.out) computed on the pre-update forward pass. Engine value pinned at 9 significant digits per numeric_policy.precision_significant_digits."
+    },
+    {
+      "id": "post_update_total_error",
+      "value": 0.0595972722,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.0595972722,
+      "drift_absolute": 0,
+      "provenance": "Post-update total error after one SGD step from the operator-chosen init, with per-neuron bias updates included. Decrease vs pre-update loss_total demonstrates the step moved in the descent direction (0.0652238232 -> 0.0595972722, delta -0.0056265510). The decrease is larger than fixtures/xor.golden.jsonl's analogous step (which only updates weights, not biases) because bias updates also reduce loss along their gradient direction.",
+      "v0_4_behavior": "Engine-anchored: any drift here would mean the engine math or canonical emission changed. bp verify general fails (hard gate) on drift."
+    },
+    {
+      "id": "forward_h1_out",
+      "value": 0.549833997,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.549833997,
+      "drift_absolute": 0,
+      "provenance": "sigmoid(net_h1) where net_h1 = w_x1_h1*x1 + w_x2_h1*x2 + b_h1 = 0.1*1 + 0.15*0 + 0.1 = 0.2. Same value as fixtures/xor.golden.jsonl's forward.h1.out because that fixture's per-layer b_hidden=0.10 plays the same role here as per-neuron b_h1=0.10 on unit h1."
+    },
+    {
+      "id": "forward_h2_out",
+      "value": 0.586617579,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.586617579,
+      "drift_absolute": 0,
+      "provenance": "sigmoid(net_h2) where net_h2 = w_x1_h2*x1 + w_x2_h2*x2 + b_h2 = 0.2*1 + 0.25*0 + 0.15 = 0.35. Differs from fixtures/xor.golden.jsonl's forward.h2.out (0.574442517 at net=0.30) because the per-neuron b_h2=0.15 is 0.05 higher than fixtures/xor's per-layer b_hidden=0.10, shifting net_h2 by 0.05."
+    },
+    {
+      "id": "forward_y_out",
+      "value": 0.638824632,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.638824632,
+      "drift_absolute": 0,
+      "provenance": "sigmoid(net_y) where net_y = w_h1_y*out_h1 + w_h2_y*out_h2 + b_y. Per-neuron b_y=0.20 matches fixtures/xor.golden.jsonl's per-layer b_output=0.20 so the bias contribution to net_y is identical; out_y differs only because out_h2 shifted upstream."
+    },
+    {
+      "id": "output_signal_y",
+      "value": 0.0833331697,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.0833331697,
+      "drift_absolute": 0,
+      "provenance": "Output error signal for y: (target_y - out_y) * sigmoid'(net_y) = 0.361175368 * 0.230727722. Same descent-direction sign convention as fixtures/xor; the value is what drives b_y's bias gradient in this fixture (∂E/∂b_y = signal_y, single-factor product)."
+    },
+    {
+      "id": "hidden_signal_h1",
+      "value": 0.00618790217,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.00618790217,
+      "drift_absolute": 0,
+      "provenance": "Hidden error signal for h1: (signal_y * w_h1_y) * sigmoid'(net_h1) = 0.0249999509 * 0.247516573 = 0.00618790217. Drives b_h1's bias gradient (∂E/∂b_h1 = signal_h1). This is the value Rule 8 resolves when checking the b_h1 bias update's factor.from = 'backward.hidden_error_signals.h1.signal_value'."
+    },
+    {
+      "id": "hidden_signal_h2",
+      "value": 0.00707282680,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.00707282680,
+      "drift_absolute": 0,
+      "provenance": "Hidden error signal for h2: (signal_y * w_h2_y) * sigmoid'(net_h2) = 0.0291666094 * 0.242497395 = 0.00707282680. Drives b_h2's bias gradient. Differs from fixtures/xor's signal_h2 (0.00715787471) because the shifted net_h2 changes both the upstream sigmoid'(net_h2) and the propagated chain through the output sigmoid."
+    },
+    {
+      "id": "parameters_after_b_h1",
+      "value": 0.103093951,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.103093951,
+      "drift_absolute": 0,
+      "provenance": "Post-step b_h1 = b_h1_before + lr * signal_h1 = 0.10 + 0.5 * 0.00618790217 = 0.103093951. Demonstrates the per-neuron + sgd path actually updates the bias (vs fixtures/xor where b_hidden remains 0.10 due to mode='constant')."
+    },
+    {
+      "id": "parameters_after_b_h2",
+      "value": 0.153536413,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.153536413,
+      "drift_absolute": 0,
+      "provenance": "Post-step b_h2 = b_h2_before + lr * signal_h2 = 0.15 + 0.5 * 0.00707282680 = 0.153536413. Distinct bias update from b_h1 — proves per-neuron biases evolve independently per unit signal."
+    },
+    {
+      "id": "parameters_after_b_y",
+      "value": 0.241666585,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.241666585,
+      "drift_absolute": 0,
+      "provenance": "Post-step b_y = b_y_before + lr * signal_y = 0.20 + 0.5 * 0.0833331697 = 0.241666585. The output bias update dominates the bias-update budget for this step because signal_y >> signal_h{1,2} (output errors are larger than backpropagated hidden errors at step 1)."
+    },
+    {
+      "id": "post_update_forward_y_out",
+      "value": 0.654754371,
+      "claim_type": "engine_anchored",
+      "reproduction_status": "verified",
+      "hard_gate": true,
+      "engine_reproduced_value": 0.654754371,
+      "drift_absolute": 0,
+      "provenance": "Post-update forward pass through the same network with parameters_after (weights AND per-neuron biases). Confirms the SGD step pushed the y output closer to target=1 (0.638824632 -> 0.654754371, delta +0.015929739). The bias updates contribute notably to this shift — compare to fixtures/xor where only weight updates run (0.637840858 -> 0.644059902, delta +0.006219044)."
+    }
+  ],
+  "compute_infrastructure": {
+    "cpu_arch": "x86_64",
+    "node_version_at_generation": "22.x",
+    "v8_version_at_generation": "12.x.x",
+    "os_at_generation": "windows",
+    "generation_date": "2026-05-16"
+  },
+  "standards_referenced": [
+    "Pineau et al. JMLR 2021 — ML Reproducibility Checklist (https://arxiv.org/abs/2003.12206)",
+    "Mitchell et al. FAT* 2019 — Model Cards (https://arxiv.org/abs/1810.03993)",
+    "Gebru et al. CACM 2021 — Datasheets for Datasets (https://arxiv.org/abs/1803.09010)",
+    "Kapoor et al. Science Advances 2024 — REFORMS (https://www.science.org/doi/10.1126/sciadv.adk3452)",
+    "Jia et al. IEEE S&P 2021 — Proof-of-Learning (https://ar5iv.labs.arxiv.org/html/2103.05633)",
+    "Goodfellow, Bengio, Courville 2016 — Deep Learning Ch. 6.1 (https://www.deeplearningbook.org/contents/mlp.html)",
+    "Rumelhart, Hinton, Williams 1986 — Learning representations by back-propagating errors (https://www.nature.com/articles/323533a0)"
+  ],
+  "caveats_and_recommendations": {
+    "scope": "single-step XOR with operator-chosen deterministic init AND per-neuron biases AND bias_policy.mode='sgd' (v0.4 SCOPE)",
+    "topology": "2-2-1 (2 inputs, 2 hidden with per-neuron biases b_h1+b_h2, 1 output with per-neuron bias b_y)",
+    "bias_sharing": "per_neuron (3 bias parameters total — one per hidden+output unit)",
+    "bias_policy_mode": "sgd (biases are UPDATED on the step; contrast fixtures/xor where mode='constant' freezes biases)",
+    "loss": "half_squared_error (MSE)",
+    "activation_hidden": "sigmoid (Math.exp via V8 fdlibm port; deterministic on Node 22 V8)",
+    "activation_output": "sigmoid",
+    "batching": "none (single sample x1=1, x2=0)",
+    "optimizer": "sgd (no momentum, no Adam, no weight decay)",
+    "gpu_determinism": "not applicable (CPU-only)",
+    "cross_engine_portability": "V8 only; Hermes / JSC / Bun-JSC untested",
+    "cross_node_major_portability": "tested on Node 22.x only; Math.exp is not contractually bit-stable across V8 majors",
+    "epoch_scope": "ONE training sample, ONE SGD step. Convergence to the 4-row XOR truth table requires many steps across all 4 training samples — outside v0.4 scope. v0.4 ships only the canonical first-step trace from the operator-chosen init demonstrating the per-neuron+sgd bias update path.",
+    "per_neuron_bias_factor_count": "Per-neuron bias updates emit a SINGLE-factor optimizer.factors block ([{name: <signal_name>, from: <signal_path>, value: signal_u}]); weight updates emit two factors (signal x upstream_activation). The schema (schemas/receipt.v0.2.0.json) was widened in v0.4 to set Optimizer.factors.minItems and OutputErrorSignal.factors.minItems to 1 to admit this case. The reconciler's multiplyFactorsLeftToRight helper returns factors[0].value for length-1 arrays (loop runs zero times), so Rule 4 applies byte-identically to bias updates.",
+    "rule_coverage": "All 8 single-receipt rules (1-8) apply to per-neuron bias updates. Per Agent B's analysis the only nuance is the factor-count = 1 special case in Rule 4 (handled by multiplyFactorsLeftToRight) and the schema minItems widening. The six bad-bias-* fixtures under fixtures/bad/ provide the Csmith-style contract tests for this surface."
+  }
+}

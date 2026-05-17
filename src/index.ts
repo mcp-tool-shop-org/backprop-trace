@@ -21,15 +21,23 @@
  *     identityDerivativeFromOut + relu + reluDerivativeFromOut + activate +
  *     activationDerivativeFromOut + ActivationName from ./activations
  *   - MAZUR_INPUT + MazurInput from ./mazur, plus v0.3 fixture exports:
- *     MAZUR_TOPOLOGY + XOR_TOPOLOGY + XOR_INPUT + IRIS_TOPOLOGY + IRIS_INPUT
+ *     MAZUR_TOPOLOGY + XOR_TOPOLOGY + XOR_INPUT + IRIS_TOPOLOGY + IRIS_INPUT,
+ *     plus v0.4 per-neuron-bias fixture: XOR_PER_NEURON_BIAS_INPUT
  *   - emitMazurReceipt + emitReceipts from ./emit, plus v0.3
  *     emitGeneralReceipt for v0.2.0-schema receipts
  *   - validateReceiptSchema + validateReceiptOrThrow + types from ./validate
  *     (v0.3: multi-version dispatch on schema_version)
+ *   - v0.4: validateTopologyInput + validateTopologyInputOrThrow +
+ *     InputValidationResult + ValidateInputOptions from ./validate for
+ *     the new topology-input schema family
  *   - parseReceipt + parseReceiptJsonl + parseMazurReceipt + types from ./parse
+ *   - v0.4: parseTopologyInput + ParseInputResult + ParseInputError from
+ *     ./parse-input for the new topology-input schema family
  *   - hashReceipt + HashAlgorithm from ./hash
  *   - getReceiptSchema + SCHEMA_VERSIONS + SchemaVersion from ./schema-loader
  *     (v0.3: SCHEMA_VERSIONS = ["0.1.0", "0.2.0"])
+ *   - v0.4: getInputSchema + INPUT_SCHEMA_VERSIONS + InputSchemaVersion
+ *     from ./schema-loader (INPUT_SCHEMA_VERSIONS = ["0.4.0"])
  *   - verifyEngineReproduces + VerifyEngineResult from ./verify-engine, plus
  *     v0.3 verifyGeneralEngineReproduces for v0.2.0-schema receipts
  *   - extractEngineInput + extractGeneralEngineInput from ./extract
@@ -201,6 +209,12 @@ export {
   XOR_INPUT,
   IRIS_TOPOLOGY,
   IRIS_INPUT,
+  // v0.4: XOR 2-2-1 with per-neuron biases (2 distinct hidden biases +
+  // 1 output bias) + bias_policy.mode === "sgd". Exercises the v0.4
+  // "per_neuron" bias sharing branch added to runGeneralStep by the
+  // Engine agent. Re-exported here so external consumers can author
+  // per-neuron-bias receipts without reaching into the ./mazur subpath.
+  XOR_PER_NEURON_BIAS_INPUT,
 } from "./mazur.js"
 
 // --- Emit (v0.1 Mazur + v0.3 general) ---
@@ -210,25 +224,49 @@ export {
   emitGeneralReceipt,
 } from "./emit.js"
 
-// --- Validate (v0.3 multi-version) ---
-export { validateReceiptSchema, validateReceiptOrThrow } from "./validate.js"
+// --- Validate (v0.3 multi-version + v0.4 topology-input) ---
+// validateReceiptSchema + validateReceiptOrThrow validate RECEIPTS against
+// the receipt schema family (v0.1.0, v0.2.0). validateTopologyInput +
+// validateTopologyInputOrThrow validate INPUTS against the topology-input
+// schema family (v0.4.0). The two families are versioned independently;
+// see schema-loader.ts for the separation rationale.
+export {
+  validateReceiptSchema,
+  validateReceiptOrThrow,
+  validateTopologyInput,
+  validateTopologyInputOrThrow,
+} from "./validate.js"
 export type {
   ValidationResult,
   SchemaError,
   ValidateOptions,
+  InputValidationResult,
+  ValidateInputOptions,
 } from "./validate.js"
 
-// --- Parse (v0.3 multi-version + back-compat parseMazurReceipt) ---
+// --- Parse (v0.3 multi-version receipts + v0.4 topology-input) ---
 export { parseReceipt, parseReceiptJsonl, parseMazurReceipt } from "./parse.js"
 export type { ParseResult, ParseError, ParsedReceiptShape } from "./parse.js"
+export { parseTopologyInput } from "./parse-input.js"
+export type { ParseInputResult, ParseInputError } from "./parse-input.js"
 
 // --- Hash ---
 export { hashReceipt } from "./hash.js"
 export type { HashAlgorithm } from "./hash.js"
 
-// --- Schema loader (v0.3: 0.1.0 + 0.2.0) ---
-export { getReceiptSchema, SCHEMA_VERSIONS } from "./schema-loader.js"
-export type { SchemaVersion } from "./schema-loader.js"
+// --- Schema loader (v0.3 receipts: 0.1.0 + 0.2.0; v0.4 input: 0.4.0) ---
+// getReceiptSchema + SCHEMA_VERSIONS + SchemaVersion: receipt schema
+// family. getInputSchema + INPUT_SCHEMA_VERSIONS + InputSchemaVersion:
+// topology-input schema family (introduced v0.4). The two families are
+// versioned independently — a receipt-schema bump does NOT force an
+// input-schema bump and vice versa.
+export {
+  getReceiptSchema,
+  SCHEMA_VERSIONS,
+  getInputSchema,
+  INPUT_SCHEMA_VERSIONS,
+} from "./schema-loader.js"
+export type { SchemaVersion, InputSchemaVersion } from "./schema-loader.js"
 
 // --- Verify engine (v0.1 Mazur + v0.3 general) ---
 export {

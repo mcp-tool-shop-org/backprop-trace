@@ -46,8 +46,8 @@ export type UnitOrder = {
 /**
  * Parameter role — names the structural slot the parameter fills in the
  * forward/backward equations. Weights connect two units; biases apply to
- * a whole layer (v0.3 supports per_layer bias sharing only — per_neuron
- * is deferred to v0.4+ per design memo §5).
+ * one or more units in a layer (v0.4 supports both per_layer and per_neuron
+ * bias sharing — see Topology.bias_sharing).
  */
 export type ParameterRole =
   | "input_to_hidden_weight"
@@ -86,7 +86,7 @@ export type Topology = {
   readonly activation_hidden: "sigmoid" | "identity" | "relu"
   readonly activation_output: "sigmoid" | "identity" | "relu"
   readonly loss: "half_squared_error"
-  readonly bias_sharing: "per_layer"
+  readonly bias_sharing: "per_layer" | "per_neuron"
   readonly input_size: number
   readonly hidden_size: number
   readonly output_size: number
@@ -112,9 +112,16 @@ export type Topology = {
  *     to declared units in the correct adjacent layers. input_to_hidden
  *     weights connect input -> hidden; hidden_to_output weights connect
  *     hidden -> output.
- *  6. Each bias has `applies_to_units` listing the entire hidden or
- *     output layer (per_layer sharing — every unit in the layer must
- *     appear exactly once).
+ *  6. Each bias has `applies_to_units` listing the appropriate units:
+ *     - per_layer: each bias parameter's `applies_to_units` MUST list the
+ *       entire hidden (or output) layer, exactly once each. There is
+ *       EXACTLY ONE hidden_bias and EXACTLY ONE output_bias.
+ *     - per_neuron: each bias parameter's `applies_to_units` MUST list
+ *       EXACTLY ONE unit. There is EXACTLY `hidden_size` hidden_bias
+ *       parameters (one per hidden unit) and EXACTLY `output_size`
+ *       output_bias parameters (one per output unit). The union of all
+ *       per_neuron applies_to_units within a role MUST cover the layer
+ *       (each unit served by exactly one bias).
  *  7. Activations are in the supported set ({sigmoid, identity, relu}).
  *
  * Returns void on success; throws on first violation.
@@ -228,19 +235,29 @@ export function assertTopologyValid(t: Topology): void {
       if (p.applies_to_units === undefined) {
         throw new Error(
           `Topology: parameter '${p.id}' has role 'hidden_bias' but is missing applies_to_units. ` +
-            `Hint: per_layer biases MUST declare applies_to_units listing every hidden unit.`,
+            `Hint: hidden_bias parameters MUST declare applies_to_units listing the unit(s) they bias.`,
         )
       }
-      assertAppliesToLayer(p.id, "hidden_bias", p.applies_to_units, t.unit_order.hidden, "hidden")
+      if (t.bias_sharing === "per_layer") {
+        assertAppliesToLayer(p.id, "hidden_bias", p.applies_to_units, t.unit_order.hidden, "hidden")
+      } else {
+        // per_neuron
+        assertAppliesToSingleUnit(p.id, "hidden_bias", p.applies_to_units, t.unit_order.hidden, "hidden")
+      }
     } else if (p.role === "output_bias") {
       outputBiasSeen += 1
       if (p.applies_to_units === undefined) {
         throw new Error(
           `Topology: parameter '${p.id}' has role 'output_bias' but is missing applies_to_units. ` +
-            `Hint: per_layer biases MUST declare applies_to_units listing every output unit.`,
+            `Hint: output_bias parameters MUST declare applies_to_units listing the unit(s) they bias.`,
         )
       }
-      assertAppliesToLayer(p.id, "output_bias", p.applies_to_units, t.unit_order.output, "output")
+      if (t.bias_sharing === "per_layer") {
+        assertAppliesToLayer(p.id, "output_bias", p.applies_to_units, t.unit_order.output, "output")
+      } else {
+        // per_neuron
+        assertAppliesToSingleUnit(p.id, "output_bias", p.applies_to_units, t.unit_order.output, "output")
+      }
     } else {
       // Exhaustiveness — TS should already prevent this at compile time
       throw new Error(
@@ -249,7 +266,14 @@ export function assertTopologyValid(t: Topology): void {
     }
   }
 
-  // per_layer bias sharing: exactly one hidden_bias and exactly one output_bias
+  // Bias counts:
+  //   - per_layer:  exactly one hidden_bias, exactly one output_bias (each
+  //                 listing the whole layer in applies_to_units).
+  //   - per_neuron: exactly hidden_size hidden_bias parameters and exactly
+  //                 output_size output_bias parameters (each listing one
+  //                 unit in applies_to_units), AND the union of their
+  //                 applies_to_units MUST cover the corresponding layer
+  //                 (every unit served by exactly one bias).
   if (t.bias_sharing === "per_layer") {
     if (hiddenBiasSeen !== 1) {
       throw new Error(
@@ -263,6 +287,22 @@ export function assertTopologyValid(t: Topology): void {
           `Hint: per_layer means one shared bias parameter per output layer.`,
       )
     }
+  } else {
+    // per_neuron
+    if (hiddenBiasSeen !== t.hidden_size) {
+      throw new Error(
+        `Topology: bias_sharing is 'per_neuron' but found ${hiddenBiasSeen} hidden_bias parameters (expected exactly ${t.hidden_size}, one per hidden unit). ` +
+          `Hint: per_neuron means one hidden_bias parameter per hidden unit; each parameter's applies_to_units lists exactly one hidden unit.`,
+      )
+    }
+    if (outputBiasSeen !== t.output_size) {
+      throw new Error(
+        `Topology: bias_sharing is 'per_neuron' but found ${outputBiasSeen} output_bias parameters (expected exactly ${t.output_size}, one per output unit). ` +
+          `Hint: per_neuron means one output_bias parameter per output unit; each parameter's applies_to_units lists exactly one output unit.`,
+      )
+    }
+    assertPerNeuronBiasCoverage(t.parameters, "hidden_bias", t.unit_order.hidden, "hidden")
+    assertPerNeuronBiasCoverage(t.parameters, "output_bias", t.unit_order.output, "output")
   }
 
   // 7. Activations
@@ -312,6 +352,77 @@ function assertAppliesToLayer(
       )
     }
     seen.add(u)
+  }
+}
+
+/**
+ * Per-neuron variant of assertAppliesToLayer. Each bias parameter MUST
+ * declare `applies_to_units` containing exactly one unit drawn from the
+ * relevant layer. Used to validate per_neuron bias_sharing (v0.4+).
+ */
+function assertAppliesToSingleUnit(
+  paramId: string,
+  role: string,
+  appliesTo: readonly UnitId[],
+  layerUnits: readonly UnitId[],
+  layerName: string,
+): void {
+  if (appliesTo.length !== 1) {
+    throw new Error(
+      `Topology: parameter '${paramId}' (${role}) applies_to_units has ${appliesTo.length} entries ` +
+        `but bias_sharing is 'per_neuron' (expected exactly 1). ` +
+        `Hint: per_neuron means each bias parameter's applies_to_units lists exactly one ${layerName} unit.`,
+    )
+  }
+  const layerSet = new Set(layerUnits)
+  const u = appliesTo[0]!
+  if (!layerSet.has(u)) {
+    throw new Error(
+      `Topology: parameter '${paramId}' (${role}) applies_to_units references '${u}' ` +
+        `which is not a declared ${layerName} unit. ` +
+        `Hint: the single entry in applies_to_units MUST appear in unit_order.${layerName}.`,
+    )
+  }
+}
+
+/**
+ * Per-neuron coverage check: the UNION of applies_to_units across all
+ * bias parameters of `role` MUST cover every unit in `layerUnits` exactly
+ * once. Catches two failure modes that the per-parameter checks miss:
+ *   (a) two biases serve the same unit (e.g. two hidden_bias parameters
+ *       both list h1) — the second would write over the first at update
+ *       time, and the unit's bias would be ambiguous.
+ *   (b) a unit in the layer has no bias parameter serving it — that unit
+ *       would silently fall back to zero bias, masking a topology bug.
+ */
+function assertPerNeuronBiasCoverage(
+  parameters: readonly Parameter[],
+  role: ParameterRole,
+  layerUnits: readonly UnitId[],
+  layerName: string,
+): void {
+  const served = new Map<UnitId, ParameterId>()
+  for (const p of parameters) {
+    if (p.role !== role) continue
+    // Per-parameter shape was already validated by assertAppliesToSingleUnit.
+    const u = p.applies_to_units![0]!
+    const prior = served.get(u)
+    if (prior !== undefined) {
+      throw new Error(
+        `Topology: per_neuron bias coverage error — ${layerName} unit '${u}' is served by ` +
+          `more than one ${role} parameter ('${prior}' and '${p.id}'). ` +
+          `Hint: per_neuron means each ${layerName} unit has exactly one ${role}.`,
+      )
+    }
+    served.set(u, p.id)
+  }
+  for (const u of layerUnits) {
+    if (!served.has(u)) {
+      throw new Error(
+        `Topology: per_neuron bias coverage error — ${layerName} unit '${u}' has no ${role} parameter serving it. ` +
+          `Hint: per_neuron means every unit in unit_order.${layerName} MUST appear in exactly one ${role} parameter's applies_to_units.`,
+      )
+    }
   }
 }
 
@@ -400,4 +511,37 @@ export function findOutputBias(parameters: readonly Parameter[]): Parameter {
     )
   }
   return found
+}
+
+/**
+ * Per-neuron bias lookup: returns the single bias parameter of `role`
+ * (hidden_bias or output_bias) whose applies_to_units serves `unit`.
+ *
+ * Used by runGeneralStep when topology.bias_sharing === "per_neuron".
+ * Caller-side responsibility: pass a topology that's been validated by
+ * assertTopologyValid first (which guarantees exactly one bias parameter
+ * serves each unit on per_neuron topologies).
+ *
+ * Performance is O(P) per lookup — acceptable at v0.4's small-topology
+ * scale (XOR per-neuron = 3 bias params, iris per-neuron = 6 bias params).
+ * If a future topology grows past ~1000 bias parameters consider building
+ * a (unit, role) -> Parameter map at topology-construction time instead.
+ */
+export function findBiasForUnit(
+  parameters: readonly Parameter[],
+  role: "hidden_bias" | "output_bias",
+  unit: UnitId,
+): Parameter {
+  for (const p of parameters) {
+    if (p.role !== role) continue
+    if (p.applies_to_units === undefined) continue
+    for (const u of p.applies_to_units) {
+      if (u === unit) return p
+    }
+  }
+  throw new Error(
+    `Topology: no ${role} parameter found serving unit '${unit}'. ` +
+      `Hint: on per_neuron topologies every unit MUST appear in exactly one bias parameter's applies_to_units. ` +
+      `Call assertTopologyValid(t) before calling findBiasForUnit to catch this earlier.`,
+  )
 }
