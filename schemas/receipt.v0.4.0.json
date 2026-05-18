@@ -26,9 +26,11 @@
     "learning_rate",
     "trace_id",
     "step_index",
+    "batch",
     "inputs",
     "targets",
     "parameters_before",
+    "per_sample",
     "forward",
     "loss",
     "backward",
@@ -85,9 +87,28 @@
       "type": "integer",
       "minimum": 0
     },
+    "batch": {
+      "description": "OPTIONAL (v0.9+). When present, declares this receipt represents a BATCHED training step. `size` is the number of samples in the batch; `sample_order` is the canonical iteration order (Rule 19 enforces); `reduction` declares how per-sample losses + gradients were reduced to the scalar/per-parameter values stored at top level (Rule 18 enforces). Single-sample (unbatched) receipts MUST omit this block — they remain byte-identical to v0.1-v0.8 fixtures. v0.9.0 supports batched SGD only; Adam/AdamW deferred to v0.9.1+.",
+      "$ref": "#/$defs/Batch"
+    },
     "inputs": { "$ref": "#/$defs/UnitNumberMap" },
     "targets": { "$ref": "#/$defs/UnitNumberMap" },
     "parameters_before": { "$ref": "#/$defs/ParameterMap" },
+    "per_sample": {
+      "description": "OPTIONAL (v0.9+, REQUIRED at the reconciler boundary when `batch.size > 1`). Per-sample inputs / targets / forward / loss, keyed by sample_id. Canonical emission iterates batch.sample_order (Rule 19). Top-level `inputs` / `targets` / `forward` carry the data for the FIRST sample (canonical convention; load-bearing for v0.1-v0.8 backward compat). v0.9.0 does NOT include per-sample gradients (those are deferred to v0.9.x/v0.10 — reduced gradients only at `updates[].gradient`).",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["inputs", "targets", "forward", "loss"],
+        "properties": {
+          "inputs": { "$ref": "#/$defs/UnitNumberMap" },
+          "targets": { "$ref": "#/$defs/UnitNumberMap" },
+          "forward": { "$ref": "#/$defs/ForwardMap" },
+          "loss": { "$ref": "#/$defs/Loss" }
+        }
+      }
+    },
     "forward": { "$ref": "#/$defs/ForwardMap" },
     "loss": { "$ref": "#/$defs/Loss" },
     "backward": { "$ref": "#/$defs/Backward" },
@@ -399,13 +420,38 @@
         "out": { "type": "number" }
       }
     },
+    "Batch": {
+      "type": "object",
+      "x-order": ["size", "sample_order", "reduction"],
+      "additionalProperties": false,
+      "required": ["size", "sample_order", "reduction"],
+      "properties": {
+        "size": { "type": "integer", "minimum": 1 },
+        "sample_order": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" }
+        },
+        "reduction": { "enum": ["mean", "sum", "none"] }
+      }
+    },
     "Loss": {
       "type": "object",
-      "x-order": ["per_output", "total"],
+      "x-order": ["per_output", "per_sample", "reduction", "total"],
       "additionalProperties": false,
       "required": ["per_output", "total"],
       "properties": {
         "per_output": { "type": "object", "additionalProperties": { "type": "number" } },
+        "per_sample": {
+          "description": "OPTIONAL (v0.9+). Sample-keyed map of total per-sample loss values. Rule 18 verifies `loss.total == reduction(per_sample.values(), batch.reduction)` when batch is present.",
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "reduction": {
+          "description": "OPTIONAL (v0.9+). Echo of batch.reduction at the loss level, for consumers handling the Loss block without the batch context.",
+          "enum": ["mean", "sum", "none"]
+        },
         "total": { "type": "number" }
       }
     },

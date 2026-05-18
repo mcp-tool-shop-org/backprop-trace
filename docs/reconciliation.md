@@ -16,7 +16,7 @@ to have done actually add up?**
 If the answer is "no," the reconciler refuses to certify the receipt and
 the verifier fails closed.
 
-## Quick reference: the 16 rules (+ Rule 0.8 structural sub-check)
+## Quick reference: the 19 rules (+ Rule 0.8 structural sub-check)
 
 | # | Rule | Status |
 |---|------|--------|
@@ -37,6 +37,9 @@ the verifier fails closed.
 | 14 | Engine-recompute differential (observer-mode receipts only): re-run `runGeneralStep` from receipt inputs; assert engine output agrees with foreign claims within `attestor.differential_tolerance`. **MANDATORY** for `external_imported` receipts; no-op for engine-authored. | **implemented (v0.6)** |
 | 15 | Skip-basis required: when `verification_state === "engine_recompute_skipped_with_basis"`, `attestor.skip_basis` MUST be in the closed enum `EXTERNAL_TRUST_BASIS` | **implemented (v0.6)** |
 | 16 | Attestation digest binding: when `attestor.signed_subject_digest` is present, the digest MUST match the recomputed canonical-byte hash of the receipt (with the digest field stripped). **GATED** on `signed_subject_digest` presence | **implemented (v0.6)** |
+| 17 | Trace-bundle binding: when any receipt in a multi-record reconcile declares `attestor.bundle_root_digest`, ALL receipts in the bundle MUST declare the same digest, AND that digest MUST equal the recomputed sha256 of the canonical-byte concatenation of every receipt with `bundle_root_digest` stripped. **GATED** on `bundle_root_digest` presence; fires only from `reconcileMultiStep`. **INTEGRITY ONLY**, not producer-authenticity — an attacker who controls all receipt bytes AND recomputes the digest passes Rule 17 trivially. Combine with Rule 16 (`signed_subject_digest`) or an external signature for producer-identity binding. | **implemented (v0.8)** |
+| 18 | Batch reduction consistency: when `receipt.batch` is present AND `loss.reduction` in {`mean`, `sum`}, assert `loss.total == reduction(loss.per_sample.values(), batch.reduction)`. Catches the canonical mean-vs-sum confusion attack structurally — a producer claiming `reduction: "mean"` but emitting `loss.total = sum(per_sample)` (off by a factor of N). **GATED** on `batch` presence + non-`none` reduction + `per_sample` presence. | **implemented (v0.9)** |
+| 19 | Sample-set coherence: when `batch.sample_order` is present, every ordered per-sample projection used for reduction / emission / canonical digest construction MUST be derived by iterating exactly that order. Concretely: per-sample maps (`loss.per_sample`, top-level `per_sample`) MUST have key sets EQUAL to `batch.sample_order`'s set. Missing IDs (gap), extra IDs (substitution), or duplicate `sample_order` entries fail. **GATED** on `batch.sample_order` presence. Schema-level `uniqueItems` on `batch.sample_order` is the first line of defense; Rule 19 is the reconciler-side defense-in-depth check. | **implemented (v0.9)** |
 
 Rules 1-8 ship in v0.2.0. Rules 9 + 10 ship in v0.3.0 and fire from the
 multi-record verify path (`bp verify multi <file.jsonl>` /

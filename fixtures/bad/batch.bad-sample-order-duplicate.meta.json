@@ -1,0 +1,26 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "batch.bad-sample-order-duplicate.meta",
+  "describes": "fixtures/bad/batch.bad-sample-order-duplicate.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.softmax-ce.batched.golden.jsonl. v0.9 batched observer-mode adversarial plate — each fixture surfaces a distinct batched attack class with a deterministic mutation.",
+  "mutation": {
+    "kind": "mutate_batch_sample_order_to_contain_duplicate",
+    "field_path": "batch.sample_order[3]",
+    "original_sample_order": [
+      "s0",
+      "s1",
+      "s2",
+      "s3"
+    ],
+    "mutated_sample_order": [
+      "s0",
+      "s1",
+      "s2",
+      "s0"
+    ],
+    "note": "batch.sample_order contains a duplicate sample_id. Per-sample projections cannot be derived by iterating an unambiguous order. Rule 19's defense-in-depth check fires (schema's uniqueItems also rejects this at validation; this fixture proves both layers agree). NOTE: Ajv validation rejects this at schema layer (uniqueItems), so the reconciler may report Rule 0 (structural) instead of Rule 19. Both routes catch the attack."
+  },
+  "reconciliation_check_targeted_first": "Rule 19: Sample-set coherence violation — batch.sample_order contains duplicate sample_ids.",
+  "purpose": "v0.9 batched observer-mode anti-circularity fixture. Pressure-tests that the named rule fires BEFORE the reconciler consults fixture_status metadata.",
+  "v0_9_note": "v0.9 ships batched SGD softmax+CE observer-mode ingestion. Rule 18 (batch reduction consistency) and Rule 19 (sample-set coherence) are new gated rules. Adam / AdamW / momentum and per-sample gradients deferred to v0.9.x."
+}

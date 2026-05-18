@@ -42,8 +42,10 @@
 import { createHash } from "node:crypto"
 import {
   runGeneralStep,
+  runBatchedGeneralStep,
   type GeneralReceipt,
   type GeneralInput,
+  type BatchedGeneralInput,
   type SourceFramework,
   type Attestor,
 } from "./general-engine.js"
@@ -59,15 +61,43 @@ import { validateFrameworkTraceSidecar } from "./validate.js"
  * Importer is responsible for mapping into the v0.4.0 receipt.
  */
 export type FrameworkTraceSidecar = {
-  format: "framework-trace.v0.1.0"
+  format:
+    | "framework-trace.v0.1.0"
+    | "framework-trace.v0.2.0"
+    | "framework-trace.v0.3.0"
   source_framework: SourceFramework
   topology: Topology
   learning_rate: number
+  /** v0.2.0+ multi-step fields (optional). */
+  trace_id?: string
+  step_index?: number
+  /**
+   * v0.3.0+ batched receipt fields (optional). When `batch` is declared, the
+   * sidecar represents a BATCHED training step. `per_sample` carries
+   * per-sample (inputs, targets, forward, loss); top-level inputs/targets/
+   * forward carry the FIRST sample's values by canonical convention. v0.9.0
+   * supports batched SGD only; per-sample gradients deferred to v0.9.x/v0.10
+   * (reduced gradients at top-level updates[].gradient).
+   */
+  batch?: {
+    size: number
+    sample_order: string[]
+    reduction: "mean" | "sum" | "none"
+  }
   numeric_policy?: GeneralInput["numeric_policy"]
   bias_policy?: GeneralInput["bias_policy"]
   inputs: Record<string, number>
   targets: Record<string, number>
   parameters_before: Record<string, number>
+  per_sample?: Record<
+    string,
+    {
+      inputs: Record<string, number>
+      targets: Record<string, number>
+      forward: GeneralReceipt["forward"]
+      loss: GeneralReceipt["loss"]
+    }
+  >
   forward: GeneralReceipt["forward"]
   loss: GeneralReceipt["loss"]
   backward: GeneralReceipt["backward"]
@@ -205,20 +235,10 @@ export function buildObserverReceiptFromSidecar(
   const fixtureLabel =
     opts?.fixtureLabel ?? `${sidecar.source_framework.name}-imported-step`
 
-  // 5. Run engine differentially.
-  const engineInput: GeneralInput = {
-    topology: sidecar.topology,
-    learning_rate: sidecar.learning_rate,
-    inputs: sidecar.inputs,
-    targets: sidecar.targets,
-    parameters_before: sidecar.parameters_before,
-    numeric_policy:
-      sidecar.numeric_policy ?? DEFAULT_NUMERIC_POLICY_FOR_OBSERVER,
-    bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
-  }
-  const engineReceipt = runGeneralStep(engineInput)
-
-  // 6. Differential check — collect per-field disagreements.
+  // 5. Run engine differentially. v0.9: dispatch on sidecar.batch presence —
+  // batched sidecars use runBatchedGeneralStep with the sidecar's per_sample
+  // data; unbatched sidecars use runGeneralStep on the single sample at
+  // top-level inputs/targets (v0.6-v0.8 behavior).
   const tolerance: TolerancePolicy = differentialTolerance
   const disagreements: ObserverImportResult["differentialDisagreements"] = []
   const compare = (
@@ -235,20 +255,98 @@ export function buildObserverReceiptFromSidecar(
       })
     }
   }
-  for (const uId of Object.keys(engineReceipt.forward)) {
-    const e = engineReceipt.forward[uId]!
-    const c = sidecar.forward[uId]
-    if (!c) continue
-    compare(`forward.${uId}.net`, e.net, c.net)
-    compare(`forward.${uId}.out`, e.out, c.out)
+
+  let engineReceipt: GeneralReceipt
+  if (sidecar.batch !== undefined) {
+    // BATCHED path (v0.9+). framework-trace.v0.3.0 sidecars with a `batch`
+    // block + `per_sample` block.
+    if (sidecar.per_sample === undefined) {
+      throw new Error(
+        `${callerLabel}: sidecar declares batch but is missing the per_sample block. ` +
+          `Multi-sample batched receipts require per_sample to be populated for every sample in batch.sample_order.`,
+      )
+    }
+    const batchedInput: BatchedGeneralInput = {
+      topology: sidecar.topology,
+      learning_rate: sidecar.learning_rate,
+      batch: sidecar.batch,
+      parameters_before: sidecar.parameters_before,
+      per_sample: Object.fromEntries(
+        sidecar.batch.sample_order.map((sid) => {
+          const s = sidecar.per_sample![sid]
+          if (!s) {
+            throw new Error(
+              `${callerLabel}: sidecar.per_sample missing entry for sample_id ${JSON.stringify(sid)} declared in batch.sample_order.`,
+            )
+          }
+          return [sid, { inputs: s.inputs, targets: s.targets }]
+        }),
+      ),
+      numeric_policy:
+        sidecar.numeric_policy ?? DEFAULT_NUMERIC_POLICY_FOR_OBSERVER,
+      bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
+    }
+    engineReceipt = runBatchedGeneralStep(batchedInput)
+
+    // 6. Differential check — per-sample forward + per-sample loss + reduced
+    // loss. Per-sample comparison is the load-bearing batched check.
+    for (const sid of sidecar.batch.sample_order) {
+      const engineSample = engineReceipt.per_sample?.[sid]
+      const sidecarSample = sidecar.per_sample[sid]
+      if (!engineSample || !sidecarSample) continue
+      for (const uId of Object.keys(engineSample.forward)) {
+        const e = engineSample.forward[uId]!
+        const c = sidecarSample.forward[uId]
+        if (!c) continue
+        compare(`per_sample.${sid}.forward.${uId}.net`, e.net, c.net)
+        compare(`per_sample.${sid}.forward.${uId}.out`, e.out, c.out)
+      }
+      for (const uId of Object.keys(engineSample.loss.per_output)) {
+        const eVal = engineSample.loss.per_output[uId]!
+        const cVal = sidecarSample.loss.per_output[uId]
+        if (typeof cVal !== "number") continue
+        compare(`per_sample.${sid}.loss.per_output.${uId}`, eVal, cVal)
+      }
+      compare(`per_sample.${sid}.loss.total`, engineSample.loss.total, sidecarSample.loss.total)
+    }
+    // Reduced loss comparison.
+    for (const uId of Object.keys(engineReceipt.loss.per_output)) {
+      const eVal = engineReceipt.loss.per_output[uId]!
+      const cVal = sidecar.loss.per_output[uId]
+      if (typeof cVal !== "number") continue
+      compare(`loss.per_output.${uId}`, eVal, cVal)
+    }
+    compare("loss.total", engineReceipt.loss.total, sidecar.loss.total)
+  } else {
+    // UNBATCHED path (v0.6/v0.7/v0.8 behavior). Preserves byte-identical
+    // emission for v0.1.0/v0.2.0 sidecars.
+    const engineInput: GeneralInput = {
+      topology: sidecar.topology,
+      learning_rate: sidecar.learning_rate,
+      inputs: sidecar.inputs,
+      targets: sidecar.targets,
+      parameters_before: sidecar.parameters_before,
+      numeric_policy:
+        sidecar.numeric_policy ?? DEFAULT_NUMERIC_POLICY_FOR_OBSERVER,
+      bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
+    }
+    engineReceipt = runGeneralStep(engineInput)
+
+    for (const uId of Object.keys(engineReceipt.forward)) {
+      const e = engineReceipt.forward[uId]!
+      const c = sidecar.forward[uId]
+      if (!c) continue
+      compare(`forward.${uId}.net`, e.net, c.net)
+      compare(`forward.${uId}.out`, e.out, c.out)
+    }
+    for (const uId of Object.keys(engineReceipt.loss.per_output)) {
+      const eVal = engineReceipt.loss.per_output[uId]!
+      const cVal = sidecar.loss.per_output[uId]
+      if (typeof cVal !== "number") continue
+      compare(`loss.per_output.${uId}`, eVal, cVal)
+    }
+    compare("loss.total", engineReceipt.loss.total, sidecar.loss.total)
   }
-  for (const uId of Object.keys(engineReceipt.loss.per_output)) {
-    const eVal = engineReceipt.loss.per_output[uId]!
-    const cVal = sidecar.loss.per_output[uId]
-    if (typeof cVal !== "number") continue
-    compare(`loss.per_output.${uId}`, eVal, cVal)
-  }
-  compare("loss.total", engineReceipt.loss.total, sidecar.loss.total)
 
   const differentialPassed = disagreements.length === 0
 
@@ -273,7 +371,9 @@ export function buildObserverReceiptFromSidecar(
     },
     differential_tolerance: differentialTolerance,
     import_provenance: {
-      source_format: "framework-trace.v0.1.0",
+      // v0.9 — source_format mirrors the actual sidecar's format const, not
+      // hardcoded. v0.1.0/v0.2.0/v0.3.0 all flow through this code path.
+      source_format: sidecar.format,
       source_hash: sourceHash,
       import_timestamp: importTimestamp,
     },
@@ -324,9 +424,13 @@ export function buildObserverReceiptFromSidecar(
     bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
     topology: engineReceipt.topology,
     learning_rate: sidecar.learning_rate,
+    // v0.9 — batched receipts carry batch + per_sample blocks; unbatched
+    // receipts omit them (preserves byte-equality for v0.6-v0.8 fixtures).
+    ...(sidecar.batch !== undefined ? { batch: sidecar.batch } : {}),
     inputs: sidecar.inputs,
     targets: sidecar.targets,
     parameters_before: sidecar.parameters_before,
+    ...(sidecar.per_sample !== undefined ? { per_sample: sidecar.per_sample } : {}),
     forward: sidecar.forward,
     loss: sidecar.loss,
     backward: sidecar.backward,
@@ -511,10 +615,17 @@ export function buildObserverReceiptStreamFromSidecar(
           `the single-step subcommand (drop 'multi' from the CLI invocation).`,
       )
     }
-    if (validation.schemaVersion !== "0.2.0") {
+    // v0.9: multi-step ingestion accepts framework-trace.v0.2.0 (unbatched)
+    // AND framework-trace.v0.3.0 (batched or unbatched per record). v0.1.0
+    // single-step sidecars are still rejected — they lack trace_id/step_index
+    // and must use the single-step subcommand.
+    if (
+      validation.schemaVersion !== "0.2.0" &&
+      validation.schemaVersion !== "0.3.0"
+    ) {
       throw new Error(
         `${callerLabel}: sidecar line ${i + 1} declares format='framework-trace.v${validation.schemaVersion}' but multi-step ` +
-          `ingestion requires 'framework-trace.v0.2.0'. Use the single-step subcommand for v0.1.0 sidecars.`,
+          `ingestion requires 'framework-trace.v0.2.0' or 'framework-trace.v0.3.0'. Use the single-step subcommand for v0.1.0 sidecars.`,
       )
     }
     sidecars.push(validation.sidecar as FrameworkTraceSidecarV2)
@@ -608,21 +719,11 @@ export function buildObserverReceiptStreamFromSidecar(
     opts?.fixtureLabel ?? `${firstFramework.name}-imported-multi-step`
 
   // 6. Build per-step receipts (without bundle_root_digest yet).
+  // v0.9: each record may be batched (sidecar.batch present) or unbatched.
+  // Dispatch per-record to runBatchedGeneralStep or runGeneralStep accordingly.
   const steps: ObserverImportStreamStep[] = []
   for (let i = 0; i < sidecars.length; i += 1) {
     const sidecar = sidecars[i]!
-    const engineInput: GeneralInput = {
-      topology: sidecar.topology,
-      learning_rate: sidecar.learning_rate,
-      inputs: sidecar.inputs,
-      targets: sidecar.targets,
-      parameters_before: sidecar.parameters_before,
-      numeric_policy:
-        sidecar.numeric_policy ?? DEFAULT_NUMERIC_POLICY_FOR_OBSERVER,
-      bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
-    }
-    const engineReceipt = runGeneralStep(engineInput)
-
     const tolerance: TolerancePolicy = differentialTolerance
     const disagreements: ObserverImportStreamStep["differentialDisagreements"] = []
     const compare = (
@@ -639,20 +740,92 @@ export function buildObserverReceiptStreamFromSidecar(
         })
       }
     }
-    for (const uId of Object.keys(engineReceipt.forward)) {
-      const e = engineReceipt.forward[uId]!
-      const c = sidecar.forward[uId]
-      if (!c) continue
-      compare(`forward.${uId}.net`, e.net, c.net)
-      compare(`forward.${uId}.out`, e.out, c.out)
+
+    let engineReceipt: GeneralReceipt
+    if (sidecar.batch !== undefined) {
+      // BATCHED record (v0.9+).
+      if (sidecar.per_sample === undefined) {
+        throw new Error(
+          `${callerLabel}: sidecar line ${i + 1} declares batch but is missing the per_sample block.`,
+        )
+      }
+      const batchedInput: BatchedGeneralInput = {
+        topology: sidecar.topology,
+        learning_rate: sidecar.learning_rate,
+        batch: sidecar.batch,
+        parameters_before: sidecar.parameters_before,
+        per_sample: Object.fromEntries(
+          sidecar.batch.sample_order.map((sid) => {
+            const s = sidecar.per_sample![sid]
+            if (!s) {
+              throw new Error(
+                `${callerLabel}: sidecar line ${i + 1} per_sample missing entry for sample_id ${JSON.stringify(sid)}.`,
+              )
+            }
+            return [sid, { inputs: s.inputs, targets: s.targets }]
+          }),
+        ),
+        numeric_policy:
+          sidecar.numeric_policy ?? DEFAULT_NUMERIC_POLICY_FOR_OBSERVER,
+        bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
+      }
+      engineReceipt = runBatchedGeneralStep(batchedInput)
+
+      for (const sid of sidecar.batch.sample_order) {
+        const engineSample = engineReceipt.per_sample?.[sid]
+        const sidecarSample = sidecar.per_sample[sid]
+        if (!engineSample || !sidecarSample) continue
+        for (const uId of Object.keys(engineSample.forward)) {
+          const e = engineSample.forward[uId]!
+          const c = sidecarSample.forward[uId]
+          if (!c) continue
+          compare(`per_sample.${sid}.forward.${uId}.net`, e.net, c.net)
+          compare(`per_sample.${sid}.forward.${uId}.out`, e.out, c.out)
+        }
+        for (const uId of Object.keys(engineSample.loss.per_output)) {
+          const eVal = engineSample.loss.per_output[uId]!
+          const cVal = sidecarSample.loss.per_output[uId]
+          if (typeof cVal !== "number") continue
+          compare(`per_sample.${sid}.loss.per_output.${uId}`, eVal, cVal)
+        }
+        compare(`per_sample.${sid}.loss.total`, engineSample.loss.total, sidecarSample.loss.total)
+      }
+      for (const uId of Object.keys(engineReceipt.loss.per_output)) {
+        const eVal = engineReceipt.loss.per_output[uId]!
+        const cVal = sidecar.loss.per_output[uId]
+        if (typeof cVal !== "number") continue
+        compare(`loss.per_output.${uId}`, eVal, cVal)
+      }
+      compare("loss.total", engineReceipt.loss.total, sidecar.loss.total)
+    } else {
+      // UNBATCHED record (v0.6/v0.7/v0.8 path).
+      const engineInput: GeneralInput = {
+        topology: sidecar.topology,
+        learning_rate: sidecar.learning_rate,
+        inputs: sidecar.inputs,
+        targets: sidecar.targets,
+        parameters_before: sidecar.parameters_before,
+        numeric_policy:
+          sidecar.numeric_policy ?? DEFAULT_NUMERIC_POLICY_FOR_OBSERVER,
+        bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
+      }
+      engineReceipt = runGeneralStep(engineInput)
+
+      for (const uId of Object.keys(engineReceipt.forward)) {
+        const e = engineReceipt.forward[uId]!
+        const c = sidecar.forward[uId]
+        if (!c) continue
+        compare(`forward.${uId}.net`, e.net, c.net)
+        compare(`forward.${uId}.out`, e.out, c.out)
+      }
+      for (const uId of Object.keys(engineReceipt.loss.per_output)) {
+        const eVal = engineReceipt.loss.per_output[uId]!
+        const cVal = sidecar.loss.per_output[uId]
+        if (typeof cVal !== "number") continue
+        compare(`loss.per_output.${uId}`, eVal, cVal)
+      }
+      compare("loss.total", engineReceipt.loss.total, sidecar.loss.total)
     }
-    for (const uId of Object.keys(engineReceipt.loss.per_output)) {
-      const eVal = engineReceipt.loss.per_output[uId]!
-      const cVal = sidecar.loss.per_output[uId]
-      if (typeof cVal !== "number") continue
-      compare(`loss.per_output.${uId}`, eVal, cVal)
-    }
-    compare("loss.total", engineReceipt.loss.total, sidecar.loss.total)
 
     const differentialPassed = disagreements.length === 0
 
@@ -670,7 +843,10 @@ export function buildObserverReceiptStreamFromSidecar(
       },
       differential_tolerance: differentialTolerance,
       import_provenance: {
-        source_format: "framework-trace.v0.2.0",
+        // v0.9 — source_format mirrors the actual sidecar's format const,
+        // not hardcoded. v0.2.0 (unbatched multi-step) and v0.3.0 (batched
+        // or unbatched multi-step) both flow through this code path.
+        source_format: sidecar.format,
         source_hash: sourceHash,
         import_timestamp: importTimestamp,
       },
@@ -720,9 +896,12 @@ export function buildObserverReceiptStreamFromSidecar(
       bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
       topology: engineReceipt.topology,
       learning_rate: sidecar.learning_rate,
+      // v0.9 — batched record fields propagated to the receipt.
+      ...(sidecar.batch !== undefined ? { batch: sidecar.batch } : {}),
       inputs: sidecar.inputs,
       targets: sidecar.targets,
       parameters_before: sidecar.parameters_before,
+      ...(sidecar.per_sample !== undefined ? { per_sample: sidecar.per_sample } : {}),
       forward: sidecar.forward,
       loss: sidecar.loss,
       backward: sidecar.backward,

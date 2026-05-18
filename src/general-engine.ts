@@ -387,11 +387,52 @@ export type GeneralReceipt = {
   learning_rate: number
   trace_id?: string
   step_index?: number
+  /**
+   * v0.9+ — OPTIONAL batch block. When present, declares this receipt
+   * represents a BATCHED training step. Single-sample (unbatched)
+   * receipts MUST omit this block (preserves v0.1-v0.8 byte-equality).
+   * `sample_order` is the canonical iteration order; `reduction`
+   * declares how per-sample losses + gradients were reduced.
+   */
+  batch?: {
+    size: number
+    sample_order: string[]
+    reduction: "mean" | "sum" | "none"
+  }
   inputs: Record<string, number>
   targets: Record<string, number>
   parameters_before: Record<string, number>
+  /**
+   * v0.9+ — OPTIONAL per-sample block. REQUIRED at the reconciler
+   * boundary when `batch.size > 1`. Sample-keyed map of full per-sample
+   * state (inputs, targets, forward, loss). Top-level inputs/targets/
+   * forward carry the FIRST sample's values by canonical convention.
+   * v0.9.0 does NOT include per-sample gradients (reduced gradients
+   * only at updates[].gradient).
+   */
+  per_sample?: Record<
+    string,
+    {
+      inputs: Record<string, number>
+      targets: Record<string, number>
+      forward: Record<string, ForwardUnit>
+      loss: {
+        per_output: Record<string, number>
+        per_sample?: Record<string, number>
+        reduction?: "mean" | "sum" | "none"
+        total: number
+      }
+    }
+  >
   forward: Record<string, ForwardUnit>
-  loss: { per_output: Record<string, number>; total: number }
+  loss: {
+    per_output: Record<string, number>
+    /** v0.9+: optional sample-keyed map of per-sample total loss. Used by Rule 18. */
+    per_sample?: Record<string, number>
+    /** v0.9+: optional echo of batch.reduction. */
+    reduction?: "mean" | "sum" | "none"
+    total: number
+  }
   backward: {
     output_error_signals: Record<string, OutputErrorSignal>
     hidden_error_signals: Record<string, HiddenErrorSignal>
@@ -1204,6 +1245,263 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
       status: "filled",
       per_output: postUpdatePerOutput,
       total: postUpdateTotal,
+    },
+  }
+  if (input.trace_id !== undefined) receipt.trace_id = input.trace_id
+  if (input.step_index !== undefined) receipt.step_index = input.step_index
+  return receipt
+}
+
+// =============================================================================
+// v0.9 — Batched general-engine entry point
+// =============================================================================
+
+/**
+ * v0.9 — Input shape for runBatchedGeneralStep.
+ *
+ * Omits top-level `inputs` + `targets` (which are per-sample for batched
+ * training) and replaces with `batch` + `per_sample`. Everything else
+ * (topology, learning_rate, parameters_before, numeric_policy, bias_policy)
+ * is shared across all samples in the batch.
+ *
+ * v0.9.0 ships SGD only — `Update.optimizer.name` stays at `"sgd"`. Adam /
+ * AdamW / momentum are deferred to v0.9.1+.
+ */
+export type BatchedGeneralInput = Omit<GeneralInput, "inputs" | "targets"> & {
+  batch: {
+    size: number
+    sample_order: string[]
+    reduction: "mean" | "sum" | "none"
+  }
+  per_sample: Record<
+    string,
+    { inputs: Record<string, number>; targets: Record<string, number> }
+  >
+}
+
+/**
+ * v0.9 — Batched general-engine entry point.
+ *
+ * Orchestrates N runs of runGeneralStep (one per sample in batch.sample_order)
+ * against shared parameters_before, then reduces per-sample losses and
+ * gradients per batch.reduction and produces a single batched receipt with
+ * canonical observer-mode + per-sample structure.
+ *
+ * Receipt shape:
+ *   - top-level `inputs` / `targets` / `forward` / `backward` = FIRST sample's
+ *     state (canonical convention; load-bearing for v0.1-v0.8 byte-equal
+ *     backward compat — top-level fields stay populated)
+ *   - top-level `loss.per_output` / `loss.total` = REDUCED (per batch.reduction)
+ *   - top-level `loss.per_sample` = sample-keyed map of per-sample total loss
+ *     (used by Rule 18)
+ *   - top-level `loss.reduction` = echo of batch.reduction
+ *   - top-level `updates[].gradient` = REDUCED gradient per parameter
+ *   - top-level `updates[].optimizer.factors` = [{batch_reduced_gradient, value}]
+ *     (single-factor decomposition; per-sample gradient breakdown deferred to v0.9.x)
+ *   - top-level `parameters_after` = parameters_before + (-lr * reduced_gradient) per param
+ *   - top-level `per_sample` block = per-sample inputs/targets/forward/loss
+ *
+ * Rule 18 verifies loss.total == reduction(loss.per_sample.values()).
+ * Rule 19 verifies sample-set coherence.
+ * Rule 14 (engine recompute) verifies per-sample forward + per-sample loss +
+ * reduced gradient + parameters_after via this same function.
+ *
+ * v0.9.0 explicitly does NOT include per-sample gradients (per_sample[s] has
+ * inputs/targets/forward/loss only — no per-sample backward, no per-sample
+ * updates). Reduced gradients only.
+ */
+export function runBatchedGeneralStep(input: BatchedGeneralInput): GeneralReceipt {
+  // 1. Validate batch invariants (will be re-checked by Rule 19 at reconcile time,
+  //    but fail early at the engine boundary for clear diagnostics).
+  if (input.batch.size !== input.batch.sample_order.length) {
+    throw new Error(
+      `runBatchedGeneralStep: batch.size (${input.batch.size}) != ` +
+        `batch.sample_order.length (${input.batch.sample_order.length})`,
+    )
+  }
+  const seenIds = new Set<string>()
+  for (const sid of input.batch.sample_order) {
+    if (seenIds.has(sid)) {
+      throw new Error(
+        `runBatchedGeneralStep: duplicate sample_id ${JSON.stringify(sid)} in batch.sample_order`,
+      )
+    }
+    seenIds.add(sid)
+  }
+  for (const sid of input.batch.sample_order) {
+    if (!(sid in input.per_sample)) {
+      throw new Error(
+        `runBatchedGeneralStep: per_sample missing entry for sample_id ${JSON.stringify(sid)} ` +
+          `declared in batch.sample_order`,
+      )
+    }
+  }
+  for (const sid of Object.keys(input.per_sample)) {
+    if (!input.batch.sample_order.includes(sid)) {
+      throw new Error(
+        `runBatchedGeneralStep: per_sample has extra entry ${JSON.stringify(sid)} ` +
+          `not declared in batch.sample_order`,
+      )
+    }
+  }
+
+  // 2. Run engine per sample with shared parameters_before.
+  const perSampleReceipts = input.batch.sample_order.map((sid) => {
+    const sample = input.per_sample[sid]!
+    const sampleInput: GeneralInput = {
+      topology: input.topology,
+      learning_rate: input.learning_rate,
+      inputs: sample.inputs,
+      targets: sample.targets,
+      parameters_before: input.parameters_before,
+      numeric_policy: input.numeric_policy,
+      bias_policy: input.bias_policy,
+      ...(input.fixture !== undefined ? { fixture: input.fixture } : {}),
+      ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+    }
+    return runGeneralStep(sampleInput)
+  })
+
+  // 3. Reduction helper.
+  const reduce = (vals: number[]): number => {
+    if (input.batch.reduction === "mean") {
+      return vals.reduce((a, b) => a + b, 0) / vals.length
+    }
+    if (input.batch.reduction === "sum") {
+      return vals.reduce((a, b) => a + b, 0)
+    }
+    // "none" — degenerate; return first sample's value (not used in v0.9.0
+    // workflows but kept for schema completeness).
+    return vals[0]!
+  }
+
+  const firstReceipt = perSampleReceipts[0]!
+  const firstSampleId = input.batch.sample_order[0]!
+  const firstSample = input.per_sample[firstSampleId]!
+
+  // 4. Reduce per-parameter gradients (mean/sum across samples).
+  const reducedGradients: Record<string, number> = {}
+  for (const upd of firstReceipt.updates) {
+    const perSampleGrads = perSampleReceipts.map((r) => {
+      const sampleUpd = r.updates.find((u) => u.parameter_id === upd.parameter_id)
+      if (!sampleUpd) {
+        throw new Error(
+          `runBatchedGeneralStep: parameter_id ${JSON.stringify(upd.parameter_id)} missing in per-sample updates`,
+        )
+      }
+      return sampleUpd.gradient
+    })
+    reducedGradients[upd.parameter_id] = reduce(perSampleGrads)
+  }
+
+  // 5. Build reduced updates (single-factor decomposition).
+  const lr = input.learning_rate
+  const reducedUpdates: Update[] = firstReceipt.updates.map((upd) => {
+    const reducedGrad = reducedGradients[upd.parameter_id]!
+    // Sign convention: gradient is already in descent_direction (per
+    // GeneralReceipt metadata.gradient_convention = "descent_direction"),
+    // so update = lr * gradient (positive); weight_after = weight_before
+    // + update moves in descent direction. Matches runGeneralStep
+    // (lines ~1039, ~1078). Rule 5 checks update == lr * gradient.
+    const reducedUpdateValue = lr * reducedGrad
+    const reducedWeightAfter = upd.weight_before + reducedUpdateValue
+    return {
+      ...upd,
+      optimizer: {
+        ...upd.optimizer,
+        // v0.9.0 single-factor decomposition for batched receipts. Per-sample
+        // gradient breakdown is deferred to v0.9.x; for now the reduced gradient
+        // IS the named factor. Rule 4 checks product([reduced_gradient]) ==
+        // update.gradient, which passes trivially. Rule 14 (engine recompute)
+        // is the load-bearing math check for batched receipts.
+        factors: [
+          { name: "batch_reduced_gradient", value: reducedGrad },
+        ],
+      },
+      gradient: reducedGrad,
+      update: reducedUpdateValue,
+      weight_after: reducedWeightAfter,
+    }
+  })
+
+  // 6. parameters_after from reduced updates.
+  const reducedParametersAfter: Record<string, number> = { ...input.parameters_before }
+  for (const upd of reducedUpdates) {
+    reducedParametersAfter[upd.parameter_id] = upd.weight_after
+  }
+  // For per_neuron bias policy etc, parameters_before fields not in updates stay constant.
+
+  // 7. Reduce loss (per_output + total + per_sample map).
+  const perSampleLossTotal: Record<string, number> = {}
+  for (let i = 0; i < input.batch.sample_order.length; i++) {
+    perSampleLossTotal[input.batch.sample_order[i]!] = perSampleReceipts[i]!.loss.total
+  }
+  const reducedLossPerOutput: Record<string, number> = {}
+  for (const u of input.topology.unit_order.output) {
+    reducedLossPerOutput[u] = reduce(
+      perSampleReceipts.map((r) => r.loss.per_output[u]!),
+    )
+  }
+  const reducedLossTotal = reduce(perSampleReceipts.map((r) => r.loss.total))
+
+  // 8. Recompute post-update forward + loss using reduced parameters_after on
+  // the first sample (canonical convention; matches the top-level forward
+  // representing the first sample).
+  const postUpdateInput: GeneralInput = {
+    topology: input.topology,
+    learning_rate: input.learning_rate,
+    inputs: firstSample.inputs,
+    targets: firstSample.targets,
+    parameters_before: reducedParametersAfter,
+    numeric_policy: input.numeric_policy,
+    bias_policy: input.bias_policy,
+  }
+  const postUpdateReceipt = runGeneralStep(postUpdateInput)
+
+  // 9. Build batched receipt.
+  const receipt: GeneralReceipt = {
+    schema_version: firstReceipt.schema_version,
+    fixture: input.fixture ?? `batched-${input.batch.size}-sample-step`,
+    step: 1,
+    fixture_status: firstReceipt.fixture_status,
+    metadata: firstReceipt.metadata,
+    numeric_policy: firstReceipt.numeric_policy,
+    bias_policy: firstReceipt.bias_policy,
+    topology: firstReceipt.topology,
+    learning_rate: lr,
+    batch: input.batch,
+    inputs: firstSample.inputs,
+    targets: firstSample.targets,
+    parameters_before: input.parameters_before,
+    per_sample: Object.fromEntries(
+      input.batch.sample_order.map((sid, i) => [
+        sid,
+        {
+          inputs: input.per_sample[sid]!.inputs,
+          targets: input.per_sample[sid]!.targets,
+          forward: perSampleReceipts[i]!.forward,
+          loss: perSampleReceipts[i]!.loss,
+        },
+      ]),
+    ),
+    forward: firstReceipt.forward,
+    loss: {
+      per_output: reducedLossPerOutput,
+      per_sample: perSampleLossTotal,
+      reduction: input.batch.reduction,
+      total: reducedLossTotal,
+    },
+    backward: firstReceipt.backward,
+    updates: reducedUpdates,
+    parameters_after: reducedParametersAfter,
+    post_update_forward: {
+      status: "filled",
+      units: postUpdateReceipt.forward,
+    },
+    post_update_loss: {
+      status: "filled",
+      per_output: postUpdateReceipt.loss.per_output,
+      total: postUpdateReceipt.loss.total,
     },
   }
   if (input.trace_id !== undefined) receipt.trace_id = input.trace_id

@@ -155,6 +155,8 @@ const RULE_LABELS: Record<number, string> = {
   15: "skip-basis required (engine_recompute_skipped_with_basis verification_state needs attestor.skip_basis from closed enum)",
   16: "attestation digest binding (attestor.signed_subject_digest does not match recomputed canonical-byte digest)",
   17: "trace-bundle binding (attestor.bundle_root_digest mismatch / heterogeneous bundle binding / post-binding mutation; INTEGRITY check only, not producer-authenticity)",
+  18: "batch reduction consistency (loss.total != reduction(loss.per_sample.values()) per batch.reduction; catches mean-vs-sum confusion)",
+  19: "sample-set coherence (per-sample maps' key set != batch.sample_order set; missing/duplicate/extra sample IDs in any ordered projection used for reduction/emission/canonical digest)",
 };
 
 // =============================================================================

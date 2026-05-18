@@ -72,7 +72,13 @@ import type { NamedFactor } from "./engine.js"
 // independent witness on observer-mode receipts; without that coupling
 // the trust model collapses. Engine-authored receipts skip Rule 14 so
 // the import has no runtime cost on the v0.1-v0.5 paths.
-import { runGeneralStep, type GeneralInput, type GeneralReceipt } from "./general-engine.js"
+import {
+  runGeneralStep,
+  runBatchedGeneralStep,
+  type GeneralInput,
+  type BatchedGeneralInput,
+  type GeneralReceipt,
+} from "./general-engine.js"
 import type { Topology } from "./topology.js"
 import { emitGeneralReceipt } from "./emit.js"
 import { hashReceipt } from "./hash.js"
@@ -870,6 +876,20 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
   // recomputed canonical-byte digest of the receipt (with the digest field
   // stripped) does not match. Silently skips when absent.
   checkRule16AttestationBinding(receipt, r, failures)
+
+  // --- Rule 18 (v0.9): batch reduction consistency (gated on batch presence)
+  // Fires when receipt.batch is present AND loss.reduction is "mean" or
+  // "sum". Asserts loss.total == reduction(loss.per_sample.values()).
+  // Catches mean-vs-sum confusion structurally. Silently skips for unbatched
+  // receipts.
+  checkRule18BatchReduction(r, tolerance, failures)
+
+  // --- Rule 19 (v0.9): sample-set coherence (gated on batch.sample_order)
+  // When batch.sample_order is present, every ordered per-sample projection
+  // used for reduction / emission / canonical digest construction MUST be
+  // derived by iterating exactly that order. Missing, duplicate, or out-of-
+  // order sample IDs fail. Silently skips for unbatched receipts.
+  checkRule19SampleSetCoherence(r, failures)
 
   if (failures.length === 0) {
     return { ok: true }
@@ -2181,6 +2201,15 @@ function checkRule12LossFormula(
   tolerance: TolerancePolicy,
   failures: ReconciliationFailure[],
 ): void {
+  // v0.9 — Skip Rule 12 for batched receipts. The top-level loss.per_output
+  // and loss.total are batch-REDUCED across samples; deriving expected values
+  // from top-level forward + targets (which are FIRST-SAMPLE only by canonical
+  // convention) would produce single-sample values that don't match the reduced
+  // claims. Rule 18 (batch reduction consistency) catches the loss-side
+  // batched mistakes via loss.per_sample. Per-sample loss formula correctness
+  // is verified by Rule 14 (engine recompute) per sample.
+  if ((r as { batch?: unknown }).batch !== undefined) return
+
   // Determine the loss formula. Prefer topology.loss; fall back to
   // half_squared_error for receipts that don't declare one (v0.1 Mazur).
   const declared = r.topology?.loss
@@ -2758,18 +2787,48 @@ function checkRule14EngineRecomputeDifferential(
   // Build a GeneralInput from the receipt's parameters_before + inputs +
   // targets + topology + policies. The shape mirrors what bp.ts builds
   // when running runGeneralStep on an engine-authored input.
+  // v0.9 — batched receipts (receipt.batch present) dispatch to
+  // runBatchedGeneralStep; the engine recomputes per-sample state via the
+  // sidecar's per_sample data plus reduces the gradient. Unbatched receipts
+  // continue to use runGeneralStep on the single sample at top-level
+  // inputs/targets (v0.6-v0.8 behavior).
   let engineReceipt: Awaited<ReturnType<typeof runGeneralStep>>
   try {
-    const input: GeneralInput = {
-      topology: topo as unknown as Topology,
-      learning_rate: r.learning_rate,
-      inputs: r.inputs,
-      targets: r.targets,
-      parameters_before: r.parameters_before,
-      numeric_policy: r.numeric_policy as unknown as GeneralInput["numeric_policy"],
-      bias_policy: r.bias_policy as unknown as GeneralInput["bias_policy"],
+    const batch = (r as { batch?: { size: number; sample_order: string[]; reduction: "mean" | "sum" | "none" } }).batch
+    const perSample = (r as { per_sample?: Record<string, { inputs: Record<string, number>; targets: Record<string, number> }> }).per_sample
+    if (batch && perSample) {
+      const batchedInput: BatchedGeneralInput = {
+        topology: topo as unknown as Topology,
+        learning_rate: r.learning_rate,
+        batch,
+        parameters_before: r.parameters_before,
+        per_sample: Object.fromEntries(
+          batch.sample_order.map((sid) => {
+            const s = perSample[sid]
+            if (!s) {
+              throw new Error(
+                `Rule 14 (engine-recompute differential): per_sample missing entry for sample_id ${JSON.stringify(sid)} declared in batch.sample_order.`,
+              )
+            }
+            return [sid, { inputs: s.inputs, targets: s.targets }]
+          }),
+        ),
+        numeric_policy: r.numeric_policy as unknown as GeneralInput["numeric_policy"],
+        bias_policy: r.bias_policy as unknown as GeneralInput["bias_policy"],
+      }
+      engineReceipt = runBatchedGeneralStep(batchedInput)
+    } else {
+      const input: GeneralInput = {
+        topology: topo as unknown as Topology,
+        learning_rate: r.learning_rate,
+        inputs: r.inputs,
+        targets: r.targets,
+        parameters_before: r.parameters_before,
+        numeric_policy: r.numeric_policy as unknown as GeneralInput["numeric_policy"],
+        bias_policy: r.bias_policy as unknown as GeneralInput["bias_policy"],
+      }
+      engineReceipt = runGeneralStep(input)
     }
-    engineReceipt = runGeneralStep(input)
   } catch (err) {
     failures.push({
       rule: 14,
@@ -3086,6 +3145,196 @@ function checkRule16AttestationBinding(
         `Signature validity (cosign verification) is out of scope for the reconciler; this ` +
         `check only catches digest-binding integrity within the receipt itself.`,
     })
+  }
+}
+
+/**
+ * Rule 18 (v0.9): batch reduction consistency (GATED).
+ *
+ * Fires when `receipt.batch` is present AND `loss.reduction` is "mean" or
+ * "sum". Asserts:
+ *
+ *   loss.total == reduction(loss.per_sample.values(), batch.reduction)
+ *
+ * Catches mean-vs-sum confusion structurally — the canonical attack class
+ * where a producer claims `reduction: "mean"` but emits
+ * `loss.total = sum(per_sample)` (off by a factor of N).
+ *
+ * Silently skips:
+ *   - Unbatched receipts (no `batch` block).
+ *   - Batched receipts with `loss.reduction = "none"` (no reduction claimed).
+ *   - Batched receipts where `loss.per_sample` is absent (the importer/producer
+ *     chose not to expose per-sample loss; Rule 18 cannot verify what isn't
+ *     declared). Note: for observer-mode imports, the importer ALWAYS populates
+ *     `loss.per_sample` when batch is present, so this skip-path only applies
+ *     to engine-authored receipts that opted out.
+ */
+function checkRule18BatchReduction(
+  r: Receipt,
+  tolerance: TolerancePolicy,
+  failures: ReconciliationFailure[],
+): void {
+  // GATED on batch presence + reduction in {mean, sum} + per_sample present.
+  const batch = (r as { batch?: { reduction: string; sample_order: string[] } }).batch
+  if (!batch) return
+  if (batch.reduction !== "mean" && batch.reduction !== "sum") return
+  const loss = r.loss as { per_sample?: Record<string, number>; total: number }
+  if (!loss.per_sample) return
+
+  // Compute expected total via reduction over sample_order (canonical iteration).
+  const perSampleValues: number[] = []
+  for (const sid of batch.sample_order) {
+    const v = loss.per_sample[sid]
+    if (typeof v !== "number") {
+      // Sample missing from per_sample map — Rule 19 catches this directly;
+      // Rule 18 silently skips the reduction check to avoid duplicate fires.
+      return
+    }
+    perSampleValues.push(v)
+  }
+  let expectedTotal: number
+  if (batch.reduction === "mean") {
+    expectedTotal = perSampleValues.reduce((a, b) => a + b, 0) / perSampleValues.length
+  } else {
+    expectedTotal = perSampleValues.reduce((a, b) => a + b, 0)
+  }
+  const declared = loss.total
+  const check = applyToleranceCheck(declared, expectedTotal, tolerance)
+  if (!check.ok) {
+    failures.push({
+      rule: 18,
+      field_path: "loss.total",
+      stored: declared,
+      recomputed: expectedTotal,
+      delta: check.delta,
+      tolerance: check.appliedTolerance,
+      message:
+        `Rule 18 (batch reduction consistency): loss.total ${declared} does not match ` +
+        `${batch.reduction}(loss.per_sample.values()) = ${expectedTotal} ` +
+        `(${perSampleValues.length} samples, reduction=${batch.reduction}). ` +
+        `Catches the mean-vs-sum confusion attack class — a producer claiming reduction=${batch.reduction} ` +
+        `but emitting loss.total with the OTHER reduction (off by a factor of N).`,
+    })
+  }
+}
+
+/**
+ * Rule 19 (v0.9): sample-set coherence (GATED).
+ *
+ * Precisely scoped per the v0.9 lock: "When batch.sample_order is present,
+ * every ordered per-sample projection used for reduction, emission, or
+ * canonical digest construction must be derived by iterating exactly that
+ * order. Missing, duplicate, or out-of-order sample IDs fail."
+ *
+ * Concretely, this rule asserts:
+ *   (a) batch.sample_order has no duplicates (already enforced by schema's
+ *       uniqueItems but re-checked at reconcile time as defense in depth).
+ *   (b) For every per-sample MAP in the receipt (loss.per_sample, top-level
+ *       per_sample), the key set EQUALS the set of batch.sample_order entries.
+ *       Missing IDs (gap), extra IDs (extra), or wrong IDs (substitution)
+ *       all fire.
+ *
+ * Does NOT fire on:
+ *   - Unbatched receipts (no batch block).
+ *   - Maps that aren't declared as per-sample projections (e.g.,
+ *     parameters_before, which is keyed by parameter_id not sample_id).
+ *
+ * Canonical-emission discipline handles the ordering: emit.ts emitPerSample
+ * iterates batch.sample_order. Rule 19 verifies the underlying data has the
+ * right key set so that iteration is correct.
+ */
+function checkRule19SampleSetCoherence(
+  r: Receipt,
+  failures: ReconciliationFailure[],
+): void {
+  const batch = (r as { batch?: { sample_order: string[] } }).batch
+  if (!batch) return
+  const sampleOrder = batch.sample_order
+
+  // (a) Duplicate detection (defense in depth — schema's uniqueItems already
+  // catches this at validation time).
+  const seen = new Set<string>()
+  for (let i = 0; i < sampleOrder.length; i += 1) {
+    const sid = sampleOrder[i]!
+    if (seen.has(sid)) {
+      failures.push({
+        rule: 19,
+        field_path: `batch.sample_order[${i}]`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 19 (sample-set coherence): batch.sample_order contains duplicate sample_id ${JSON.stringify(sid)} ` +
+          `at index ${i}. Per-sample projections must be derived by iterating an unambiguous order.`,
+      })
+      return // Don't cascade further — duplicate sample_order makes set comparisons meaningless.
+    }
+    seen.add(sid)
+  }
+
+  const declared = new Set(sampleOrder)
+
+  // (b) Per-sample map key-set checks. Iterate every per-sample map in the
+  // receipt and assert its keys EQUAL batch.sample_order set.
+  const lossPerSample = (r.loss as { per_sample?: Record<string, number> }).per_sample
+  if (lossPerSample) {
+    checkSampleKeySet(
+      declared,
+      lossPerSample,
+      "loss.per_sample",
+      failures,
+    )
+  }
+  const topPerSample = (r as { per_sample?: Record<string, unknown> }).per_sample
+  if (topPerSample) {
+    checkSampleKeySet(declared, topPerSample, "per_sample", failures)
+  }
+}
+
+/**
+ * Helper for Rule 19: assert per-sample map's key set equals declared set.
+ * Surfaces missing IDs (in declared but not in map) and extra IDs (in map
+ * but not in declared) as separate failures with clear field_paths.
+ */
+function checkSampleKeySet(
+  declared: ReadonlySet<string>,
+  perSampleMap: Record<string, unknown>,
+  mapPath: string,
+  failures: ReconciliationFailure[],
+): void {
+  const observed = new Set(Object.keys(perSampleMap))
+  // Missing: in declared but not in observed.
+  for (const sid of declared) {
+    if (!observed.has(sid)) {
+      failures.push({
+        rule: 19,
+        field_path: `${mapPath}.${sid}`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 19 (sample-set coherence): ${mapPath} is missing sample_id ${JSON.stringify(sid)} ` +
+          `declared in batch.sample_order. Every ordered per-sample projection must include all sample IDs.`,
+      })
+    }
+  }
+  // Extra: in observed but not in declared.
+  for (const sid of observed) {
+    if (!declared.has(sid)) {
+      failures.push({
+        rule: 19,
+        field_path: `${mapPath}.${sid}`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 19 (sample-set coherence): ${mapPath} contains sample_id ${JSON.stringify(sid)} ` +
+          `not declared in batch.sample_order. Per-sample projections must use only declared sample IDs.`,
+      })
+    }
   }
 }
 

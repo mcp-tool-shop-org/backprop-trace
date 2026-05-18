@@ -197,6 +197,19 @@ const FILENAME_KIND_TO_RULE: Record<string, number> = {
   "cross-trace-splice": 17,
   "bad-bundle-digest-tampered": 17,
   "bundle-digest-tampered": 17,
+  // v0.9 batched observer-mode adversarial plate (batch.bad-*):
+  //   - reduction-mode-mismatch  → Rule 18 (loss.total != reduction(per_sample))
+  //   - sample-id-missing        → Rule 19 (per-sample map missing sample_id)
+  //   - sample-order-duplicate   → Rule 19 (batch.sample_order has duplicate)
+  //   - reduced-gradient-wrong   → Rule 14 (engine recompute disagrees on reduced gradient)
+  "bad-reduction-mode-mismatch": 18,
+  "reduction-mode-mismatch": 18,
+  "bad-sample-id-missing": 19,
+  "sample-id-missing": 19,
+  "bad-sample-order-duplicate": 19,
+  "sample-order-duplicate": 19,
+  "bad-reduced-gradient-wrong": 14,
+  "reduced-gradient-wrong": 14,
 };
 
 /**
@@ -308,13 +321,13 @@ test(
 );
 
 test(
-  "T-A-009: v0.8 reconciler implements Rules 1-17 (1-8 per-receipt, 9-10 multi-step, 11 softmax-norm, 12 loss formula, 13 gated dual-form, 14 engine-recompute differential, 15 skip-basis required, 16 gated digest binding, 17 gated trace-bundle binding)",
+  "T-A-009: v0.9 reconciler implements Rules 1-19 (1-8 per-receipt, 9-10 multi-step, 11 softmax-norm, 12 loss formula, 13 gated dual-form, 14 engine-recompute differential, 15 skip-basis required, 16 gated digest binding, 17 gated trace-bundle binding, 18 gated batch reduction consistency, 19 gated sample-set coherence)",
   () => {
     const implemented = extractImplementedRules();
     assert.deepStrictEqual(
       Array.from(implemented).sort((a, b) => a - b),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
-      "v0.8 reconciler scope: Rules 1-8 (per-receipt math), 9-10 (multi-step), 11 (softmax " +
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+      "v0.9 reconciler scope: Rules 1-8 (per-receipt math), 9-10 (multi-step), 11 (softmax " +
         "normalization), 12 (loss formula — both half_squared_error and cross_entropy_softmax " +
         "branches), 13 (GATED dual-form consistency for softmax+CE), 14 (engine-recompute " +
         "differential — MANDATORY for fixture_status.authoring_state === 'external_imported'; " +
@@ -323,10 +336,14 @@ test(
         "EXTERNAL_TRUST_BASIS enum), 16 (attestation digest binding — GATED on " +
         "attestor.signed_subject_digest presence), 17 (trace-bundle binding — GATED on " +
         "attestor.bundle_root_digest presence; BUNDLE INTEGRITY check, NOT producer-" +
-        "authenticity). Rule 0.8 (probability bounds) remains a Rule 0 sub-check, not a " +
-        "separate integer rule. When a future version adds a new rule, update this expected list " +
-        "AND ship a sibling bad-* fixture; the doctrine ratchet fails loudly if a rule lands " +
-        "without its paired fixture.",
+        "authenticity), 18 (batch reduction consistency — GATED on receipt.batch presence + " +
+        "loss.reduction in {mean,sum}; catches mean-vs-sum confusion), 19 (sample-set " +
+        "coherence — GATED on batch.sample_order presence; precisely scoped to ordered " +
+        "per-sample projections used for reduction / emission / canonical digest construction). " +
+        "Rule 0.8 (probability bounds) remains a Rule 0 sub-check, not a separate integer rule. " +
+        "When a future version adds a new rule, update this expected list AND ship a sibling " +
+        "bad-* fixture; the doctrine ratchet fails loudly if a rule lands without its paired " +
+        "fixture.",
     );
   },
 );

@@ -332,6 +332,90 @@ Five fixtures, each load-bearing for a distinct cross-step attack class:
 All fixtures honor the anti-circularity ratchet: the reconciler detects
 the violation BEFORE consulting `fixture_status` metadata.
 
+## Batched ingestion (v0.9+)
+
+v0.9 extends the multi-step + observer-mode paths with **batched** training-step ingestion. A batched sidecar represents one training step with N samples; the engine recomputes per-sample forward + per-sample loss + reduces gradients to a single per-parameter scalar (the value the optimizer actually applied). v0.8 multi-step + v0.9 batched compose freely: a multi-step JSONL stream can contain batched records (or unbatched, or a mix).
+
+### Sidecar format
+
+Use `framework-trace.v0.3.0`. Additive over v0.2.0 — bumps the `format` const (the v0.2.0 const + `additionalProperties: false` made additive evolution impossible on the same major; same constraint that forced v0.2.0 in v0.8). New top-level fields:
+
+```json
+{
+  "format": "framework-trace.v0.3.0",
+  "batch": { "size": 4, "sample_order": ["s0","s1","s2","s3"], "reduction": "mean" },
+  "per_sample": {
+    "s0": { "inputs": {...}, "targets": {...}, "forward": {...}, "loss": {...} },
+    "s1": { ... },
+    "s2": { ... },
+    "s3": { ... }
+  },
+  ...
+}
+```
+
+`loss` gains optional `per_sample` (sample-keyed map of total per-sample loss) and `reduction` (echo of `batch.reduction`).
+
+### Top-level field semantics for batched receipts
+
+- `inputs`, `targets`, `forward` — FIRST sample's values (canonical convention; load-bearing for v0.1-v0.8 byte-equal backward compat). Top-level forward, backward describe one sample; updates and parameters_after describe the actual reduced step.
+- `loss.per_output` + `loss.total` — REDUCED across the batch per `batch.reduction`.
+- `loss.per_sample[sid]` — per-sample TOTAL loss (used by Rule 18 to verify the reduction).
+- `updates[].gradient` — REDUCED gradient per parameter (the value SGD applied).
+- `updates[].optimizer.factors` — single-factor decomposition `[{name: "batch_reduced_gradient", value: gradient}]`. Rule 4 (`product(factors) == gradient`) passes trivially; Rule 14 (engine recompute) is the load-bearing math check for batched receipts.
+- `parameters_after` — `parameters_before + lr * reduced_gradient` per parameter (matches the `update = lr * gradient`, `weight_after = weight_before + update` convention of the existing engine; gradient is in descent direction).
+
+### CLI
+
+No new subcommands. v0.9 adds NO CLI surface — batched sidecars are detected by the presence of the top-level `batch` block; the existing `bp import {pytorch,jax,tensorflow}` and `bp import {pytorch,jax,tensorflow} multi` subcommands dispatch internally.
+
+```bash
+# Single-step + batched:
+bp import pytorch train.batched.sidecar.jsonl
+
+# Multi-step + batched:
+bp import pytorch multi train.multi-step-batched.sidecar.jsonl | bp verify multi -
+```
+
+### Rule 18 — Batch reduction consistency (GATED)
+
+Fires when `receipt.batch` is present AND `loss.reduction` is `mean` or `sum`. Asserts:
+
+```
+loss.total == reduction(loss.per_sample.values(), batch.reduction)
+```
+
+Catches the canonical mean-vs-sum confusion attack — a producer claiming `reduction: "mean"` but emitting `loss.total = sum(per_sample)` (off by a factor of N). Silently skips for unbatched receipts and for batched receipts with `loss.reduction = "none"`.
+
+### Rule 19 — Sample-set coherence (GATED, precisely scoped)
+
+> When `batch.sample_order` is present, every ordered per-sample projection used for reduction, emission, or canonical digest construction must be derived by iterating exactly that order. Missing, duplicate, or out-of-order sample IDs fail.
+
+Concretely:
+- `batch.sample_order` has no duplicates (defense in depth — schema's `uniqueItems` also catches this at validation time).
+- For every per-sample MAP in the receipt (`loss.per_sample`, top-level `per_sample`), the key set EQUALS the set of `batch.sample_order` entries. Missing IDs (gap), extra IDs (substitution), or wrong IDs fail.
+
+Rule 19 does NOT fire on:
+- Unbatched receipts (no `batch` block).
+- Maps that aren't per-sample projections (e.g., `parameters_before`, which is keyed by `parameter_id`).
+
+Canonical-emission discipline handles ordering: `emit.ts` iterates `batch.sample_order` when emitting per-sample data. Rule 19 verifies the underlying data has the right key set so that iteration is correct.
+
+### What v0.9.0 explicitly does NOT include
+
+- **Per-sample gradients.** `per_sample[s]` carries `inputs`, `targets`, `forward`, `loss` — NOT a backward / gradient sub-block. Reduced gradients only at `updates[].gradient`. Per-sample gradient decomposition is a v0.9.x / v0.10 candidate.
+- **Adam, AdamW, momentum.** SGD only. `optimizer.name` enum stays at `["sgd"]`. v0.9.1+ candidate.
+- **Heterogeneous batch sizes across steps.** Multi-step batched bundles fix `batch.size` per stream. Variable batch sizes are out of scope.
+
+### Adversarial fixtures (v0.9 plate, fixtures/bad/)
+
+Four fixtures, each load-bearing for a distinct batched attack class:
+
+- `batch.bad-reduction-mode-mismatch.jsonl` → Rule 18 (loss.total claims `mean` but equals `sum(per_sample)`)
+- `batch.bad-sample-id-missing.jsonl` → Rule 19 (loss.per_sample is missing a sample_id declared in batch.sample_order)
+- `batch.bad-sample-order-duplicate.jsonl` → Rule 19 / Rule 0 (batch.sample_order has duplicate; schema's `uniqueItems` catches at validation; Rule 19 catches at reconcile if schema validation is bypassed — defense in depth)
+- `batch.bad-reduced-gradient-wrong.jsonl` → Rule 14 (per-sample math unchanged, reduced gradient mutated; engine recompute via `runBatchedGeneralStep` catches via differential; proves the v0.6 doctrine "existing rules generalize without changes" holds for batched receipts)
+
 ## Citations
 
 - **Jia, Yu, Iyer, Yaghini, Zhang, Papernot. "Proof-of-Learning: Definitions

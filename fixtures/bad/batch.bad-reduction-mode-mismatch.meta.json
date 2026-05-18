@@ -1,0 +1,18 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "batch.bad-reduction-mode-mismatch.meta",
+  "describes": "fixtures/bad/batch.bad-reduction-mode-mismatch.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.softmax-ce.batched.golden.jsonl. v0.9 batched observer-mode adversarial plate — each fixture surfaces a distinct batched attack class with a deterministic mutation.",
+  "mutation": {
+    "kind": "mutate_loss_total_to_sum_while_declaring_mean",
+    "field_path": "loss.total",
+    "declared_reduction": "mean",
+    "original_loss_total_under_mean": 1.0991855,
+    "mutated_loss_total_as_sum": 4.396742008,
+    "sample_count": 4,
+    "note": "Canonical mean-vs-sum confusion. reduction declared as \"mean\" but loss.total emitted as sum(per_sample) (off by factor of N=4). Rule 18 catches this structurally without engine recompute."
+  },
+  "reconciliation_check_targeted_first": "Rule 18: Batch reduction consistency violation — loss.total claims reduction='mean' but value equals sum(loss.per_sample.values()).",
+  "purpose": "v0.9 batched observer-mode anti-circularity fixture. Pressure-tests that the named rule fires BEFORE the reconciler consults fixture_status metadata.",
+  "v0_9_note": "v0.9 ships batched SGD softmax+CE observer-mode ingestion. Rule 18 (batch reduction consistency) and Rule 19 (sample-set coherence) are new gated rules. Adam / AdamW / momentum and per-sample gradients deferred to v0.9.x."
+}

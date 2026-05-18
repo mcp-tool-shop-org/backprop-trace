@@ -23,6 +23,39 @@ All schemas are JSON Schema draft 2020-12 (`$schema:
 "https://json-schema.org/draft/2020-12/schema"`), `additionalProperties:
 false` at every level, and `x-order`-annotated for canonical emission.
 
+### Compatibility note: in-place additive evolution of receipt.v0.4.0
+
+backprop-trace bundles its own schemas with each published package version
+(via the `files: ["schemas/**", ...]` entry in `package.json`). v0.8 and
+v0.9 BOTH extended `receipt.v0.4.0` in place additively — v0.8 added
+optional `attestor.bundle_root_digest`; v0.9 added optional top-level
+`batch` + `per_sample` blocks and extended `Loss` with optional
+`reduction` + `per_sample` fields. Each addition is OPTIONAL — receipts
+authored before the addition (without the new fields) continue to validate
+against the updated schema. Receipts authored AFTER the addition (with
+the new fields) will FAIL to validate against an OLDER package version's
+copy of `receipt.v0.4.0` (the older schema's `additionalProperties: false`
+rejects unknown keys).
+
+For the bundled consumer (anyone using `@mcptoolshop/backprop-trace`),
+this is invisible: the same package version always ships a consistent
+schema + engine + reconciler. **For external consumers** who vendor the
+schema independently (e.g., copying `schemas/receipt.v0.4.0.json` into
+another repo and validating with their own Ajv): **upgrade the vendored
+schema to match the producing backprop-trace version.** Older package
+versions that vendor `receipt.v0.4.0` may reject v0.9 batched receipts
+(new `batch` / `per_sample` fields) until upgraded. This is honest;
+additive doesn't mean old validators magically understand new fields.
+
+This matches the v0.8 precedent and CONTRIBUTING.md's "additive evolution
+is allowed within the same schema_version if existing receipts remain
+valid" policy. Strict closed-shape evolution (bumping to `receipt.v0.5.0`
+on every additive change) is the alternative discipline; the v0.8 + v0.9
+decision was to defer the v0.5.0 bump until a load-bearing reason emerges
+(likely v0.9.1 Adam, which adds new closed-shape `Update.optimizer.{name,
+hyperparameters, state_*}` fields and may force the bump per Agent 3's
+v0.9 study analysis).
+
 A receipt's `schema_version` field selects which schema validates it.
 The bundled validator (`src/validate.ts`) compiles both schemas at
 module load and dispatches on the receipt's declared version (or a

@@ -1,7 +1,7 @@
 {
   "name": "@mcptoolshop/backprop-trace",
-  "version": "0.8.0",
-  "description": "Deterministic structural-trace verifier for neural-network training steps. Re-derives gradients, signals, and parameter updates from named factors via a 17-rule reconciler and emits canonical bytewise JSONL receipts. Ingests external PyTorch / JAX / TensorFlow training traces (single-step or multi-step v0.8+) via framework-trace sidecars with per-step engine-recompute differential + optional bundle-integrity binding. In the Csmith/CompCert lineage of 'the oracle must not consult the artifact it judges.' Mid-v0 (v0.8.x): CPU-only, SGD-only, hand-authored sidecars — see README 'What's not in this version (yet)' for v1.0 gaps.",
+  "version": "0.9.0",
+  "description": "Deterministic structural-trace verifier for neural-network training steps. Re-derives gradients, signals, and parameter updates from named factors via a 19-rule reconciler and emits canonical bytewise JSONL receipts. Ingests external PyTorch / JAX / TensorFlow training traces (single-step or multi-step v0.8+, batched or unbatched v0.9+) via framework-trace sidecars with per-step engine-recompute differential + optional bundle-integrity binding + batch reduction consistency + sample-set coherence checks. In the Csmith/CompCert lineage of 'the oracle must not consult the artifact it judges.' Mid-v0 (v0.9.x): CPU-only, SGD-only, hand-authored sidecars — see README 'What's not in this version (yet)' for v1.0 gaps.",
   "type": "module",
   "license": "MIT",
   "author": "mcp-tool-shop <64996768+mcp-tool-shop@users.noreply.github.com>",

@@ -513,11 +513,15 @@ export function emitGeneralReceipt(r: GeneralReceipt): string {
   parts.push(`"learning_rate":${N(r.learning_rate)}`);
   if (r.trace_id !== undefined) parts.push(`"trace_id":${S(r.trace_id)}`);
   if (r.step_index !== undefined) parts.push(`"step_index":${r.step_index}`);
+  if (r.batch !== undefined) parts.push(`"batch":${emitBatch(r.batch)}`);
   parts.push(`"inputs":${emitOrderedNumberMap(r.inputs, r.topology.unit_order.input)}`);
   parts.push(`"targets":${emitOrderedNumberMap(r.targets, r.topology.unit_order.output)}`);
   parts.push(`"parameters_before":${emitOrderedNumberMap(r.parameters_before, r.topology.parameter_order)}`);
+  if (r.per_sample !== undefined && r.batch !== undefined) {
+    parts.push(`"per_sample":${emitPerSample(r.per_sample, r.batch.sample_order, r.topology.unit_order)}`);
+  }
   parts.push(`"forward":${emitForwardGeneral(r.forward, r.topology.unit_order)}`);
-  parts.push(`"loss":${emitLossGeneral(r.loss, r.topology.unit_order.output)}`);
+  parts.push(`"loss":${emitLossGeneral(r.loss, r.topology.unit_order.output, r.batch?.sample_order)}`);
   parts.push(`"backward":${emitBackwardGeneral(r.backward, r.topology.unit_order)}`);
   parts.push(`"updates":${emitUpdates(r.updates)}`);
   parts.push(`"parameters_after":${emitOrderedNumberMap(r.parameters_after, r.topology.parameter_order)}`);
@@ -716,9 +720,55 @@ function emitForwardGeneral(
 function emitLossGeneral(
   loss: GeneralReceipt["loss"],
   outputOrder: readonly string[],
+  sampleOrder?: readonly string[],
 ): string {
   const perOutput = emitOrderedNumberMap(loss.per_output, outputOrder);
-  return `{"per_output":${perOutput},"total":${N(loss.total)}}`;
+  // v0.9 — Loss x-order: ["per_output", "per_sample", "reduction", "total"].
+  // Optional per_sample + reduction fields emit only when present (batched
+  // receipts). Single-sample receipts emit byte-identically to v0.4.0.
+  const parts: string[] = [`"per_output":${perOutput}`];
+  if (loss.per_sample !== undefined && sampleOrder !== undefined) {
+    parts.push(`"per_sample":${emitOrderedNumberMap(loss.per_sample, sampleOrder)}`);
+  }
+  if (loss.reduction !== undefined) {
+    parts.push(`"reduction":${S(loss.reduction)}`);
+  }
+  parts.push(`"total":${N(loss.total)}`);
+  return `{${parts.join(",")}}`;
+}
+
+// v0.9 — emit Batch block. Top-level x-order ["size", "sample_order", "reduction"].
+function emitBatch(b: NonNullable<GeneralReceipt["batch"]>): string {
+  const sampleOrder = b.sample_order.map((sid) => S(sid)).join(",");
+  return `{"size":${b.size},"sample_order":[${sampleOrder}],"reduction":${S(b.reduction)}}`;
+}
+
+// v0.9 — emit per_sample block. Keys iterate batch.sample_order canonically
+// (Rule 19 enforces). Each per-sample value has inputs/targets/forward/loss
+// in that canonical order.
+function emitPerSample(
+  perSample: NonNullable<GeneralReceipt["per_sample"]>,
+  sampleOrder: readonly string[],
+  unitOrder: GeneralReceipt["topology"]["unit_order"],
+): string {
+  const entries = sampleOrder.map((sid) => {
+    const s = perSample[sid];
+    if (!s) {
+      throw new Error(
+        `emitPerSample: per_sample missing entry for sample_id ${JSON.stringify(sid)} declared in batch.sample_order. ` +
+          `Rule 19 (sample-set coherence) will fire at reconcile time.`,
+      );
+    }
+    const inputs = emitOrderedNumberMap(s.inputs, unitOrder.input);
+    const targets = emitOrderedNumberMap(s.targets, unitOrder.output);
+    const forward = emitForwardGeneral(s.forward, unitOrder);
+    // Per-sample loss does NOT have its own per_sample/reduction sub-fields
+    // (it's a single sample); emit just per_output + total.
+    const perOutput = emitOrderedNumberMap(s.loss.per_output, unitOrder.output);
+    const loss = `{"per_output":${perOutput},"total":${N(s.loss.total)}}`;
+    return `${S(sid)}:{"inputs":${inputs},"targets":${targets},"forward":${forward},"loss":${loss}}`;
+  });
+  return `{${entries.join(",")}}`;
 }
 
 function emitBackwardGeneral(

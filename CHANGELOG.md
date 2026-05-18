@@ -14,6 +14,227 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.9.0] - 2026-05-18
+
+The v0.9 batched observer-mode ingestion wave. **Not a v1.0.0 promotion** —
+backprop-trace remains mid-v0 (no Adam, no live framework helpers, no
+real-world fixture, no adopter validation). What v0.9.0 actually does:
+closes the "single-sample only" gap named in v0.8's SHIP_GATE — external
+framework traces can now be batched.
+
+### Added
+
+- **`framework-trace.v0.3.0` schema** (NEW file). Additive in spirit over
+  v0.2.0 but a hard schema bump because the `format` const + root
+  `additionalProperties: false` make additive evolution impossible on the
+  same major. Adds optional `batch` block (size, sample_order, reduction)
+  + optional top-level `per_sample` block (per-sample inputs/targets/
+  forward/loss) + extends `Loss` with optional `reduction` + `per_sample`.
+  v0.2.0 / v0.1.0 sidecars continue to validate against their own schemas
+  unchanged.
+- **`receipt.v0.4.0` schema** additive extension (in-place; following v0.8
+  precedent — see `docs/schema.md` compatibility note). New optional top-
+  level `batch` + `per_sample` blocks; extended `Loss` with optional
+  `reduction` + `per_sample` map. Existing single-sample receipts continue
+  to validate byte-identically (the new fields are absent on v0.1-v0.8
+  fixtures).
+- **`runBatchedGeneralStep`** in `src/general-engine.ts`. Batched engine
+  entry point: orchestrates N runs of `runGeneralStep` (one per sample
+  in `batch.sample_order`) against shared `parameters_before`, then
+  reduces per-sample losses + gradients per `batch.reduction` and
+  produces a single batched receipt with canonical per-sample structure.
+  Same sign convention as `runGeneralStep` (`update = lr * gradient`,
+  `weight_after = weight_before + update`; gradient in descent direction).
+- **Batched dispatch in `buildObserverReceiptFromSidecar` and
+  `buildObserverReceiptStreamFromSidecar`** (`src/import-observer.ts`).
+  Detects sidecars by the presence of the top-level `batch` block and
+  dispatches to `runBatchedGeneralStep` instead of `runGeneralStep`.
+  Per-sample forward / loss differential check (vs the load-bearing
+  single-sample diff check for unbatched). Per-framework subcommand
+  discipline preserved.
+- **Rule 18 (Batch reduction consistency)** in `src/reconcile.ts`. GATED
+  on `receipt.batch` presence + `loss.reduction` in {`mean`, `sum`}.
+  Asserts `loss.total == reduction(loss.per_sample.values(),
+  batch.reduction)`. Catches the canonical mean-vs-sum confusion attack.
+- **Rule 19 (Sample-set coherence, precisely scoped)** in
+  `src/reconcile.ts`. GATED on `batch.sample_order` presence. Per the
+  v0.9 lock: "every ordered per-sample projection used for reduction,
+  emission, or canonical digest construction must be derived by iterating
+  exactly that order. Missing, duplicate, or out-of-order sample IDs
+  fail." Concretely: per-sample map key sets MUST equal `batch.sample_order`
+  set. Rule 19 is defense-in-depth; schema's `uniqueItems` on
+  `batch.sample_order` is the first line of defense.
+- **`fixtures/external/pytorch.softmax-ce.batched.{sidecar,golden}.jsonl`**
+  — canonical 1-step × 4-sample PyTorch softmax+CE SGD batched trace.
+- **`fixtures/external/pytorch.softmax-ce.multi-step-batched.{sidecar,golden}.jsonl`**
+  — canonical 2-step × 4-sample PyTorch trace; demonstrates the
+  end-to-end pipe `bp import pytorch multi <file> | bp verify multi -`
+  with batching active across multiple steps + bundle binding (Rule 17).
+- **4-fixture batched bad-fixture plate** under `fixtures/bad/`:
+  - `batch.bad-reduction-mode-mismatch.jsonl` → Rule 18 (loss.total claims
+    `mean` but emits `sum(per_sample)`)
+  - `batch.bad-sample-id-missing.jsonl` → Rule 19 (per-sample map missing
+    a sample_id declared in batch.sample_order)
+  - `batch.bad-sample-order-duplicate.jsonl` → Rule 19 / Rule 0 (schema
+    `uniqueItems` rejects at validation; Rule 19 defense-in-depth catches
+    at reconcile if schema validation is bypassed)
+  - `batch.bad-reduced-gradient-wrong.jsonl` → Rule 14 (existing engine-
+    recompute differential generalizes to batched receipts without change
+    — proves the v0.6 doctrine "existing rules generalize" holds)
+- **`scripts/generate-pytorch-batched-softmax-ce-fixtures.ts`** and
+  **`scripts/generate-batch-bad-fixtures.ts`** — reproducible generators.
+- **`test/import-pytorch-batched.test.ts`** (~15 tests) — byte-equal
+  round-trip on both good fixtures, schema validation, reconcile cleanup,
+  batch invariants, runBatchedGeneralStep unit tests (rejects duplicate
+  sample_id, rejects per_sample missing declared sample_id), CLI
+  end-to-end, end-to-end pipe `bp import pytorch multi <batched> | bp
+  verify multi -`.
+- **`test/reconcile.bad-batch.test.ts`** (~5 tests) — each bad fixture
+  fires its targeted rule; counter-positive sanity that the canonical
+  golden reconciles cleanly with no false positives from Rules 18 + 19.
+- **Library re-exports**: `runBatchedGeneralStep` + `BatchedGeneralInput`
+  type from `./general-engine` (no new subpath needed — existing exports
+  cover them).
+
+### Changed
+
+- **`src/general-engine.ts` `GeneralReceipt` type** — additive optional
+  fields: `batch?: { size, sample_order, reduction }`, `per_sample?: {
+  [sample_id]: { inputs, targets, forward, loss } }`, `loss.per_sample?:
+  Record<string, number>`, `loss.reduction?: "mean" | "sum" | "none"`.
+  No existing field shapes changed; v0.1-v0.8 receipts continue to type-
+  check identically.
+- **`src/emit.ts` `emitGeneralReceipt`** — emits optional `batch` and
+  `per_sample` blocks at their x-order positions; emits optional `loss.
+  per_sample` + `loss.reduction` when present. Unbatched receipts (no
+  `batch` block) emit byte-identically to v0.8.
+- **`src/import-observer.ts`** — `FrameworkTraceSidecar` type widened to
+  accept v0.1.0 / v0.2.0 / v0.3.0 + optional `batch` / `per_sample`
+  fields. `buildObserverReceiptFromSidecar` and
+  `buildObserverReceiptStreamFromSidecar` dispatch per-record on `batch`
+  presence. `source_format` in `attestor.import_provenance` now mirrors
+  the sidecar's actual format const (no longer hardcoded).
+- **`src/reconcile.ts` Rule 12 (loss formula consistency)** — now SKIPS
+  for batched receipts. Top-level loss.per_output / loss.total are
+  batch-REDUCED; deriving expected values from top-level forward + targets
+  (FIRST-SAMPLE only by canonical convention) would produce single-sample
+  values that don't match reduced claims. Rule 18 handles batched loss
+  reduction; per-sample loss formula correctness is verified by Rule 14
+  (engine recompute) per sample.
+- **`src/reconcile.ts` Rule 14 (engine-recompute differential)** — now
+  BATCH-AWARE. When `receipt.batch` is present, dispatches to
+  `runBatchedGeneralStep` instead of `runGeneralStep`; engine recomputes
+  per-sample state via the receipt's `per_sample` data and reduces
+  gradients. Rule shape unchanged; engine is batch-aware internally.
+- **`src/schema-loader.ts`** — `FRAMEWORK_TRACE_SCHEMA_VERSIONS` extended
+  to `["0.1.0", "0.2.0", "0.3.0"]`.
+- **`src/validate.ts`** — framework-trace dispatcher recognizes
+  `"framework-trace.v0.3.0"` format const.
+- **`src/bin/bp.ts` `RULE_LABELS`** — Rules 18 + 19 labels added (with
+  precise scoping for Rule 19).
+- **`src/bin/bp.ts` `bp import` overview help** — extended to note
+  batched sidecars are accepted by the existing subcommands (no new CLI
+  surface; batched is a sidecar field).
+- **README** — status banner drops "single-sample"; tagline + "What
+  this is" updated to 19 rules; CLI usage table updated to note batched
+  sidecars; "Bring your own training trace" extended with **"Batched
+  ingestion (v0.9+)"** subsection covering sidecar format, top-level
+  field semantics for batched receipts, CLI, Rules 18 + 19, and what
+  v0.9.0 explicitly does NOT include (per-sample gradients, Adam,
+  heterogeneous batch sizes); "The 17 rules" → "The 19 rules" table with
+  Rules 18 + 19 rows; Determinism scope adds new batched goldens;
+  "What's not in this version (yet)" REMOVES "Batch dimension" bullet
+  (shipped) and ADDS two new gaps: per-sample gradients (v0.9.x/v0.10),
+  heterogeneous batch sizes across steps (out of scope, may stay).
+- **`docs/multi-step.md`** — extended with a full "Batched ingestion
+  (v0.9+)" section covering sidecar format, intra-stream invariants,
+  top-level field semantics, Rule 18 + Rule 19 precisely-scoped framing,
+  adversarial fixture plate.
+- **`docs/cli.md`** — annotated existing `bp import * <sidecar>` and
+  `bp import * multi <sidecar>` rows to note batched (v0.3.0) sidecars
+  are accepted.
+- **`docs/reconciliation.md`** — quick-reference table extended to 19
+  rules with Rule 17, 18, 19 statements added.
+- **`docs/schema.md`** — NEW compatibility note explaining the in-place
+  additive evolution discipline for `receipt.v0.4.0`: older package
+  versions that vendor the schema independently may reject v0.9 batched
+  receipts until upgraded. v0.8's `bundle_root_digest` + v0.9's `batch`
+  / `per_sample` additions both follow this pattern. Strict closed-shape
+  evolution (v0.5.0 bump on every additive change) is the alternative
+  discipline; the v0.8 + v0.9 decision was to defer the bump until a
+  load-bearing reason (likely v0.9.1 Adam) forces it.
+- **`package.json`** — version 0.9.0; description updated ("17-rule" →
+  "19-rule"; "single-step or multi-step" → "single-step or multi-step,
+  batched or unbatched").
+- **`test/reconcile.doctrine.test.ts`** — `FILENAME_KIND_TO_RULE` gains
+  4 new entries for the batched plate. Implemented-rules assertion bumped
+  from `[1..17]` to `[1..19]`. Test description updated to name Rules 18
+  + 19 with their gating + precise scoping.
+
+### Tests
+
+- 396 → 413 total (+17 v0.9 tests across `test/import-pytorch-batched.test.ts`
+  and `test/reconcile.bad-batch.test.ts`). 413 pass / 0 fail / 0 skip.
+- All v0.1-v0.8.0 fixtures byte-identical.
+- Engine identity stays at `backprop-trace-engine@0.6.0` (engine math
+  unchanged; v0.9 wraps `runGeneralStep` in `runBatchedGeneralStep` for
+  the batched path; per-sample engine math is identical to v0.6).
+
+### Migration notes (v0.8.0 → v0.9.0)
+
+- **Pure additive on engine semantics for single-sample receipts.** v0.1-
+  v0.8 unbatched receipts byte-identical; v0.8 multi-step unbatched
+  receipts byte-identical. Batched receipts are NEW.
+- **Schema additivity (in-place on receipt.v0.4.0)**: existing v0.4.0
+  receipts validate unchanged. New `batch` / `per_sample` / `loss.
+  reduction` / `loss.per_sample` fields are optional. Consumers vendoring
+  the schema independently and pinned to v0.8's schema copy will reject
+  v0.9 batched receipts as having unknown properties — see
+  `docs/schema.md` compatibility note. Upgrade vendored schemas.
+- **Framework-trace v0.3.0 is a hard new schema** (the `format` const +
+  `additionalProperties: false` make additive evolution impossible on
+  the same major). v0.1.0 / v0.2.0 sidecars continue to validate against
+  their own schemas. The importer dispatches on the `format` const.
+- **CLI**: zero new subcommands. Existing `bp import {pytorch,jax,
+  tensorflow}` and `bp import {pytorch,jax,tensorflow} multi` subcommands
+  detect batched sidecars by the presence of the top-level `batch` block.
+- **Reconciler**: Rules 12 and 14 changed BEHAVIOR (skip / dispatch on
+  `batch` presence). v0.1-v0.8 receipts (no batch) are unaffected. New
+  Rules 18, 19 are GATED on `batch` / `batch.sample_order` presence and
+  do not fire on unbatched receipts.
+- **Library API**: `runBatchedGeneralStep` + `BatchedGeneralInput` type
+  newly exported from `./general-engine`. All additive.
+
+### Not in v0.9.0 (still v1.0 blockers — see SHIP_GATE.md)
+
+- **Optimizers beyond vanilla SGD** (Adam, AdamW, momentum) — v0.9.1.
+  Adam adds new closed-shape `Update.optimizer.{name, hyperparameters,
+  state_before, state_after}` fields and is likely to force a `receipt.v0.5.0`
+  schema bump.
+- **Per-sample gradients in batched receipts** — v0.9.x / v0.10. v0.9.0
+  ships reduced gradients only.
+- **Heterogeneous batch sizes across steps** — out of scope, may stay.
+- **Live framework helpers** (`pip install backprop-trace-pytorch`) — v0.10.
+- **Real-world fixture** (CNN, transformer block) — v0.11.
+- **Adopter validation** — before any v1.0 promotion.
+- **Producer-identity binding for multi-step traces** — Rule 17 is
+  integrity-only; signature layer is downstream operator work.
+- **Heterogeneous multi-framework traces** — out of scope, may stay.
+- **GPU determinism** — out of scope (permanent).
+
+### Release discipline
+
+- No git tag (untagged main commit).
+- No npm publish.
+- No GitHub release.
+- No translations.
+
+Per standing user constraint: tagging now would risk reintroducing the
+"release equals promotion" pressure v0.7 explicitly corrected. v0.9.0 is
+a substantive product slice (single-sample → batched closes the cold-user
+adoption killer), not a v1.0 promotion. Translations will re-run when a
+tag-bearing release is authorized.
+
 ## [0.8.0] - 2026-05-18
 
 The v0.8 multi-step observer-mode ingestion wave. **Not a v1.0.0

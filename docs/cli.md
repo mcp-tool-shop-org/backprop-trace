@@ -38,10 +38,10 @@ the subcommand-specific text.
 | `bp scaffold topology --topology mazur\|xor\|iris [--out F]` | Write a sample input file to bootstrap a new topology (v0.4+) | 0 / 1 |
 | `bp validate-input <file>` | Schema-validate a topology-input config without running the engine (v0.4+) | 0 / 1 |
 | `bp validate <file>` | Schema-only validation of a receipt; auto-detects v0.1.0 / v0.2.0 / v0.3.0 / v0.4.0 | 0 / 1 |
-| `bp import pytorch <sidecar.jsonl> [--out F]` | Convert a framework-trace.v0.1.0 PyTorch sidecar to an observer-mode v0.4.0 receipt (v0.6+) | 0 / 1 / 2 / 4 |
+| `bp import pytorch <sidecar.jsonl> [--out F]` | Convert a framework-trace.v0.1.0 (unbatched) OR v0.3.0 (batched, v0.9+) PyTorch sidecar to an observer-mode v0.4.0 receipt (v0.6+) | 0 / 1 / 2 / 4 |
 | `bp import jax <sidecar.jsonl> [--out F]` | Same as `bp import pytorch` but accepts `source_framework.name == "jax"` sidecars (v0.6.1+) | 0 / 1 / 2 / 4 |
 | `bp import tensorflow <sidecar.jsonl> [--out F]` | Same as `bp import pytorch` but accepts `source_framework.name == "tensorflow"` sidecars (v0.7.0+) | 0 / 1 / 2 / 4 |
-| `bp import pytorch multi <sidecar.jsonl> [--out F]` | Convert a framework-trace.v0.2.0 multi-step PyTorch JSONL stream to N observer-mode v0.4.0 receipts (v0.8+) | 0 / 1 / 2 / 3 |
+| `bp import pytorch multi <sidecar.jsonl> [--out F]` | Convert a framework-trace.v0.2.0 (multi-step) OR v0.3.0 (multi-step + batched) PyTorch JSONL stream to N observer-mode v0.4.0 receipts (v0.8+; batched v0.9+) | 0 / 1 / 2 / 3 |
 | `bp import jax multi <sidecar.jsonl> [--out F]` | Same as `bp import pytorch multi` but JAX (v0.8+) | 0 / 1 / 2 / 3 |
 | `bp import tensorflow multi <sidecar.jsonl> [--out F]` | Same as `bp import pytorch multi` but TensorFlow (v0.8+) | 0 / 1 / 2 / 3 |
 
