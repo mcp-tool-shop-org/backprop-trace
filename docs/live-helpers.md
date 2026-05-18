@@ -1,11 +1,14 @@
 # Live framework helpers (v0.10+)
 
-`backprop-trace` v0.10 ships the first **live framework helper**: a
+`backprop-trace` v0.10 shipped the first **live framework helper**: a
 single auditable Python file at `scripts/extract/pytorch.py` that
 extracts a `framework-trace.v0.7.0` sidecar from a real PyTorch
-training step. The helper is **observer-only**. Rule 14
-(engine-recompute differential) in `bp import pytorch` is the
-authority on every helper-emitted sidecar.
+training step. **v0.10.1 closes the PyTorch optimizer-matrix gap** —
+the helper now covers SGD, Adam, AdamW, and sgd_momentum (classical +
+Nesterov + dampening), matching the verifier's full PyTorch surface.
+The helper is **observer-only**. Rule 14 (engine-recompute
+differential) in `bp import pytorch` is the authority on every
+helper-emitted sidecar.
 
 ## Trust boundary (load-bearing)
 
@@ -37,29 +40,38 @@ This mirrors the doctrine in:
 - **Sigstore model-transparency**: helper and verifier share only
   the hash function; verification logic is independent.
 
-## v0.10 scope
+## v0.10.x scope
 
-| Feature | v0.10 status |
-|---|---|
-| PyTorch SGD (`torch.optim.SGD`, momentum=0) | ✅ supported |
-| PyTorch Adam (`torch.optim.Adam`) | ✅ supported |
-| Single-step extraction | ✅ supported |
-| Multi-step extraction (loop with shared `trace_id`) | ✅ supported |
-| CPU device | ✅ supported |
-| Mazur-shaped feed-forward nets (single hidden layer, sigmoid/relu/identity hidden, sigmoid/softmax/identity/relu output) | ✅ supported |
-| `half_squared_error` loss | ✅ supported |
-| `cross_entropy_softmax` loss | ✅ supported |
-| PyTorch AdamW (`torch.optim.AdamW`) | ⏸ deferred to v0.10.1 (decoupled-decay extraction) |
-| PyTorch sgd_momentum (`torch.optim.SGD` with momentum > 0) | ⏸ deferred to v0.10.1 (momentum_buffer sign-flip pin) |
-| Nesterov / dampening | ⏸ deferred to v0.10.1 (via sgd_momentum) |
-| AMP / `torch.cuda.amp.autocast` | ❌ rejected at boundary (fp16/fp32 master confusion — PyTorch issue #75224) |
-| CUDA / MPS / XLA devices | ❌ rejected at boundary (CPU-first v0.10; v0.11+ for device-tolerance) |
-| Batched live extraction | ❌ not supported in helper (hand-authored batched sidecars continue working) |
-| AMSGrad / NAdam / RAdam / Lion | ❌ deferred to v0.10+ |
-| LBFGS / closure-style optimizers | ❌ deferred |
-| Multi-hidden-layer / CNN / transformer topologies | ❌ deferred to v0.11 |
-| JAX live helper | ⏸ deferred to v0.11 (adopter-pull triggered) |
-| TensorFlow live helper | ⏸ deferred to v0.12+ (gated on JAX clean shipment) |
+| Feature | v0.10.0 status | v0.10.1 status |
+|---|---|---|
+| PyTorch SGD (`torch.optim.SGD`, momentum=0) | ✅ supported | ✅ supported |
+| PyTorch Adam (`torch.optim.Adam`) | ✅ supported | ✅ supported |
+| PyTorch AdamW (`torch.optim.AdamW`) | ⏸ deferred to v0.10.1 | ✅ **supported (NEW)** — decoupled weight decay (Loshchilov & Hutter 2017 Alg 2 line 12) |
+| PyTorch sgd_momentum (`torch.optim.SGD` with momentum > 0) | ⏸ deferred to v0.10.1 | ✅ **supported (NEW)** — momentum_buffer sign-flipped at boundary |
+| Nesterov / dampening (via sgd_momentum) | ⏸ deferred to v0.10.1 | ✅ **supported (NEW)** |
+| Single-step extraction | ✅ supported | ✅ supported |
+| Multi-step extraction (loop with shared `trace_id`) | ✅ supported | ✅ supported |
+| CPU device | ✅ supported | ✅ supported |
+| Mazur-shaped feed-forward nets (single hidden layer, sigmoid/relu/identity hidden, sigmoid/softmax/identity/relu output) | ✅ supported | ✅ supported |
+| `half_squared_error` loss | ✅ supported | ✅ supported |
+| `cross_entropy_softmax` loss | ✅ supported | ✅ supported |
+| PyTorch SGD with weight_decay > 0 (coupled L2) | ❌ rejected at boundary | ❌ rejected at boundary (Rule 7 third branch deferred to v0.11) |
+| AMP / `torch.cuda.amp.autocast` | ❌ rejected at boundary (fp16/fp32 master confusion — PyTorch issue #75224) | ❌ rejected at boundary |
+| CUDA / MPS / XLA devices | ❌ rejected at boundary (CPU-first; v0.11+ for device-tolerance) | ❌ rejected at boundary |
+| Batched live extraction | ❌ not supported in helper (hand-authored batched sidecars continue working) | ❌ not supported in helper |
+| AMSGrad / NAdam / RAdam / Lion | ❌ deferred to v0.10+ | ❌ deferred to v0.10+ |
+| LBFGS / closure-style optimizers | ❌ deferred | ❌ deferred |
+| Multi-hidden-layer / CNN / transformer topologies | ❌ deferred to v0.11 | ❌ deferred to v0.11 |
+| JAX live helper | ⏸ deferred to v0.11 (adopter-pull triggered) | ⏸ deferred to v0.11 |
+| TensorFlow live helper | ⏸ deferred to v0.12+ (gated on JAX clean shipment) | ⏸ deferred to v0.12+ |
+
+**v0.10.1 closure:** the helper's optimizer matrix now matches the
+verifier's full PyTorch surface. The mismatch that defined v0.10.0
+— "verifier supports AdamW/sgd_momentum via hand-authored sidecars,
+helper does not extract them live" — is closed. AMSGrad/NAdam/RAdam/
+Lion/LBFGS remain deferred, but they are equally absent from the
+verifier surface today; the helper-vs-verifier gap is the load-bearing
+parity, and v0.10.1 closes it.
 
 Hand-authored JAX / TensorFlow sidecars **continue to work unchanged**
 in v0.10 via the existing `bp import jax` / `bp import tensorflow`
@@ -189,7 +201,7 @@ named factors — it doesn't care what the helper claimed about itself.
 
 ## Adversarial fixture catalog (`fixtures/bad/pytorch-helper.bad-*`)
 
-Per Csmith/CompCert discipline, the v0.10 plate ships 7 deliberately-
+Per Csmith/CompCert discipline, the v0.10.x plate ships 9 deliberately-
 broken simulated-helper sidecars under `fixtures/bad/`. Each is
 generated by a deterministic JS mutation script
 (`scripts/build-pytorch-helper-fixtures.mjs`) applied to the good
@@ -205,6 +217,8 @@ broken helper (that would make them byte-unstable).
 | `pytorch-helper.bad-forward-out-mismatch` | Helper cached wrong layer's output (mid-layer vs final) | Rule 11 (softmax normalization) |
 | `pytorch-helper.bad-weight-after-divergence` | Helper captured `parameters_after` before `optimizer.step()` returned | Rule 6 (weight progression) |
 | `pytorch-helper.bad-hidden-signal-misrouted` | Helper used `out` (sigmoid value) instead of `out*(1-out)` (sigmoid derivative) for `activation_derivative` | Rule 8 (provenance reference consistency) |
+| **v0.10.1** `pytorch-helper.bad-momentum-buffer-not-sign-flipped` | Helper read `optimizer.state[p]['momentum_buffer']` directly without sign-flipping (PyTorch ascent → backprop-trace descent; per PyTorch issue #1099). The sign-flip is the entire v0.10.1 sgd_momentum trust contract — non-flipped helper output corrupts every downstream optimizer-state recurrence. | Rule 14 (engine-recompute differential — sign mismatch surfaces here before Rule 21 fires) |
+| **v0.10.1** `pytorch-helper.bad-adamw-as-coupled-l2` | Helper emitted an AdamW optimizer_config (name='adamw', weight_decay > 0) but neglected to apply the decoupled `(1 - lr*wd)` factor to `weight_after`. Effectively treats AdamW as coupled L2 — Loshchilov & Hutter 2017 Alg 2 line 12 is the load-bearing distinction Rule 7's AdamW branch enforces. | Rule 6 (weight progression — AdamW decoupled-decay branch) |
 
 The test plate at `test/reconcile.bad-pytorch-helper.test.ts` runs
 each fixture through `importPytorchSidecar()` + `reconcileReceipt()`
@@ -240,24 +254,32 @@ straight to `pip install backprop-trace-pytorch` would:
 Until both fire, repo-script is the right answer. Documented in
 `SHIP_GATE.md` and reaffirmed in v0.10's commit message.
 
-## v0.10.1 outlook
+## v0.10.x outlook
 
-The next slice extends the helper's optimizer matrix:
+**v0.10.1 (CLOSED)**: PyTorch optimizer-matrix closure.
+- AdamW live extraction — same shape as Adam but the `optimizer_config`
+  block carries `weight_decay`; engine's Rule 6/7 AdamW branches fire
+  on the `(1 - lr*wd)` decoupled-decay factor (Loshchilov & Hutter
+  2017 arXiv:1711.05101 Alg 2 line 12).
+- sgd_momentum live extraction (classical + Nesterov + dampening),
+  with the `momentum_buffer` sign-flip implemented at the extraction
+  boundary in `_snapshot_per_parameter_state` (per PyTorch issue #1099).
+- No schema bump (helper block stable at v0.7.0).
 
-- **PyTorch AdamW** — same shape as Adam but the `optimizer_config`
-  block carries `weight_decay`; engine's Rule 6/7 AdamW branches
-  fire on `(1 - lr*wd)` decoupled-decay. No schema bump.
-- **PyTorch sgd_momentum** — adds the `momentum_buffer` sign-flip at
-  the extraction boundary. The pin is documented in
-  `scripts/extract/pytorch.py` and in `schemas/framework-trace.v0.7.0.json`
-  `MomentumState` description. The helper currently REJECTS
-  sgd_momentum at the boundary with a clear "deferred to v0.10.1"
-  message; v0.10.1 turns the rejection into an extraction branch
-  (one new function `_sign_flip_momentum_buffer`, ~10 lines).
+**v0.10.2 (planned)**: `npm pack` / `pnpm pack` cold-install smoke
+testing — verifies helper + example ship in the tarball and `bp examples
+pytorch` resolves the helper from a fresh install.
 
-v0.11 and beyond — JAX helper (adopter-pull triggered), TF helper
+**v0.10.3 (planned)**: README + `package.json` description compression
+for cold readers.
+
+**v0.10.4 (planned)**: pip-vs-repo-script decision memo. Driven by
+the flip-signal contract documented above, not a calendar.
+
+**v0.11 and beyond** — JAX helper (adopter-pull triggered), TF helper
 (gated on JAX clean shipment), Lightning / Accelerate integration,
-multi-hidden-layer topologies — are out of v0.10 / v0.10.x scope.
+multi-hidden-layer topologies, SGD coupled-L2 weight decay (Rule 7
+third branch) — out of v0.10.x scope.
 
 ## Sources
 

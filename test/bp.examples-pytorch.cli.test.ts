@@ -61,11 +61,51 @@ test("scripts/extract/pytorch.py: trust-boundary statement present", () => {
   assert.match(text, /FORENSIC/i, "helper docstring must describe source_hash as FORENSIC")
 })
 
-test("scripts/extract/pytorch.py: momentum_buffer sign-flip pin documented for v0.10.1", () => {
+test("scripts/extract/pytorch.py: momentum_buffer sign-flip is IMPLEMENTED (not just documented)", () => {
+  // v0.10.1 closure: the sign flip has graduated from a documented pin
+  // to an active code path. Assert both the docstring pin AND the
+  // implementation are present.
   const text = readFileSync(HELPER_PATH, "utf-8")
   assert.match(text, /momentum_buffer/i, "helper must document momentum_buffer behavior")
   assert.match(text, /sign[-_\s]flip/i, "helper must document the sign-flip pin")
-  assert.match(text, /v0\.10\.1/, "helper must declare sgd_momentum as v0.10.1 deferral")
+  // The IMPLEMENTATION line: assigning `-buf` (negated buffer tensor) to
+  // a descent-direction variable. Match either `buf_descent = -buf` style
+  // or `(-state["momentum_buffer"])` style.
+  assert.ok(
+    /buf_descent\s*=\s*-buf/.test(text) ||
+      /-\s*state\[["']momentum_buffer["']\]/.test(text),
+    "helper must IMPLEMENT the sign flip (e.g. `buf_descent = -buf` or `-state['momentum_buffer']`), not just document it",
+  )
+  // PyTorch issue #1099 must be cited where the flip happens (load-bearing
+  // attribution for the doctrine).
+  assert.match(
+    text,
+    /PyTorch\s+issue\s+#1099/i,
+    "helper must cite PyTorch issue #1099 where the sign flip is implemented (load-bearing attribution)",
+  )
+})
+
+test("v0.10.1: scripts/extract/pytorch.py accepts AdamW + sgd_momentum (not just SGD + Adam)", () => {
+  const text = readFileSync(HELPER_PATH, "utf-8")
+  // v0.10 rejected AdamW + sgd_momentum at the boundary; v0.10.1 accepts them.
+  // The new _detect_optimizer_family must have RETURN branches for both.
+  assert.match(
+    text,
+    /return\s+["']adamw["']/,
+    "helper v0.10.1 must return 'adamw' from _detect_optimizer_family for torch.optim.AdamW",
+  )
+  assert.match(
+    text,
+    /return\s+["']sgd_momentum["']/,
+    "helper v0.10.1 must return 'sgd_momentum' from _detect_optimizer_family for SGD with momentum>0",
+  )
+  // The v0.10 explicit "AdamW is deferred to v0.10.1" rejection string
+  // must NO LONGER appear (it would be a contradiction to ship v0.10.1
+  // with that text still present).
+  assert.ok(
+    !/AdamW.*deferred.*v0\.10\.1/i.test(text),
+    "helper v0.10.1 must REMOVE the v0.10 'AdamW deferred to v0.10.1' rejection string",
+  )
 })
 
 test("scripts/extract/pytorch.py: helper version matches package.json (forensic identity)", () => {

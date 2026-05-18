@@ -14,6 +14,210 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.10.1] - 2026-05-18
+
+The v0.10.1 PyTorch optimizer-matrix closure wave. **Not a v1.0.0
+promotion.** **Not a publishing step** — local v0.10.x stretch
+continues; no tag, no npm publish, no GitHub release, no translations.
+
+v0.10.0 shipped the first live PyTorch helper supporting PyTorch ×
+{SGD, Adam}. v0.10.1 closes the helper-vs-verifier optimizer-matrix
+gap: **AdamW + sgd_momentum (classical + Nesterov + dampening) now
+extract live**, with the load-bearing `momentum_buffer` sign-flip
+implemented at the extraction boundary. The helper now matches the
+verifier's full PyTorch surface (modulo SGD coupled-L2 weight decay,
+which is deferred to v0.11 as Rule 7's third branch).
+
+**The sign flip (load-bearing)**: PyTorch's
+`optimizer.state[p]['momentum_buffer']` accumulates the unsigned
+gradient (ascent direction) because PyTorch applies the parameter
+update as `param.add_(d_p, alpha=-lr)` — the descent sign lives in
+the update step, not in the buffer. backprop-trace's
+`MomentumState.buffer` lives in descent space — Rule 21a is
+`buffer_after = mu * buffer_before + (1 - dampening) * gradient`
+where `gradient` is already signed for descent. The helper flips
+once at the extraction boundary:
+`buf_descent = -state['momentum_buffer']`. Per PyTorch issue #1099
++ docs/schema.md MomentumState section + docs/live-helpers.md
+sign-flip pin (carried forward from v0.10.0 documentation).
+
+**Trust boundary unchanged**: the helper remains observer-only. Rule
+14 (engine-recompute differential) is the authority on every
+helper-emitted sidecar regardless of helper claims. The sign-flip
+adversarial fixture (`pytorch-helper.bad-momentum-buffer-not-sign-
+flipped`) demonstrates that a non-flipped helper output gets rejected
+by Rule 14 — the trust contract is *enforced* by the verifier, not
+by the helper's self-claim.
+
+### Added
+
+- **`scripts/extract/pytorch.py` extended to v0.10.1**:
+  - `_detect_optimizer_family` no longer rejects `torch.optim.AdamW`
+    (returns `"adamw"`) or `torch.optim.SGD` with `momentum > 0`
+    (returns `"sgd_momentum"`). Cross-checks: SGD with `weight_decay >
+    0` STILL rejected (coupled L2 deferred to v0.11). AMSGrad / NAdam
+    / RAdam / Lion / LBFGS still rejected with the v0.10.x rejection
+    message.
+  - `_build_optimizer_block` emits the full hyperparameter block for:
+    - `adam` — `{name, learning_rate, beta1, beta2, epsilon, t}`
+    - `adamw` — `{name, learning_rate, beta1, beta2, epsilon, weight_decay, t}`
+    - `sgd_momentum` — `{name, learning_rate, momentum, nesterov?, dampening?}`
+      with `nesterov` emitted only when `True` and `dampening` only
+      when `> 0` (preserves v0.6.0 classical-momentum byte-equality)
+  - `_snapshot_optimizer_state` refactored to
+    `_snapshot_per_parameter_state(model, optimizer, topology, family,
+    step_index)`. Walks `topology.parameter_order` and indexes into
+    PyTorch's per-layer state tensors by element coordinate
+    (`Linear.weight[h_out, i_in]`). Returns dict keyed by
+    backprop-trace `parameter_id` (no more `(group_idx, param_idx)`
+    tuple keys — v0.10.0's hidden bug fixed). State shape:
+    - adam/adamw: `{m, v, step}` per parameter (pre-first-step zero-init
+      for both fields plus the current step_index)
+    - sgd_momentum: `{buffer}` per parameter, **SIGN-FLIPPED**
+      (`buf_descent = -buf`) per PyTorch issue #1099 + v0.7.0
+      MomentumState convention. Pre-first-step `momentum_buffer = None`
+      (PyTorch lazy-init, issue #99079) handled with zero-init.
+  - `_compute_observables` uses the new state shape — `update_entry.
+    optimizer.state_before / state_after` looked up by `parameter_id`
+    directly. v0.10.0's broken Adam-state pass-through removed.
+  - Sign-flip code path carries an inline citation pointer to PyTorch
+    issue #1099 + the docs/schema.md MomentumState section.
+- **3 good helper-emitted golden sidecars** under `fixtures/external/`:
+  - `pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl` (v0.10.0;
+    re-derived under v0.10.1 helper version)
+  - `pytorch.helper-emitted.adamw.sidecar.jsonl` (v0.10.1 NEW) —
+    derived from `pytorch.adamw.sidecar.jsonl`; imports cleanly with
+    Rule 14 matched + Rule 7 AdamW branch + Rules 22-24
+  - `pytorch.helper-emitted.sgd-momentum.sidecar.jsonl` (v0.10.1 NEW)
+    — derived from `pytorch.sgd-momentum.sidecar.jsonl`; descent-
+    direction buffer; imports cleanly with Rule 14 matched + Rules
+    20/21a/21b/21c/25/26
+- **2 new bad-helper adversarial fixtures** under `fixtures/bad/`:
+  - `pytorch-helper.bad-momentum-buffer-not-sign-flipped` (Rule 14)
+    — simulates a helper that emits PyTorch's ascent-direction buffer
+    without sign-flipping. Negates every state_before.buffer +
+    state_after.buffer on the sgd_momentum golden; Rule 14 surfaces
+    the sign mismatch via engine recompute (Rule 21a would also fire
+    on a downstream pass).
+  - `pytorch-helper.bad-adamw-as-coupled-l2` (Rule 6) — simulates an
+    AdamW helper that neglected to apply the decoupled `(1 - lr*wd)`
+    factor to `weight_after`. Rule 6's AdamW branch (per Loshchilov &
+    Hutter 2017 Alg 2 line 12) catches the missing decoupled-decay
+    factor.
+- **Tests** (`test/import-pytorch-helper.test.ts` extended):
+  - AdamW helper-emitted sidecar: schema validation + Rule 14 + full
+    reconciliation (Rule 7 AdamW branch + Rule 22-24)
+  - sgd_momentum helper-emitted sidecar: schema validation + non-zero
+    descent-direction buffer presence + Rule 14 + full reconciliation
+    (Rule 20 + Rule 21a/b/c + Rule 25/26)
+- **Tests** (`test/bp.examples-pytorch.cli.test.ts` extended):
+  - sign-flip IMPLEMENTATION presence assertion (not just docstring
+    pin) — regex matches `buf_descent = -buf` OR
+    `-state["momentum_buffer"]`; PyTorch issue #1099 citation required
+    in helper file
+  - `_detect_optimizer_family` returns `"adamw"` + `"sgd_momentum"`
+    branches present
+  - v0.10's "AdamW deferred to v0.10.1" rejection string removed
+    (would contradict v0.10.1 shipping the branch)
+- **9 bad-helper fixtures total** (was 7 in v0.10.0): the test plate
+  `test/reconcile.bad-pytorch-helper.test.ts` auto-discovers all
+  `pytorch-helper.bad-*` fixtures and exercises anti-circularity for
+  each.
+
+### Changed
+
+- **`package.json` version 0.10.0 → 0.10.1.** Description unchanged
+  (v0.10.0's framing carries forward; the optimizer-matrix scope
+  expansion is described in the README status line + docs/live-
+  helpers.md).
+- **`scripts/extract/pytorch.py`**:
+  - HELPER_VERSION `"0.10.0"` → `"0.10.1"`
+  - `HelperUnsupportedError` docstring updated to reflect the narrower
+    v0.10.x rejection scope (AMSGrad/NAdam/RAdam/Lion/LBFGS/coupled-L2/
+    AMP/GPU/multi-hidden-layer — NOT AdamW/sgd_momentum any more)
+  - All `helper v0.10:` error message strings bumped to `helper v0.10.1:`
+- **`scripts/build-pytorch-helper-fixtures.mjs`**:
+  - `FIXTURE_HELPER_BLOCK.version` `"0.10.0"` → `"0.10.1"`
+  - `buildGoodHelperEmittedSidecar` → `deriveHelperEmittedSidecar`
+    (generalized to take source path; derives SGD + AdamW +
+    sgd_momentum goldens from corresponding hand-authored sidecars)
+  - Bad-fixture loop accepts per-fixture `base` selector ("sgd",
+    "adamw", or "sgd_momentum") to mutate the right golden
+- **`docs/live-helpers.md`**:
+  - Scope matrix rewritten as v0.10.0-vs-v0.10.1 columns (shows the
+    closure visually)
+  - "v0.10.1 outlook" section rewritten as "v0.10.x outlook"
+    (v0.10.1 CLOSED; v0.10.2 pack-smoke / v0.10.3 README compression
+    / v0.10.4 pip decision pinned as next slices)
+  - Adversarial fixture catalog extended with 2 new v0.10.1 entries
+- **`README.md`** — status line updated to v0.10.1 with the explicit
+  "live helper now matches verifier surface" framing; "Live framework
+  helpers" deferral entry upgraded to reflect AdamW + sgd_momentum
+  closure
+- **`SHIP_GATE.md`** — Live framework helpers row upgraded from
+  "MOSTLY CLOSED in v0.10" to "PyTorch CORE OPTIMIZER MATRIX CLOSED
+  in v0.10.1"
+
+### Notes (forward compatibility)
+
+- **v0.10.2 (next)**: `npm pack` / `pnpm pack` cold-install smoke
+  testing. Verifies helper + example ship in tarball; `bp examples
+  pytorch` resolves the helper from a fresh install; tarball size is
+  sane. NEW CI workflow + `scripts/pack-install-smoke.mjs`.
+- **v0.10.3**: README + `package.json` description compression for
+  cold readers (status block to a 3-line summary; quickstart to one
+  screen; description trimmed to a tight sentence).
+- **v0.10.4**: pip-vs-repo-script decision memo. Driven by the
+  flip-signal contract in docs/live-helpers.md (≥3 non-team-user pip
+  requests + non-trivial dependency need).
+- **v0.10.5 / v0.11.0**: only then revisit publishing.
+- **v0.11**: SGD coupled-L2 weight decay (Rule 7 third branch); JAX
+  live helper (adopter-pull triggered); real-world fixture; multi-
+  hidden-layer topology support.
+
+### Numbers
+
+- 486 → 496 tests pass (+10 from new AdamW/sgd_momentum coverage +
+  sign-flip implementation assertions + extended adversarial plate)
+- typecheck + build green
+- 1 src file modified (`scripts/extract/pytorch.py`; significant
+  refactor: optimizer-family detection, optimizer-block emission,
+  per-parameter state snapshot with sign flip)
+- 1 fixture-generation script extended
+  (`scripts/build-pytorch-helper-fixtures.mjs`)
+- 2 new good helper-emitted goldens (`pytorch.helper-emitted.
+  adamw.sidecar.jsonl`, `pytorch.helper-emitted.sgd-momentum.
+  sidecar.jsonl`)
+- 2 new bad-helper adversarial fixtures (with meta files = 4 files)
+- 2 test files extended (`import-pytorch-helper.test.ts`,
+  `bp.examples-pytorch.cli.test.ts`)
+- v0.1.0 through v0.10.0 fixtures remain byte-identical (no schema
+  changes; helper output is additive)
+
+### What v0.10.1 does NOT do
+
+- Does **not** promote to v1.0.0
+- Does **not** publish to npm (local v0.10.x stretch continues)
+- Does **not** tag or create a GitHub release
+- Does **not** regenerate translations (status line + helper-section
+  framing only)
+- Does **not** create a pip distribution (flip-signal contract holds)
+- Does **not** ship JAX / TensorFlow live helpers (v0.11+)
+- Does **not** ship Lightning / Accelerate callback integration
+- Does **not** ship batched live extraction
+- Does **not** ship CUDA / MPS / XLA / AMP support
+- Does **not** ship SGD coupled-L2 weight decay (Rule 7 third branch
+  is v0.11)
+- Does **not** add multi-hidden-layer topology support
+- Does **not** add a real-world (CNN / transformer) fixture
+- Does **not** change SGD / Adam / AdamW / sgd_momentum verifier
+  byte-output (v0.1-v0.10.0 fixtures byte-equal under v0.10.1)
+- Does **not** bump any schema family (receipt + framework-trace
+  schemas unchanged from v0.10.0)
+- Does **not** do README compression (deferred to v0.10.3)
+- Does **not** do pack-install smoke (deferred to v0.10.2)
+- Does **not** make the pip-vs-repo-script decision (deferred to v0.10.4)
+
 ## [0.10.0] - 2026-05-18
 
 The v0.10 first-live-helper wave. **Not a v1.0.0 promotion** —

@@ -29,6 +29,12 @@ import {
 const GOOD_FIXTURE = resolve(
   "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
 )
+const ADAMW_FIXTURE = resolve(
+  "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+)
+const SGD_MOMENTUM_FIXTURE = resolve(
+  "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
+)
 
 test("v0.7.0 schema: helper-emitted sidecar validates byte-identical", () => {
   const bytes = readFileSync(GOOD_FIXTURE, "utf-8")
@@ -44,7 +50,10 @@ test("v0.7.0 schema: helper block must declare name, version, distribution, sour
   const helper = sidecar.helper as Record<string, unknown>
   assert.ok(helper, "helper block must be present in v0.7.0 sidecar")
   assert.equal(helper.name, "backprop-trace-pytorch-helper")
-  assert.equal(helper.version, "0.10.0")
+  // Version follows the fixture-generation script's pinned helper block,
+  // which tracks the current helper version. Bumped to 0.10.1 in
+  // scripts/build-pytorch-helper-fixtures.mjs as part of the v0.10.1 wave.
+  assert.equal(helper.version, "0.10.1")
   assert.equal(helper.distribution, "repo-script")
   assert.match(helper.source_hash as string, /^sha256:[0-9a-f]{64}$/)
   assert.ok(helper.framework)
@@ -141,4 +150,97 @@ test("validateFrameworkTraceSidecarOrThrow: helper-emitted sidecar passes the th
   const bytes = readFileSync(GOOD_FIXTURE, "utf-8")
   const sidecar = JSON.parse(bytes.trim())
   assert.doesNotThrow(() => validateFrameworkTraceSidecarOrThrow(sidecar))
+})
+
+// ---------------------------------------------------------------------------
+// v0.10.1 — helper-emitted AdamW + sgd_momentum sidecar coverage
+// ---------------------------------------------------------------------------
+
+test("v0.10.1: AdamW helper-emitted sidecar — schema validates against v0.7.0", () => {
+  const bytes = readFileSync(ADAMW_FIXTURE, "utf-8")
+  const sidecar = JSON.parse(bytes.trim())
+  const result = validateFrameworkTraceSidecar(sidecar)
+  assert.equal(result.ok, true, `AdamW schema validation must pass; errors: ${JSON.stringify("errors" in result ? result.errors : [])}`)
+  assert.equal(result.schemaVersion, "0.7.0", "format dispatcher must route to v0.7.0")
+})
+
+test("v0.10.1: AdamW helper-emitted sidecar imports + Rule 14 matches (decoupled weight-decay branch)", () => {
+  const bytes = readFileSync(ADAMW_FIXTURE, "utf-8")
+  const result = importPytorchSidecar(bytes, {
+    importTimestamp: "2026-05-18T12:00:00Z",
+  })
+  assert.equal(result.differentialPassed, true, "AdamW Rule 14 must pass — decoupled weight decay correctly applied")
+  assert.equal(
+    result.receipt.fixture_status?.verification_state,
+    "engine_recompute_matched_within_tolerance",
+  )
+})
+
+test("v0.10.1: AdamW helper-emitted receipt fully reconciles (Rule 7 AdamW branch + Rule 22-24)", () => {
+  const bytes = readFileSync(ADAMW_FIXTURE, "utf-8")
+  const result = importPytorchSidecar(bytes, { importTimestamp: "2026-05-18T12:00:00Z" })
+  const reconcileResult = reconcileReceipt(result.receipt)
+  assert.equal(
+    reconcileResult.ok,
+    true,
+    `AdamW helper-emitted receipt must reconcile cleanly; failures: ${
+      reconcileResult.ok ? "[]" : JSON.stringify(reconcileResult.failures.map((f) => ({ rule: f.rule, field_path: f.field_path })))
+    }`,
+  )
+})
+
+test("v0.10.1: sgd_momentum helper-emitted sidecar — schema validates against v0.7.0", () => {
+  const bytes = readFileSync(SGD_MOMENTUM_FIXTURE, "utf-8")
+  const sidecar = JSON.parse(bytes.trim())
+  const result = validateFrameworkTraceSidecar(sidecar)
+  assert.equal(result.ok, true, `sgd_momentum schema validation must pass; errors: ${JSON.stringify("errors" in result ? result.errors : [])}`)
+  assert.equal(result.schemaVersion, "0.7.0", "format dispatcher must route to v0.7.0")
+})
+
+test("v0.10.1: sgd_momentum helper-emitted sidecar carries descent-direction buffer (NOT PyTorch's ascent buffer)", () => {
+  // The helper's v0.10.1 contract: state_before / state_after carry
+  // sign-flipped buffers (PyTorch ascent → backprop-trace descent).
+  // The HAND-AUTHORED source sidecar is already in descent direction
+  // by construction (per the v0.9.2 schema's MomentumState convention),
+  // so the derived helper-emitted golden inherits the correct sign.
+  // A non-flipped helper output would fire Rule 14 / Rule 21 — exercised
+  // by the bad-momentum-buffer-not-sign-flipped fixture in reconcile.bad-pytorch-helper.test.ts.
+  const bytes = readFileSync(SGD_MOMENTUM_FIXTURE, "utf-8")
+  const sidecar = JSON.parse(bytes.trim()) as Record<string, unknown>
+  const updates = sidecar.updates as Array<Record<string, unknown>>
+  // At least one update should have a non-zero state_after.buffer
+  // (post-first-step momentum accumulates the gradient signed for descent).
+  const hasNonZeroBuffer = updates.some((u) => {
+    const opt = u.optimizer as Record<string, unknown>
+    const sa = opt.state_after as Record<string, unknown> | undefined
+    return sa && typeof sa.buffer === "number" && sa.buffer !== 0
+  })
+  assert.ok(
+    hasNonZeroBuffer,
+    "sgd_momentum helper-emitted golden must carry at least one non-zero state_after.buffer " +
+      "to exercise the sign-flip discipline (zero buffer is sign-direction-agnostic)",
+  )
+})
+
+test("v0.10.1: sgd_momentum helper-emitted sidecar imports + Rule 14 + Rule 21a/21b/21c all match", () => {
+  const bytes = readFileSync(SGD_MOMENTUM_FIXTURE, "utf-8")
+  const result = importPytorchSidecar(bytes, { importTimestamp: "2026-05-18T12:00:00Z" })
+  assert.equal(result.differentialPassed, true, "sgd_momentum Rule 14 must pass — buffer in descent direction")
+  assert.equal(
+    result.receipt.fixture_status?.verification_state,
+    "engine_recompute_matched_within_tolerance",
+  )
+})
+
+test("v0.10.1: sgd_momentum helper-emitted receipt fully reconciles (Rule 20 + 21a/b/c + 25 + 26)", () => {
+  const bytes = readFileSync(SGD_MOMENTUM_FIXTURE, "utf-8")
+  const result = importPytorchSidecar(bytes, { importTimestamp: "2026-05-18T12:00:00Z" })
+  const reconcileResult = reconcileReceipt(result.receipt)
+  assert.equal(
+    reconcileResult.ok,
+    true,
+    `sgd_momentum helper-emitted receipt must reconcile cleanly; failures: ${
+      reconcileResult.ok ? "[]" : JSON.stringify(reconcileResult.failures.map((f) => ({ rule: f.rule, field_path: f.field_path })))
+    }`,
+  )
 })

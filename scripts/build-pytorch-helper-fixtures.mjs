@@ -44,7 +44,7 @@ const FIXTURES_BAD = resolve(REPO_ROOT, "fixtures", "bad")
 // these constants so `git diff --exit-code` works in CI.
 const FIXTURE_HELPER_BLOCK = {
   name: "backprop-trace-pytorch-helper",
-  version: "0.10.0",
+  version: "0.10.1",
   distribution: "repo-script",
   // Pinned source_hash — represents the hash of scripts/extract/pytorch.py
   // at the time of fixture generation. The real helper computes its own
@@ -92,32 +92,29 @@ function writeMetaJSON(path, meta) {
   writeFileSync(path, JSON.stringify(meta, null, 2) + "\n", "utf-8")
 }
 
-// --- Step 1: good helper-emitted sidecar ------------------------------------
+// --- Step 1: good helper-emitted sidecars (3 — SGD, AdamW, sgd_momentum) ----
 
-function buildGoodHelperEmittedSidecar() {
-  // Source: pytorch.softmax-ce.sidecar.jsonl (v0.1.0)
-  // Target: pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl (v0.7.0)
-  const source = readJSONLLine(
-    resolve(FIXTURES_EXT, "pytorch.softmax-ce.sidecar.jsonl"),
-  )
-
-  // Rebuild as v0.7.0 with the helper block. The schema's x-order pins
-  // format → source_framework → helper → trace_id → ... so we assemble
-  // the keys in that order via a fresh literal.
+/**
+ * Derive a v0.7.0 helper-emitted sidecar from a v0.1.0+ hand-authored
+ * source sidecar. Bumps format, replaces extractor identity, injects
+ * the canonical FIXTURE_HELPER_BLOCK, preserves all numerical fields.
+ *
+ * The result is a fixture for "what the helper SHOULD emit" for the
+ * source sidecar's optimizer family. Bad fixtures derive from these.
+ */
+function deriveHelperEmittedSidecar(sourcePath) {
+  const source = readJSONLLine(sourcePath)
   const out = {
     format: "framework-trace.v0.7.0",
     source_framework: {
       ...source.source_framework,
       extractor: {
         name: "backprop-trace-pytorch-helper",
-        version: "0.10.0",
+        version: "0.10.1",
       },
     },
     helper: FIXTURE_HELPER_BLOCK,
   }
-  // Copy through all remaining v0.1.0 fields (topology, learning_rate,
-  // numeric_policy, bias_policy, inputs, targets, parameters_before,
-  // forward, loss, backward, updates, parameters_after, etc.)
   for (const key of [
     "trace_id",
     "step_index",
@@ -146,13 +143,28 @@ function buildGoodHelperEmittedSidecar() {
   return out
 }
 
-const helperEmittedSidecarPath = resolve(
-  FIXTURES_EXT,
-  "pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
-)
-const good = buildGoodHelperEmittedSidecar()
-writeJSONLLine(helperEmittedSidecarPath, good)
-console.log(`wrote good helper-emitted sidecar: ${helperEmittedSidecarPath}`)
+/** Helper-emitted SGD golden (Mazur 2-2-3 softmax+CE). */
+const sgdHelperPath = resolve(FIXTURES_EXT, "pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl")
+const sgdGood = deriveHelperEmittedSidecar(resolve(FIXTURES_EXT, "pytorch.softmax-ce.sidecar.jsonl"))
+writeJSONLLine(sgdHelperPath, sgdGood)
+console.log(`wrote good helper-emitted sidecar (SGD): ${sgdHelperPath}`)
+
+/** Helper-emitted AdamW golden (Mazur 2-2-2 sigmoid+MSE with decoupled wd). */
+const adamwHelperPath = resolve(FIXTURES_EXT, "pytorch.helper-emitted.adamw.sidecar.jsonl")
+const adamwGood = deriveHelperEmittedSidecar(resolve(FIXTURES_EXT, "pytorch.adamw.sidecar.jsonl"))
+writeJSONLLine(adamwHelperPath, adamwGood)
+console.log(`wrote good helper-emitted sidecar (AdamW): ${adamwHelperPath}`)
+
+/** Helper-emitted sgd_momentum golden (Mazur 2-2-2 sigmoid+MSE with classical momentum). */
+const sgdMomentumHelperPath = resolve(FIXTURES_EXT, "pytorch.helper-emitted.sgd-momentum.sidecar.jsonl")
+const sgdMomentumGood = deriveHelperEmittedSidecar(resolve(FIXTURES_EXT, "pytorch.sgd-momentum.sidecar.jsonl"))
+writeJSONLLine(sgdMomentumHelperPath, sgdMomentumGood)
+console.log(`wrote good helper-emitted sidecar (sgd_momentum): ${sgdMomentumHelperPath}`)
+
+// Convenience: keep `good` pointing at the SGD softmax-ce sidecar as
+// the base for the existing 7 bad fixtures (preserves their byte-
+// identical generation across runs).
+const good = sgdGood
 
 // --- Step 2: bad-helper fixtures (7 mutations) ------------------------------
 
@@ -294,10 +306,79 @@ const BAD_FIXTURES = [
       h1.signal_value = h1.backpropagated_sum * h1.activation_derivative
     },
   },
+  {
+    // v0.10.1 — sign-flip-omission simulation.
+    name: "pytorch-helper.bad-momentum-buffer-not-sign-flipped",
+    bug:
+      "Helper read PyTorch's optimizer.state[p]['momentum_buffer'] directly without sign-flipping. " +
+      "PyTorch's buffer is ascent-direction (PyTorch issue #1099); backprop-trace's MomentumState.buffer " +
+      "is descent-direction. A non-flipped buffer flips the sign of state_before AND state_after; " +
+      "Rule 21a's recurrence (buffer_after = mu * buffer_before + (1 - dampening) * gradient) reads " +
+      "the wrong sign of buffer_before and predicts the wrong buffer_after. The adversarial check is " +
+      "load-bearing because the sign-flip is the entire v0.10.1 sgd_momentum-helper trust contract.",
+    expectedRule: 21,
+    expectedRuleName:
+      "PyTorch-style SGD momentum recurrence (21a buffer recurrence) — fires unconditionally on the sign-flipped buffer because the recurrence is direction-asymmetric. Rule 14 ALSO fires when fixture_status declares external_imported, but Rule 21 is the load-bearing anti-circular axis (fires without metadata).",
+    base: "sgd_momentum",
+    mutate: (sidecar) => {
+      for (const update of sidecar.updates) {
+        const opt = update.optimizer
+        if (opt && opt.state_before && typeof opt.state_before.buffer === "number") {
+          opt.state_before.buffer = -opt.state_before.buffer
+        }
+        if (opt && opt.state_after && typeof opt.state_after.buffer === "number") {
+          opt.state_after.buffer = -opt.state_after.buffer
+        }
+      }
+    },
+  },
+  {
+    // v0.10.1 — AdamW emitted as coupled-L2 simulation.
+    name: "pytorch-helper.bad-adamw-as-coupled-l2",
+    bug:
+      "Helper emitted an AdamW optimizer_config (name='adamw', weight_decay > 0) but neglected to apply " +
+      "AdamW's decoupled weight-decay factor `(1 - lr * wd)` to weight_after. The helper effectively " +
+      "treated AdamW as coupled L2 — gradient already includes lambda*theta term, weight_after = " +
+      "weight_before + update (no decoupled factor). Rule 6/7 AdamW branch (per Loshchilov & Hutter 2017 " +
+      "arXiv:1711.05101 Alg 2 line 12) expects weight_after = (1 - lr*wd) * weight_before + update; " +
+      "predicting the right weight_after requires the helper to honor the decoupled convention.",
+    expectedRule: 6,
+    expectedRuleName: "weight progression (AdamW decoupled branch)",
+    base: "adamw",
+    mutate: (sidecar) => {
+      // Replace weight_after / parameters_after with the COUPLED-L2-style values:
+      // weight_after_coupled = weight_before + update  (no (1 - lr*wd) factor).
+      // The original hand-authored AdamW sidecar's weight_after already encodes
+      // the correct decoupled-decay value. Stripping it produces the coupled-L2
+      // simulation the bad fixture is meant to demonstrate.
+      const lr = (sidecar.optimizer && sidecar.optimizer.learning_rate) || sidecar.learning_rate
+      const wd =
+        (sidecar.optimizer && typeof sidecar.optimizer.weight_decay === "number"
+          ? sidecar.optimizer.weight_decay
+          : 0)
+      if (lr === undefined || wd === 0) return // nothing to break
+      for (const update of sidecar.updates) {
+        // "coupled-L2" simulation: w_after = w_before + update (drop decoupled factor)
+        update.weight_after = update.weight_before + update.update
+        sidecar.parameters_after[update.parameter_id] = update.weight_after
+      }
+    },
+  },
 ]
 
+const BASES = {
+  sgd: sgdGood,
+  adamw: adamwGood,
+  sgd_momentum: sgdMomentumGood,
+}
+
 for (const fixture of BAD_FIXTURES) {
-  const mutated = deepClone(good)
+  const baseKey = fixture.base ?? "sgd"
+  const baseSidecar = BASES[baseKey]
+  if (baseSidecar === undefined) {
+    throw new Error(`unknown base sidecar '${baseKey}' for fixture ${fixture.name}`)
+  }
+  const mutated = deepClone(baseSidecar)
   fixture.mutate(mutated)
   const fixturePath = resolve(FIXTURES_BAD, `${fixture.name}.jsonl`)
   const metaPath = resolve(FIXTURES_BAD, `${fixture.name}.meta.json`)
@@ -323,4 +404,4 @@ for (const fixture of BAD_FIXTURES) {
   console.log(`wrote bad fixture: ${fixture.name}`)
 }
 
-console.log(`\nDone. ${BAD_FIXTURES.length} bad-helper fixtures + 1 good helper-emitted sidecar.`)
+console.log(`\nDone. ${BAD_FIXTURES.length} bad-helper fixtures + 3 good helper-emitted sidecars (SGD / AdamW / sgd_momentum).`)

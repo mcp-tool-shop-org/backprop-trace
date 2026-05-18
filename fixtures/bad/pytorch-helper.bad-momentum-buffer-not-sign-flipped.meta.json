@@ -1,0 +1,13 @@
+{
+  "fixture_id": "pytorch-helper.bad-momentum-buffer-not-sign-flipped",
+  "authoring_state": "deliberately_broken",
+  "verification_state": "engine_must_reject",
+  "intent": "live-helper bug simulation: Helper read PyTorch's optimizer.state[p]['momentum_buffer'] directly without sign-flipping. PyTorch's buffer is ascent-direction (PyTorch issue #1099); backprop-trace's MomentumState.buffer is descent-direction. A non-flipped buffer flips the sign of state_before AND state_after; Rule 21a's recurrence (buffer_after = mu * buffer_before + (1 - dampening) * gradient) reads the wrong sign of buffer_before and predicts the wrong buffer_after. The adversarial check is load-bearing because the sign-flip is the entire v0.10.1 sgd_momentum-helper trust contract.",
+  "expected_failures": [
+    {
+      "rule": 21,
+      "rule_name": "PyTorch-style SGD momentum recurrence (21a buffer recurrence) — fires unconditionally on the sign-flipped buffer because the recurrence is direction-asymmetric. Rule 14 ALSO fires when fixture_status declares external_imported, but Rule 21 is the load-bearing anti-circular axis (fires without metadata)."
+    }
+  ],
+  "note": "Generated deterministically by scripts/build-pytorch-helper-fixtures.mjs. The fixture simulates a bad LIVE HELPER emitting a wrong-but-schema-valid sidecar; the real helper at scripts/extract/pytorch.py does not have this bug. Rule 14 (or the named rule) must reject before the verifier reads this meta.json — anti-circularity invariant."
+}

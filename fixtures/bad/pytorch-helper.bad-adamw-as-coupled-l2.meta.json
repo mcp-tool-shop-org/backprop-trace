@@ -1,0 +1,13 @@
+{
+  "fixture_id": "pytorch-helper.bad-adamw-as-coupled-l2",
+  "authoring_state": "deliberately_broken",
+  "verification_state": "engine_must_reject",
+  "intent": "live-helper bug simulation: Helper emitted an AdamW optimizer_config (name='adamw', weight_decay > 0) but neglected to apply AdamW's decoupled weight-decay factor `(1 - lr * wd)` to weight_after. The helper effectively treated AdamW as coupled L2 — gradient already includes lambda*theta term, weight_after = weight_before + update (no decoupled factor). Rule 6/7 AdamW branch (per Loshchilov & Hutter 2017 arXiv:1711.05101 Alg 2 line 12) expects weight_after = (1 - lr*wd) * weight_before + update; predicting the right weight_after requires the helper to honor the decoupled convention.",
+  "expected_failures": [
+    {
+      "rule": 6,
+      "rule_name": "weight progression (AdamW decoupled branch)"
+    }
+  ],
+  "note": "Generated deterministically by scripts/build-pytorch-helper-fixtures.mjs. The fixture simulates a bad LIVE HELPER emitting a wrong-but-schema-valid sidecar; the real helper at scripts/extract/pytorch.py does not have this bug. Rule 14 (or the named rule) must reject before the verifier reads this meta.json — anti-circularity invariant."
+}
