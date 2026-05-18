@@ -37,11 +37,16 @@ jobs:
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
+      # v0.10.2: build BEFORE test. The v0.10 CLI test plate
+      # (test/bp.examples-pytorch.cli.test.ts +
+      # test/bp.*.cli.test.ts) spawns `node dist/bin/bp.js` and asserts
+      # the build artifact exists. v0.9.x had no such dependency so
+      # test-before-build worked; v0.10+ requires build-first.
+      - run: pnpm build
       - run: pnpm test
         env:
           NO_COLOR: '1'
           FORCE_COLOR: '0'
-      - run: pnpm build
 
   byte-equal:
     name: byte-equal vs golden
