@@ -1,0 +1,149 @@
+name: Release
+
+# Release-spine: fires on `v*` tag push AND manual workflow_dispatch
+# (the latter lets us re-trigger against an already-pushed tag, which
+# is what v0.11.0 needed since this workflow didn't exist when the
+# tag was first pushed). Two jobs: verify on a fresh runner, ship only
+# if verify passes AND the tag-vs-package.json version equality holds.
+#
+# Required repo secrets:
+#   NPM_TOKEN — npm automation token with publish rights on
+#   @mcptoolshop/backprop-trace. Provenance is generated via OIDC, but
+#   NPM_TOKEN is still needed for the publish call itself.
+#
+# Triggering:
+#   - Push a `v*` tag: `git tag v0.11.1 && git push --tags`
+#   - Manual: `gh workflow run release.yml --ref v0.11.0`
+#
+# Tag-vs-package.json gate: a tag whose name (minus `v`) doesn't match
+# package.json version fails BEFORE any npm.publish side effect.
+#
+# Mirrors mcp-tool-shop-org/vocal-synth-engine's release.yml (canonical
+# org template per memory note 2026-05-15) with pnpm + pnpm verify
+# substituted for npm + verify.sh, and pinned action SHAs.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── Stage 1: re-run the verify gate against the tagged commit ──
+  # Guards against tagging a commit that hasn't been gated by ci.yml.
+  # We re-run pnpm verify (typecheck + test + build) + pack-smoke
+  # against the tagged ref so a tag pointing at unverified history
+  # can never trigger the ship job.
+  verify:
+    name: verify (ubuntu-latest / node-22)
+    runs-on: ubuntu-latest
+    env:
+      NO_COLOR: '1'
+      FORCE_COLOR: '0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        # pnpm version comes from package.json `packageManager` field
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify gate
+        run: pnpm verify
+
+      - name: Pack-install smoke
+        run: pnpm pack-smoke
+
+  # ── Stage 2: publish to npm + create GH release ──
+  ship:
+    name: ship (npm publish + gh release)
+    runs-on: ubuntu-latest
+    needs: verify
+    permissions:
+      id-token: write  # Sigstore provenance (OIDC token)
+      contents: write  # gh release create
+    env:
+      NO_COLOR: '1'
+      FORCE_COLOR: '0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      # Hard gate: tag name (minus leading `v`) MUST match package.json
+      # version. Mismatch is a release-engineering error and must fail
+      # loud before any npm.publish side effect.
+      - name: Tag-vs-package.json version equality
+        id: version-check
+        shell: bash
+        run: |
+          TAG_REF="${GITHUB_REF_NAME}"
+          TAG_VERSION="${TAG_REF#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "tag_ref=$TAG_REF"
+          echo "tag_version=$TAG_VERSION"
+          echo "pkg_version=$PKG_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag $TAG_REF does not match package.json version $PKG_VERSION (expected v$PKG_VERSION)"
+            exit 1
+          fi
+          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to npm with Sigstore provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
+
+      # Extract the CHANGELOG section for this version (Keep-a-Changelog
+      # format: `## [X.Y.Z] - YYYY-MM-DD` heading per version). Slice
+      # from this version's heading to (but not including) the next
+      # `## [` heading.
+      - name: Extract CHANGELOG entry
+        id: changelog
+        shell: bash
+        run: |
+          VERSION="${{ steps.version-check.outputs.version }}"
+          BODY=$(awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { found=1; next }
+            found && /^## \[/      { exit }
+            found                  { print }
+          ' CHANGELOG.md)
+          if [ -z "$BODY" ]; then
+            BODY="See CHANGELOG.md for v$VERSION details."
+          fi
+          echo "$BODY" > /tmp/release-notes.md
+          echo "notes_file=/tmp/release-notes.md" >> "$GITHUB_OUTPUT"
+          echo "--- extracted release notes ---"
+          cat /tmp/release-notes.md
+          echo "--- end ---"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file "${{ steps.changelog.outputs.notes_file }}" \
+            --verify-tag
