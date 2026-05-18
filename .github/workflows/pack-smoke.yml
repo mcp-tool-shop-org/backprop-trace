@@ -1,0 +1,52 @@
+name: pack-smoke
+
+# v0.10.2 — distribution integrity gate.
+#
+# Proves the @mcptoolshop/backprop-trace tarball actually carries the
+# helper, examples, schemas, fixtures, and CLI surface that the repo
+# claims exist. Runs on every push/PR alongside the standard ci.yml
+# matrix. Multi-OS because tarball-handling + child_process invocation
+# semantics differ subtly between Linux / macOS / Windows — the helper
+# version's lockstep with package.json and the bp CLI's bundled-file
+# resolution have both broken in pack-smoke during this slice's
+# development, exactly the regression class this workflow guards.
+#
+# Cost: ~30-60 seconds per cell (pnpm pack + npm install + handful of
+# CLI invocations). Faster than the full test suite; runs in parallel.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pack-smoke:
+    name: pack-smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        # pnpm version comes from package.json `packageManager` field; do
+        # NOT also pass `version:` here — pnpm/action-setup rejects the
+        # duplicate spec with ERR_PNPM_BAD_PM_VERSION.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      # Build is REQUIRED before pack — `pnpm pack` packs whatever is on
+      # disk including dist/. Without `pnpm build` first, the tarball
+      # would carry stale or missing dist/ output and the smoke would
+      # surface a misleading failure ("bp.js not in tarball") instead of
+      # the actual integrity claim.
+      - run: pnpm build
+      - name: pack-install-smoke
+        run: pnpm pack-smoke
+        env:
+          NO_COLOR: '1'
+          FORCE_COLOR: '0'

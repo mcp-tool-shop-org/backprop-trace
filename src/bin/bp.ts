@@ -939,26 +939,42 @@ function generateFromConfigUsageText(): string {
 }
 
 /**
+ * Resolve the absolute path of a file BUNDLED with this package — i.e. a
+ * path relative to the npm package root (one level above `dist/`). Use
+ * this for any built-in fixture, schema, helper, or example the CLI
+ * references by default (no user-supplied path). Reading these via plain
+ * `readFileSync("fixtures/mazur.golden.jsonl", ...)` works when invoked
+ * from the repo root during development BUT BREAKS when the package is
+ * installed via npm and invoked from a different cwd — pack-install-smoke
+ * (v0.10.2) is the gate that catches this regression class.
+ *
+ * Returns null when the file is not found at any candidate location
+ * (e.g. somebody manually trimmed scripts/ from their install). The
+ * caller surfaces that as a Tier-1 user error rather than crashing.
+ */
+function resolveBundledFile(relPath: string): string | null {
+  const here = dirname(fileURLToPath(import.meta.url));
+  // dist/bin/bp.js → up two levels gets package root
+  const fromDist = resolvePath(here, "..", "..", relPath);
+  if (existsSync(fromDist)) return fromDist;
+  // Fallback: running from src/bin/bp.ts via tsx (developer mode)
+  const fromSrc = resolvePath(here, "..", "..", relPath);
+  if (existsSync(fromSrc)) return fromSrc;
+  return null;
+}
+
+/**
  * Resolve the absolute path of the bundled live PyTorch helper file. The
  * helper lives at `<pkg root>/scripts/extract/pytorch.py` at install time —
  * for npm-published installs it ships via `files[]: ["scripts/**"]` in
- * package.json. For local repo execution, it lives at the same relative
- * path from this module's `dist/` directory.
- *
- * Returns null when the file is not found on disk (e.g. somebody manually
- * trimmed scripts/ from their install). The caller surfaces that as a
- * Tier-1 user error rather than crashing.
+ * package.json. Convenience wrapper around resolveBundledFile.
  */
 function resolvePytorchHelperPath(): string | null {
-  // __dirname for ESM: derive from import.meta.url
-  const here = dirname(fileURLToPath(import.meta.url));
-  // dist/bin/bp.js → up two levels gets package root, then scripts/extract/pytorch.py
-  const fromDist = resolvePath(here, "..", "..", "scripts", "extract", "pytorch.py");
-  if (existsSync(fromDist)) return fromDist;
-  // Fallback: maybe we're running from src/bin/bp.ts via tsx
-  const fromSrc = resolvePath(here, "..", "..", "scripts", "extract", "pytorch.py");
-  if (existsSync(fromSrc)) return fromSrc;
-  return null;
+  // NOTE: pass the relPath as a plain string with forward slashes — do
+  // NOT use `resolvePath(...)` on the components, since path.resolve
+  // resolves relative segments against process.cwd() (the user's
+  // invocation cwd), producing wrong-rooted paths in installed packages.
+  return resolveBundledFile("scripts/extract/pytorch.py");
 }
 
 function examplesUsageText(): string {
@@ -1582,7 +1598,12 @@ function runVerifyMazur(opts: {
   // canonical bytes, compare against fixtures/mazur.golden.jsonl. This
   // is the load-bearing determinism claim.
   try {
-    const goldenBytes = readFileSync("fixtures/mazur.golden.jsonl", "utf-8");
+    // v0.10.2: read the bundled golden via resolveBundledFile so the
+    // byte-equal-vs-golden check works from any cwd in an installed package.
+    const goldenPath =
+      resolveBundledFile("fixtures/mazur.golden.jsonl") ??
+      "fixtures/mazur.golden.jsonl";
+    const goldenBytes = readFileSync(goldenPath, "utf-8");
     const emitted = emitMazurReceipt(runMazurStep(MAZUR_INPUT));
     if (emitted === goldenBytes) {
       checks.push({ name: "byte-equal-vs-golden", status: "pass" });
@@ -1657,7 +1678,11 @@ function runVerifyMazur(opts: {
 
   // 7. Published-anchor drift (hard vs soft gate).
   try {
-    const publishedRaw = readFileSync("fixtures/mazur.published.json", "utf-8");
+    // v0.10.2: resolve bundled published-anchor file via package-rooted path.
+    const publishedPath =
+      resolveBundledFile("fixtures/mazur.published.json") ??
+      "fixtures/mazur.published.json";
+    const publishedRaw = readFileSync(publishedPath, "utf-8");
     const published = JSON.parse(publishedRaw) as PublishedAnchor;
     const claims = published.claims ?? [];
     if (claims.length === 0) {
@@ -1875,11 +1900,15 @@ function emitGenerated(args: { bytes: string; label: string; goldenPath: string 
 function runGenerateMazur(): void {
   // Always re-run the engine and emit canonical bytes; downstream branches
   // dispatch on --check / --out.
+  // v0.10.2: bundled-file resolution so --check works from any cwd in an
+  // installed package.
   const bytes = emitMazurReceipt(runMazurStep(MAZUR_INPUT));
   emitGenerated({
     bytes,
     label: "mazur",
-    goldenPath: "fixtures/mazur.golden.jsonl",
+    goldenPath:
+      resolveBundledFile("fixtures/mazur.golden.jsonl") ??
+      "fixtures/mazur.golden.jsonl",
   });
 }
 
@@ -1920,7 +1949,9 @@ function runGenerateXor(): void {
   emitGenerated({
     bytes,
     label: "xor",
-    goldenPath: "fixtures/xor.golden.jsonl",
+    goldenPath:
+      resolveBundledFile("fixtures/xor.golden.jsonl") ??
+      "fixtures/xor.golden.jsonl",
   });
 }
 
@@ -1933,7 +1964,9 @@ function runGenerateIris(): void {
   emitGenerated({
     bytes,
     label: "iris",
-    goldenPath: "fixtures/iris.golden.jsonl",
+    goldenPath:
+      resolveBundledFile("fixtures/iris.golden.jsonl") ??
+      "fixtures/iris.golden.jsonl",
   });
 }
 
@@ -3139,10 +3172,14 @@ if (argv[0] === "verify") {
       process.exit(0);
     }
     const candidateFile = argv[2];
+    // v0.10.2: default fixture path resolves to the BUNDLED path inside the
+    // installed package (works regardless of cwd). User-supplied paths are
+    // honored verbatim (so `bp verify mazur ./my-receipt.jsonl` still works).
     const receiptPath =
       typeof candidateFile === "string" && candidateFile.length > 0
         ? candidateFile
-        : "fixtures/mazur.golden.jsonl";
+        : (resolveBundledFile("fixtures/mazur.golden.jsonl") ??
+            "fixtures/mazur.golden.jsonl");
 
     // Reject flag-shaped args except the bare `-` stdin sentinel.
     if (receiptPath.startsWith("-") && receiptPath !== "-") {

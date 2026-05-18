@@ -14,6 +14,187 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.10.2] - 2026-05-18
+
+The v0.10.2 distribution-integrity wave. **Not a v1.0.0 promotion.**
+**Not a publishing step** — local v0.10.x stretch continues; no tag,
+no npm publish, no GitHub release, no translations.
+
+v0.10.0/v0.10.1 shipped the live PyTorch helper. v0.10.2 proves the
+tarball actually carries it. Distribution integrity is a load-bearing
+trust property for v0.10+ — the user-facing claim "`bp examples
+pytorch --print > pytorch_trace_helper.py`" only works if the helper
+actually ships in the tarball and the CLI verbs that reference it
+resolve correctly from the user's install cwd. v0.10.2 makes that
+claim CI-enforced.
+
+**Pack-smoke caught 2 real bugs during this slice**:
+
+1. **Helper version drifted from package version.** `HELPER_VERSION =
+   "0.10.1"` while `package.json` declared `0.10.2`. A user who ran
+   `bp examples pytorch --print > pytorch_trace_helper.py` would have
+   gotten a helper whose forensic `helper.version` field disagreed
+   with the installed npm package's version — making attribution
+   ambiguous.
+
+2. **`bp verify mazur` (and `bp generate xor/iris`) read bundled
+   fixtures via cwd-relative paths.** Worked when invoked from the
+   repo root during development; FAILED with "file not found" when
+   invoked from any other cwd in an installed package. A cold user
+   running `bp verify mazur` from their home directory would have
+   seen a confusing error. Fixed by introducing
+   `resolveBundledFile(relPath)` (mirroring v0.10's
+   `resolvePytorchHelperPath`) and routing all bundled-fixture
+   reads through it.
+
+Both failures were caught BEFORE any user could see them — that's
+the whole point of the distribution-integrity slice.
+
+### Added
+
+- **`scripts/pack-install-smoke.mjs`** (NEW). Six-step smoke runner:
+  1. `pnpm pack` — produce a real `.tgz` in REPO_ROOT
+  2. Tarball size check (10 MB ceiling — adjustable, but bump
+     requires CHANGELOG note)
+  3. Tarball content listing via in-process gunzip + manual tar
+     header walk (cross-platform — no `tar` binary dep on Windows).
+     Asserts every entry in `REQUIRED_TARBALL_ENTRIES` is present
+     (helper, example, schemas v0.6.0+v0.7.0+receipt v0.7.0, three
+     helper-emitted goldens, Mazur golden, two new bad-helper
+     fixtures). Wildcard-count assertions catch missing-glob
+     regressions (e.g. forgetting to update `files[]`).
+  4. Cold install into `mkdtempSync(tmpdir + 'bp-pack-smoke-')` via
+     `npm install <abs-tarball-path>` against a minimal scaffold
+     `package.json`. Always cleans up via try/finally.
+  5. CLI smoke matrix against the installed `bp` binary:
+     - `bp --help` mentions `bp examples pytorch`
+     - `bp --version` matches package version
+     - `bp examples pytorch` prints an ABSOLUTE helper path that
+       exists, resolves inside the installed package (realpath check
+       — macOS /var → /private/var symlink handled)
+     - `bp examples pytorch --print` outputs ≥1KB and `HELPER_VERSION`
+       constant matches package version (catches version drift)
+     - `bp verify mazur` works from the temp cwd (catches
+       cwd-relative-fixture bugs)
+     - `bp import pytorch <installed helper-emitted sidecar>` works
+       and emits JSON to stdout
+  6. Pipe smoke: `bp verify multi -` via stdin (verifies stdin pipe
+     semantics work cross-platform) + file roundtrip (verifies same
+     contract through a shell-style intermediate path)
+- **`.github/workflows/pack-smoke.yml`** (NEW). Multi-OS CI workflow
+  running pack-smoke on push + PR across ubuntu-latest +
+  macos-latest + windows-latest. Builds `pnpm build` before pack so
+  the tarball carries fresh `dist/`. `NO_COLOR=1 FORCE_COLOR=0`
+  environment for deterministic stderr.
+- **`package.json` `pack-smoke` script** — `node scripts/pack-install-
+  smoke.mjs`. Invokable as `pnpm pack-smoke` locally; same script CI
+  runs.
+- **`src/bin/bp.ts`: `resolveBundledFile(relPath)` helper** (NEW).
+  Resolves an absolute path inside the installed package root (one
+  level above `dist/`). Used by:
+  - `bp verify mazur` (default fixture path)
+  - `bp verify mazur`'s byte-equal-vs-golden check
+  - `bp verify mazur`'s published-anchor drift check
+  - `bp generate mazur`'s `--check` golden path
+  - `bp generate xor`'s `--check` golden path
+  - `bp generate iris`'s `--check` golden path
+  - `resolvePytorchHelperPath` (refactored to call resolveBundledFile)
+- **`test/pack-install-smoke.presence.test.ts`** (NEW). Six presence
+  tests in the standard test suite (fast — file-stat + regex only).
+  Asserts the smoke gate hasn't been silently disabled by file
+  removal / workflow YAML breakage / script-entry deletion.
+- **9 bad-helper fixtures + 3 good helper-emitted goldens
+  regenerated** with `HELPER_VERSION = "0.10.2"` so the
+  fixture-version-matches-package-version lockstep is preserved.
+
+### Changed
+
+- **`package.json` version 0.10.1 → 0.10.2.** Description unchanged.
+- **`scripts/extract/pytorch.py`**:
+  - `HELPER_VERSION` `"0.10.1"` → `"0.10.2"` (lockstep with package).
+  - Docstring header bumped to `v0.10.2`.
+  - `SCOPE (v0.10.1)` heading widened to `SCOPE (v0.10.x)` — stable
+    across patch bumps; specific version lives in `HELPER_VERSION`.
+  - All 19 `helper v0.10.1:` error message strings widened to
+    `helper v0.10.x:` (also stable across patch bumps; the FIRST
+    line of an error message shouldn't drift on patch versions —
+    that's noise, not signal).
+- **`scripts/build-pytorch-helper-fixtures.mjs`**:
+  - `FIXTURE_HELPER_BLOCK.version` `"0.10.1"` → `"0.10.2"` so
+    regenerated goldens declare the current helper version.
+  - Source-framework `extractor.version` bumped to `"0.10.2"`.
+- **`src/bin/bp.ts`**:
+  - `runVerifyMazur`'s default fixture path resolves via
+    `resolveBundledFile`; explicit user-supplied paths still honored.
+  - `runVerifyMazur`'s byte-equal-vs-golden + published-anchor reads
+    use `resolveBundledFile`.
+  - `runGenerateMazur`, `runGenerateXor`, `runGenerateIris` use
+    `resolveBundledFile` for their `--check` golden paths.
+- **`test/import-pytorch-helper.test.ts`** — expected helper version
+  `"0.10.1"` → `"0.10.2"` (lockstep with the regenerated fixtures).
+
+### Notes (forward compatibility)
+
+- **v0.10.3 (next)**: README + `package.json` description compression
+  for cold readers. Status block to ~3 lines; quickstart to one
+  screen; description trimmed to a tight sentence.
+- **v0.10.4**: pip-vs-repo-script decision memo (driven by the flip-
+  signal contract in `docs/live-helpers.md`).
+- **v0.10.5 / v0.11.0**: only then revisit publishing.
+- **Lockstep policy earned this slice**: `HELPER_VERSION` in
+  `scripts/extract/pytorch.py` MUST match `package.json`'s `version`
+  on every release. Bumping the package version without bumping the
+  helper version is now a smoke-gate failure. The fixture-generation
+  script's pinned helper-block version must also match.
+- **Bundled-fixture resolution doctrine earned this slice**: any
+  default file path the CLI reads MUST go through `resolveBundledFile`
+  (or an equivalent package-root-relative resolver). Cwd-relative
+  default paths work in dev but break in installed packages — this
+  is the regression class pack-smoke catches.
+
+### Numbers
+
+- 496 → 502 tests pass (+6 presence tests; 1 existing
+  helper-version test updated for the lockstep bump)
+- typecheck + build green
+- Manual `pnpm pack-smoke` run: 6/6 steps pass on Windows; CI matrix
+  validates ubuntu + macos + windows on push
+- 1 src file modified (`src/bin/bp.ts` — new `resolveBundledFile`
+  helper + 5 call sites refactored)
+- 1 Python helper modified (`scripts/extract/pytorch.py` — version
+  bump + docstring + error-string stability)
+- 1 fixture-gen script modified
+  (`scripts/build-pytorch-helper-fixtures.mjs` — version bump)
+- 1 new pack-smoke script (`scripts/pack-install-smoke.mjs`, ~290
+  lines)
+- 1 new CI workflow (`.github/workflows/pack-smoke.yml`)
+- 1 new test file (`test/pack-install-smoke.presence.test.ts`, 6
+  tests)
+- 1 test file updated (`test/import-pytorch-helper.test.ts`)
+- 9 bad-helper fixtures + 3 good helper-emitted goldens regenerated
+  (single-character version-string change inside the `helper` block)
+- Tarball size: **0.65 MB** (322 entries; ceiling 10 MB)
+- Build artifacts: same as v0.10.1 (no source-code-level changes
+  beyond bp.ts)
+
+### What v0.10.2 does NOT do
+
+- Does **not** promote to v1.0.0
+- Does **not** publish to npm (local v0.10.x stretch continues)
+- Does **not** tag or create a GitHub release
+- Does **not** regenerate translations
+- Does **not** create a pip distribution (flip-signal contract holds)
+- Does **not** compress the README (deferred to v0.10.3)
+- Does **not** make the pip-vs-repo-script decision (deferred to v0.10.4)
+- Does **not** add new helper / verifier features (purely a
+  distribution-integrity slice)
+- Does **not** ship JAX / TensorFlow live helpers (v0.11+)
+- Does **not** change schema family (receipt v0.7.0 + framework-trace
+  v0.7.0 remain latest)
+- Does **not** change the helper's behavioral surface (same
+  optimizer matrix as v0.10.1: SGD + Adam + AdamW + sgd_momentum
+  with sign flip)
+
 ## [0.10.1] - 2026-05-18
 
 The v0.10.1 PyTorch optimizer-matrix closure wave. **Not a v1.0.0

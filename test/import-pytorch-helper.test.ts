@@ -51,9 +51,12 @@ test("v0.7.0 schema: helper block must declare name, version, distribution, sour
   assert.ok(helper, "helper block must be present in v0.7.0 sidecar")
   assert.equal(helper.name, "backprop-trace-pytorch-helper")
   // Version follows the fixture-generation script's pinned helper block,
-  // which tracks the current helper version. Bumped to 0.10.1 in
-  // scripts/build-pytorch-helper-fixtures.mjs as part of the v0.10.1 wave.
-  assert.equal(helper.version, "0.10.1")
+  // which tracks the current helper version. Lockstep with package.version
+  // is enforced by:
+  //   - test/bp.examples-pytorch.cli.test.ts (HELPER_VERSION matches pkg.version)
+  //   - scripts/pack-install-smoke.mjs (printed helper HELPER_VERSION ==
+  //     installed package.version) — the v0.10.2 distribution-integrity gate
+  assert.equal(helper.version, "0.10.2")
   assert.equal(helper.distribution, "repo-script")
   assert.match(helper.source_hash as string, /^sha256:[0-9a-f]{64}$/)
   assert.ok(helper.framework)

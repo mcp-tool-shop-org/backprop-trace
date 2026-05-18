@@ -1,6 +1,6 @@
 {
   "name": "@mcptoolshop/backprop-trace",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "description": "Deterministic structural-trace verifier for neural-network training steps. Re-derives gradients, signals, and parameter updates from named factors via a 26-rule reconciler and emits canonical bytewise JSONL receipts. Ingests external PyTorch / JAX / TensorFlow training traces (single-step or multi-step v0.8+, batched or unbatched v0.9+) via framework-trace sidecars with per-step engine-recompute differential + optional bundle-integrity binding + batch reduction consistency + sample-set coherence + Adam/AdamW moment-progression + bias-correction + parameter-update + optimizer-state-chain + optimizer-config-constancy + PyTorch-style SGD momentum buffer-recurrence + effective-direction + parameter-update checks (Rule 21 sub-checks 21a/21b/21c). AdamW adds decoupled weight decay (Loshchilov & Hutter 2017) — explicitly contrasted with coupled L2. sgd_momentum is PyTorch's torch.optim.SGD recurrence with classical + Nesterov (Sutskever et al. 2013 ICML) + dampening (in [0, 1)) variants; PyTorch's nesterov=true && dampening>0 rejection mirrored at schema + engine boundary. SGD coupled L2 weight decay deferred to v0.10. In the Csmith/CompCert lineage of 'the oracle must not consult the artifact it judges.' Mid-v0 (v0.9.x): CPU-only, SGD/Adam/AdamW/sgd_momentum (full PyTorch torch.optim.SGD surface) only — see README 'What's not in this version (yet)' for v1.0 gaps.",
   "type": "module",
   "license": "MIT",
@@ -180,6 +180,7 @@
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "verify": "pnpm typecheck && pnpm test && pnpm build",
     "audit": "pnpm audit --audit-level=moderate",
+    "pack-smoke": "node scripts/pack-install-smoke.mjs",
     "prepublishOnly": "pnpm test && pnpm build"
   },
   "devDependencies": {

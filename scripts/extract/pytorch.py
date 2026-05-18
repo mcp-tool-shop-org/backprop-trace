@@ -1,5 +1,5 @@
 """
-backprop-trace PyTorch live helper (v0.10.1)
+backprop-trace PyTorch live helper (v0.10.2)
 =============================================
 
 MIT License — Copyright (c) 2026 mcp-tool-shop. See LICENSE in the
@@ -62,7 +62,7 @@ judges. Fang et al. 2023 PoL spoofing class: producer with byte-control
 defeats structural-only checks; defense is independent recomputation.
 backprop-trace's Rule 14 IS that independent recomputation.
 
-SCOPE (v0.10.1)
+SCOPE (v0.10.x)
 ---------------
 SUPPORTED:
 - PyTorch SGD (vanilla, no momentum).
@@ -141,7 +141,7 @@ except ImportError:  # pragma: no cover
     nn = None  # type: ignore
 
 
-HELPER_VERSION = "0.10.1"
+HELPER_VERSION = "0.10.2"
 HELPER_NAME = "backprop-trace-pytorch-helper"
 SCHEMA_FORMAT = "framework-trace.v0.7.0"
 DEFAULT_TOLERANCE_ATOL = 1e-6
@@ -198,7 +198,7 @@ def _infer_topology(model: "nn.Module", *, loss: str) -> dict[str, Any]:
     linears = [m for m in model.modules() if isinstance(m, nn.Linear)]
     if len(linears) != 2:
         raise HelperUnsupportedError(
-            f"helper v0.10.1: expected exactly 2 nn.Linear layers (input→hidden, hidden→output); "
+            f"helper v0.10.x: expected exactly 2 nn.Linear layers (input→hidden, hidden→output); "
             f"got {len(linears)}. v0.10 supports single-hidden-layer feed-forward nets only. "
             f"CNN / transformer / multi-hidden-layer topologies deferred to v0.11."
         )
@@ -207,7 +207,7 @@ def _infer_topology(model: "nn.Module", *, loss: str) -> dict[str, Any]:
     output_size = linears[1].out_features
     if linears[1].in_features != hidden_size:
         raise HelperUnsupportedError(
-            f"helper v0.10.1: hidden→output linear's in_features ({linears[1].in_features}) "
+            f"helper v0.10.x: hidden→output linear's in_features ({linears[1].in_features}) "
             f"!= input→hidden's out_features ({hidden_size}). Topology mismatch."
         )
 
@@ -235,12 +235,12 @@ def _infer_topology(model: "nn.Module", *, loss: str) -> dict[str, Any]:
     # Cross-check loss vs output activation
     if loss == "cross_entropy_softmax" and activation_output != "softmax":
         raise HelperUnsupportedError(
-            f"helper v0.10.1: loss='cross_entropy_softmax' requires output activation "
+            f"helper v0.10.x: loss='cross_entropy_softmax' requires output activation "
             f"to be Softmax; observed '{activation_output}'."
         )
     if loss == "half_squared_error" and activation_output not in ("sigmoid", "identity", "relu"):
         raise HelperUnsupportedError(
-            f"helper v0.10.1: loss='half_squared_error' requires output activation "
+            f"helper v0.10.x: loss='half_squared_error' requires output activation "
             f"in (sigmoid, identity, relu); observed '{activation_output}'."
         )
 
@@ -369,7 +369,7 @@ def _snapshot_parameters(model: "nn.Module", topology: dict[str, Any]) -> dict[s
         b_h = _snap_tensor(L_in_h.bias)
         if not all(abs(b - b_h[0]) < 1e-12 for b in b_h):
             raise HelperUnsupportedError(
-                f"helper v0.10.1: hidden-layer per-unit biases must all be equal "
+                f"helper v0.10.x: hidden-layer per-unit biases must all be equal "
                 f"for bias_sharing='per_layer' convention; observed {b_h}. "
                 f"Per-neuron-bias topologies are receipt-schema-supported but "
                 f"v0.10 helper authors per-layer only."
@@ -385,7 +385,7 @@ def _snapshot_parameters(model: "nn.Module", topology: dict[str, Any]) -> dict[s
         b_o = _snap_tensor(L_h_o.bias)
         if not all(abs(b - b_o[0]) < 1e-12 for b in b_o):
             raise HelperUnsupportedError(
-                f"helper v0.10.1: output-layer per-unit biases must all be equal "
+                f"helper v0.10.x: output-layer per-unit biases must all be equal "
                 f"for bias_sharing='per_layer' convention; observed {b_o}."
             )
         snap["b_o"] = b_o[0]
@@ -498,7 +498,7 @@ def _snapshot_per_parameter_state(
         return snap
 
     raise HelperUnsupportedError(  # pragma: no cover
-        f"helper v0.10.1: unknown optimizer family {family!r} in _snapshot_per_parameter_state"
+        f"helper v0.10.x: unknown optimizer family {family!r} in _snapshot_per_parameter_state"
     )
 
 
@@ -534,7 +534,7 @@ def _detect_optimizer_family(optimizer: "torch.optim.Optimizer") -> str:
             wd = group.get("weight_decay", 0.0)
             if wd > 0:
                 raise HelperUnsupportedError(
-                    "helper v0.10.1: torch.optim.SGD with weight_decay > 0 "
+                    "helper v0.10.x: torch.optim.SGD with weight_decay > 0 "
                     "(coupled L2 form) is deferred to v0.11 (Rule 7 third branch). "
                     "v0.10.x supports SGD (no weight_decay), sgd_momentum (no "
                     "weight_decay), Adam, and AdamW (decoupled weight_decay). "
@@ -547,7 +547,7 @@ def _detect_optimizer_family(optimizer: "torch.optim.Optimizer") -> str:
             return "sgd_momentum"
         return "sgd"
     raise HelperUnsupportedError(
-        f"helper v0.10.1: optimizer class '{cls}' is not supported. "
+        f"helper v0.10.x: optimizer class '{cls}' is not supported. "
         f"v0.10.x supports torch.optim.{{SGD, Adam, AdamW}}. "
         f"SGD with momentum > 0 is supported as 'sgd_momentum' (with the "
         f"documented momentum_buffer sign-flip). "
@@ -612,7 +612,7 @@ def _build_optimizer_block(
         if dampening > 0:
             block["dampening"] = dampening
         return block
-    raise HelperUnsupportedError(f"helper v0.10.1: optimizer family {family!r} unsupported")  # pragma: no cover
+    raise HelperUnsupportedError(f"helper v0.10.x: optimizer family {family!r} unsupported")  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------
@@ -627,7 +627,7 @@ def _assert_no_amp() -> None:
         return
     if torch.is_autocast_enabled():
         raise HelperUnsupportedError(
-            "helper v0.10.1: torch.cuda.amp.autocast is active. v0.10.1 helper requires "
+            "helper v0.10.x: torch.cuda.amp.autocast is active. v0.10.x helper requires "
             "fp32 training without autocast (fp16 master vs fp32 master confusion is "
             "the canonical AMP extraction bug per PyTorch issue #75224). Disable "
             "autocast for the snapshot or upcast tensors to fp32 before dumper.step()."
@@ -640,7 +640,7 @@ def _assert_cpu_only(p: "torch.Tensor") -> None:
     device_type = p.device.type
     if device_type != "cpu":
         raise HelperUnsupportedError(
-            f"helper v0.10.1: parameter device '{device_type}' is not supported. "
+            f"helper v0.10.x: parameter device '{device_type}' is not supported. "
             f"v0.10 ships CPU-first; CUDA/MPS/XLA device-tolerance is v0.11+. "
             f"Move the model to CPU for sidecar extraction "
             f"(model.cpu(); inputs.cpu(); targets.cpu()) and try again. "
@@ -658,9 +658,9 @@ def _normalize_for_json(value: Any) -> Any:
     would reject these, but a clean Python-side error is friendlier)."""
     if isinstance(value, float):
         if value != value:  # NaN
-            raise HelperError("helper v0.10.1: extracted NaN — backprop-trace receipts forbid NaN.")
+            raise HelperError("helper v0.10.x: extracted NaN — backprop-trace receipts forbid NaN.")
         if value in (float("inf"), float("-inf")):
-            raise HelperError("helper v0.10.1: extracted Infinity — backprop-trace receipts forbid Infinity.")
+            raise HelperError("helper v0.10.x: extracted Infinity — backprop-trace receipts forbid Infinity.")
         return value
     if isinstance(value, dict):
         return {k: _normalize_for_json(v) for k, v in value.items()}
@@ -734,7 +734,7 @@ class TraceDumper:
     ) -> None:
         if not _TORCH_AVAILABLE:  # pragma: no cover
             raise HelperError(
-                "helper v0.10.1: torch is not installed. Install PyTorch (https://pytorch.org) "
+                "helper v0.10.x: torch is not installed. Install PyTorch (https://pytorch.org) "
                 "or use the hand-authored sidecar path via the framework-trace.v0.6.0 schema."
             )
         _assert_no_amp()
@@ -796,7 +796,7 @@ class TraceDumper:
         _assert_no_amp()
         if not torch.is_grad_enabled():
             raise HelperError(
-                "helper v0.10.1: torch.is_grad_enabled() is False on entry to dumper.step(). "
+                "helper v0.10.x: torch.is_grad_enabled() is False on entry to dumper.step(). "
                 "backprop-trace requires gradients to verify Rule 4. Did you nest dumper.step() "
                 "inside a torch.no_grad() block?"
             )
@@ -830,7 +830,7 @@ class TraceDumper:
         # Resolve inputs/targets — required from the caller in v0.10
         if inputs_override is None or targets_override is None:
             raise HelperError(
-                "helper v0.10.1: dumper.step(inputs={...}, targets={...}) requires "
+                "helper v0.10.x: dumper.step(inputs={...}, targets={...}) requires "
                 "both inputs and targets to be passed explicitly. Inference from "
                 "torch.autograd graph is fragile; the explicit-pass convention "
                 "makes the receipt's named-factors provenance unambiguous."
@@ -983,7 +983,7 @@ class TraceDumper:
             per_output_loss = -y * torch.log(out_o + eps)
             total_loss = per_output_loss.sum()
         else:
-            raise HelperUnsupportedError(f"helper v0.10.1: loss {topo['loss']!r} unsupported")
+            raise HelperUnsupportedError(f"helper v0.10.x: loss {topo['loss']!r} unsupported")
 
         # Backward
         total_loss.backward()
@@ -1171,7 +1171,7 @@ class TraceDumper:
             return sum(sig["signal_value"] for sig in hidden_signals.values())
         if pid == "b_o":
             return sum(sig["signal_value"] for sig in output_signals.values())
-        raise HelperError(f"helper v0.10.1: unknown parameter id {pid!r}")
+        raise HelperError(f"helper v0.10.x: unknown parameter id {pid!r}")
 
     def _cache_forward(
         self, topo: dict[str, Any], params_before: dict[str, float], inputs: dict[str, float]
