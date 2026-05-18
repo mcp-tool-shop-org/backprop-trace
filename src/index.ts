@@ -393,6 +393,28 @@ export { importJaxSidecar } from "./import-jax.js"
 export type { ImportJaxOptions, ImportJaxResult } from "./import-jax.js"
 
 /**
+ * v0.7.0 — TensorFlow sidecar importer. Third adapter on the v0.6
+ * framework-trace pattern. Same trust model + same observer-mode receipt
+ * as importPytorchSidecar / importJaxSidecar; differs only in the
+ * `source_framework.name` discriminator ("tensorflow") and the default
+ * extractor identity ("bp-import-tensorflow@0.7.0"). The shared
+ * implementation lives in src/import-observer.ts and all three
+ * per-framework wrappers delegate to it.
+ *
+ * Per-framework subcommand discipline: `importTensorflowSidecar` rejects
+ * sidecars whose `source_framework.name !== "tensorflow"` (and vice versa
+ * for the PyTorch / JAX importers). Callers MUST name the framework
+ * explicitly. v0.7.0 confirms the v0.6 framework-trace pattern
+ * generalizes to a third adapter without trust-model drift, schema drift,
+ * or new rules.
+ */
+export { importTensorflowSidecar } from "./import-tensorflow.js"
+export type {
+  ImportTensorflowOptions,
+  ImportTensorflowResult,
+} from "./import-tensorflow.js"
+
+/**
  * v0.6 — observer-mode receipt support types. SourceFramework + Attestor
  * (+ AttestorIdentity + ExternalTrustBasis) are the v0.4.0-schema-only
  * fields the importer adds to the receipt; consumers handling imported

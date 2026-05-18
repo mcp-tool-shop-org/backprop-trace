@@ -2,10 +2,21 @@
 
 ## Supported versions
 
+Security fixes are issued for the current and previous minor releases.
+Older versions are not supported — upgrade to a supported line.
+
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | yes       |
-| < 0.1   | no        |
+| 0.7.x   | yes (current)         |
+| 0.6.x   | yes (previous minor)  |
+| 0.5.x   | best-effort           |
+| < 0.5   | no                    |
+
+backprop-trace remains pre-v1.0 — see the README "What's not in this version
+(yet)" section for the product-completeness gaps that block v1.0.0 promotion
+(multi-step observer-mode, Adam/AdamW, batching, live framework helpers,
+real-world fixtures, adopter validation). Versions and the supported window
+will be re-anchored at v1.0.0 release.
 
 ## Reporting a vulnerability
 

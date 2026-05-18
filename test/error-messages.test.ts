@@ -233,7 +233,11 @@ test("Stage C: bp reconcile receipt <nonexistent> stderr contains 'Hint:' (human
   );
 });
 
-test("Stage C: bp --json reconcile receipt <nonexistent> error.message contains 'Hint:' (json mode)", () => {
+test("Stage C: bp --json reconcile receipt <nonexistent> emits Tier-1 envelope with structured hint (json mode)", () => {
+  // v0.7.0 shipcheck B1 migration: the ENOENT path emits hint as a
+  // STRUCTURED field, not embedded in the message string. The pre-v0.7
+  // assertion that error.message contains "Hint:" no longer holds because
+  // the migration moves the hint out into error.hint per Tier-1 shape.
   const { status, stdout, stderr } = runBp([
     "--json",
     "reconcile",
@@ -248,12 +252,31 @@ test("Stage C: bp --json reconcile receipt <nonexistent> error.message contains 
   );
   const parsed = JSON.parse(stdout.trim()) as {
     ok: boolean;
-    error: { code?: string; message?: string };
+    error: {
+      code?: string;
+      message?: string;
+      hint?: string;
+      retryable?: boolean;
+    };
   };
   assert.strictEqual(parsed.ok, false, `error envelope must have ok:false; got ${JSON.stringify(parsed)}`);
+  assert.strictEqual(parsed.error?.code, "ENOENT");
   assert.ok(
-    typeof parsed.error?.message === "string" && parsed.error.message.includes("Hint:"),
-    `--json ENOENT error.message must include 'Hint:' for humanization; got ${JSON.stringify(parsed)}`,
+    typeof parsed.error?.message === "string" && parsed.error.message.includes("file not found"),
+    `error.message must describe the not-found state; got ${JSON.stringify(parsed)}`,
+  );
+  // v0.7.0 Tier-1 assertion: hint is a STRUCTURED field, not embedded
+  // in message. The migration is the intentional shipcheck B1 win.
+  assert.ok(
+    typeof parsed.error?.hint === "string" && parsed.error.hint.includes("check the path"),
+    `--json ENOENT error.hint must be a structured field with the recovery instruction; got ${JSON.stringify(parsed)}`,
+  );
+  // Negative assertion: message must NOT contain "Hint:" (it now lives
+  // in the structured field; this is the Tier-1 contract).
+  assert.ok(
+    !parsed.error.message!.includes("Hint:"),
+    `v0.7.0 Tier-1 migration: hint must NOT be embedded in error.message; it lives in error.hint. ` +
+      `Got message: ${JSON.stringify(parsed.error.message)}`,
   );
 });
 

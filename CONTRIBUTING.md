@@ -29,13 +29,15 @@ Read it. Every PR is judged against it.
 
 ## Rule for new reconciler rules
 
-Each of the eight reconciler rules must ship with a **deliberately-broken fixture** demonstrating rejection *before* the rule code lands. This is the Csmith pattern (Yang, Chen, Eide, Regehr — PLDI 2011, https://users.cs.utah.edu/~regehr/papers/pldi11-preprint.pdf): adversarial corpora prove a verifier; passing tests do not.
+Each of the **sixteen** reconciler rules (as of v0.6+ — see `docs/reconciliation.md` for the full list, including Rules 11/12/13 for softmax+CE in v0.5 and Rules 14/15/16 for observer-mode imports in v0.6) must ship with a **deliberately-broken fixture** demonstrating rejection *before* the rule code lands. This is the Csmith pattern (Yang, Chen, Eide, Regehr — PLDI 2011, https://users.cs.utah.edu/~regehr/papers/pldi11-preprint.pdf): adversarial corpora prove a verifier; passing tests do not.
 
 **The anti-circularity ratchet:** the reconciler MUST detect the rule violation BEFORE consulting `fixture_status` metadata. A receipt cannot self-declare "I am broken — please trust me." The verifier's reading order is part of the contract.
 
+**The doctrine ratchet is enforced by `test/reconcile.doctrine.test.ts`** — it scans `src/reconcile.ts` for every emitted `rule: <n>` and refuses to merge if any rule lacks a paired `fixtures/bad/*.jsonl` fixture.
+
 Concretely, for each new rule N (where N != 4):
 
-1. Add `fixtures/bad/mazur.bad-rule-<N>.jsonl` with a 1000x-tolerance mutation on a value that ONLY Rule N can catch.
+1. Add `fixtures/bad/<prefix>.bad-<kind>.jsonl` with a mutation on a value that ONLY Rule N can catch. Use the matching naming convention so the doctrine ratchet's FILENAME_KIND_TO_RULE map (or the sibling `.meta.json` file's `reconciliation_check_targeted_first` field) resolves to N.
 2. Add a test that runs the reconciler on the broken fixture and asserts Rule N is named in the failure.
 3. Add a second test that mutates the broken fixture's `fixture_status` to `expected_to_fail_reconciliation` and reasserts Rule N is still named (anti-circularity).
 4. **Then** wire Rule N in `src/reconcile.ts`.

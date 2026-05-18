@@ -174,8 +174,6 @@ test("bp import jax on a PyTorch sidecar exits 2 (per-framework discipline)", ()
   assert.match(stderr, /accepts only 'jax'/)
 })
 
-test("bp import tensorflow still exits 4 (planned but not implemented in v0.6.1)", () => {
-  const { status, stderr } = runBp(["import", "tensorflow", "/tmp/nonexistent"])
-  assert.strictEqual(status, 4)
-  assert.match(stderr, /not implemented/)
-})
+// v0.7.0 shipped TensorFlow — the previously-stub `bp import tensorflow`
+// is now wired (see test/import-tensorflow.test.ts). Removed the v0.6.1-
+// era assertion that TF returns exit 4; that no longer holds.

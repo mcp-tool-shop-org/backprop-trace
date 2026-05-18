@@ -1,7 +1,7 @@
 {
   "name": "@mcptoolshop/backprop-trace",
-  "version": "0.6.1",
-  "description": "Deterministic backprop training-trace engine — v0.6.1 adds JAX adapter (bp import jax) alongside the v0.6.0 PyTorch path. Both use the same framework-trace.v0.1.0 sidecar schema + observer-mode v0.4.0 receipt + Rule 14 differential. Shared core in src/import-observer.ts; per-framework wrappers preserve subcommand discipline at the library layer (importPytorchSidecar rejects JAX sidecars and vice versa). Pressure test confirmed: v0.6 generalizes to a second adapter with NO schema drift, NO new trust model, NO new rule. JAX-specific extractor mistakes (pytree flatten order, float32 drift, vmap leak) all surface as Rule 14 firings — existing-rule firings on a new adapter, not new attack classes. Layered on v0.6.0 external ingestion, v0.5 softmax+CE, v0.4 authoring spine, v0.3 generalized topology.",
+  "version": "0.7.0",
+  "description": "Deterministic structural-trace verifier for single neural-network training steps. Re-derives gradients, signals, and parameter updates from named factors via a 16-rule reconciler and emits canonical bytewise JSONL receipts. Ingests external PyTorch / JAX / TensorFlow training traces via framework-trace.v0.1.0 sidecars with engine-recompute differential as load-bearing defense. In the Csmith/CompCert lineage of 'the oracle must not consult the artifact it judges.' Mid-v0 (v0.7.x): single-step, CPU-only, hand-authored sidecars — see README 'What's not in this version (yet)' for v1.0 gaps.",
   "type": "module",
   "license": "MIT",
   "author": "mcp-tool-shop <64996768+mcp-tool-shop@users.noreply.github.com>",
@@ -36,6 +36,8 @@
     "log-sum-exp",
     "dual-form-verification",
     "pytorch-import",
+    "jax-import",
+    "tensorflow-import",
     "external-trace-ingestion",
     "observer-mode-receipts",
     "attestor",
@@ -122,6 +124,10 @@
       "import": "./dist/import-jax.js",
       "types": "./dist/import-jax.d.ts"
     },
+    "./import-tensorflow": {
+      "import": "./dist/import-tensorflow.js",
+      "types": "./dist/import-tensorflow.d.ts"
+    },
     "./import-observer": {
       "import": "./dist/import-observer.js",
       "types": "./dist/import-observer.d.ts"
@@ -161,6 +167,8 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "verify": "pnpm typecheck && pnpm test && pnpm build",
+    "audit": "pnpm audit --audit-level=moderate",
     "prepublishOnly": "pnpm test && pnpm build"
   },
   "devDependencies": {

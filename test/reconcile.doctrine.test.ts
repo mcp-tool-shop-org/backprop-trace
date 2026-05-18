@@ -173,6 +173,12 @@ const FILENAME_KIND_TO_RULE: Record<string, number> = {
   // fire on the same fixture).
   "bad-pytree-flatten-order": 14,
   "pytree-flatten-order": 14,
+  // v0.7.0 TensorFlow-specific bad fixture (variable-list-order swap;
+  // extractor sorted model.trainable_variables alphabetically by var.name
+  // instead of preserving creation order; same Rule 14 + Rule 7 firing
+  // shape as JAX's pytree-flatten-order; framework-distinctive root cause).
+  "bad-variable-list-order": 14,
+  "variable-list-order": 14,
 };
 
 /**

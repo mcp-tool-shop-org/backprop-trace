@@ -69,3 +69,21 @@ jobs:
           else
             echo "tmp/mazur.generated.jsonl not produced by test suite; skipping diff" >&2
           fi
+
+  audit:
+    name: dependency audit (pnpm audit, moderate+)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      # shipcheck D3: dependency-CVE scanning runs in CI. CodeQL (separate
+      # workflow) handles SAST; this job handles dep-side CVEs. moderate-
+      # level threshold is the org-wide default — backprop-trace has only
+      # 1 runtime dep (ajv) + 3 devDeps, so any moderate+ CVE warrants
+      # immediate attention.
+      - run: pnpm audit --audit-level=moderate

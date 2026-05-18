@@ -1,0 +1,22 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "tensorflow.bad-variable-list-order.meta",
+  "describes": "fixtures/bad/tensorflow.bad-variable-list-order.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/tensorflow.softmax-ce.golden.jsonl. Two parameters_before entries (w_x1_h1, w_x2_h1) swapped to mimic a TensorFlow extractor sorting model.trainable_variables alphabetically by var.name (instead of preserving the stable creation order TF returns by default).",
+  "mutation": {
+    "field_path": "parameters_before.{w_x1_h1, w_x2_h1} (swapped)",
+    "original": {
+      "w_x1_h1": 0.12,
+      "w_x2_h1": 0.22
+    },
+    "mutated": {
+      "w_x1_h1": 0.22,
+      "w_x2_h1": 0.12
+    },
+    "kind": "v0_7_0_tensorflow_specific_extractor_mistake",
+    "description": "TensorFlow-distinctive bad fixture: the extractor sorted model.trainable_variables alphabetically by var.name and then zipped the sorted list against parameter_ids, putting w_x1_h1's value into w_x2_h1's slot and vice versa. The sidecar is internally consistent (passes schema) but the CLAIMED forward/loss/backward fields (computed in the user's actual TF run with the CORRECT weights) disagree with what the engine recomputes from the SWAPPED parameters_before. Rule 14 fires on forward / loss / backward / updates / parameters_after fields independently. Same failure shape as JAX's pytree-flatten-order (both extractor-side ordering mistakes), different root cause (TF Variable creation order vs JAX pytree traversal order)."
+  },
+  "reconciliation_check_targeted_first": "Rule 14 (engine-recompute differential): foreign claim at forward.h1 disagrees with engine recomputation because parameters_before slots are swapped.",
+  "purpose": "v0.7.0 TensorFlow-specific anti-circularity fixture. Pressure-tests that Rule 14 catches TF extractor mistakes via the same differential machinery used for PyTorch and JAX — no new rule, no new schema, no new trust model required. The v0.6 framework-trace pattern generalizes to a THIRD adapter.",
+  "v0_7_0_note": "v0.7.0 ships the TensorFlow adapter as a thin wrapper over the v0.6 observer-mode pipeline. TF-specific extractor mistakes (variable list ordering, trainable-vs-non-trainable confusion, tape persistence misuse, graph-vs-eager ULP drift, mixed-precision skew) all surface as Rule 14 differential failures — they are existing-rule firings on a new adapter, not new attack classes."
+}

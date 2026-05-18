@@ -201,14 +201,12 @@ test("bp import (no framework arg) exits 2 with --help text", () => {
   assert.match(combined, /Usage: bp import/)
 })
 
-test("bp import tensorflow exits 4 (framework planned but not implemented in v0.6.1)", () => {
-  // v0.6.1 SHIPPED JAX, so the previously-stub `bp import jax` is now
-  // wired (see test/import-jax.test.ts). TensorFlow is the remaining
-  // unimplemented framework as of v0.6.1.
-  const { status, stderr } = runBp(["import", "tensorflow", "/tmp/nonexistent"])
-  assert.strictEqual(status, 4)
-  assert.match(stderr, /not implemented/)
-})
+// v0.7.0 SHIPPED TensorFlow — the previously-stub `bp import tensorflow`
+// is now wired (see test/import-tensorflow.test.ts). All three v0.6
+// framework slots (pytorch / jax / tensorflow) have real adapters now.
+// Exit code 4 (FRAMEWORK_NOT_IMPLEMENTED) is RESERVED for future
+// adapters that may be partially declared before full implementation;
+// no current path returns it.
 
 test("bp import unknown-framework exits 2", () => {
   const { status, stderr } = runBp(["import", "tensorflow-lite", "/tmp/nonexistent"])

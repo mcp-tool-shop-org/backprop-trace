@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 /**
- * bp — backprop-trace CLI
+ * bp — backprop-trace CLI (v0.7.0 surface)
  *
- * v0.3 surface (still no framework, still dep-light dispatch):
+ * Subcommand surface:
  *
- *   bp reconcile receipt <file>      Run the reconciler on a receipt JSON/JSONL.
- *                                    Exit 0 if all rules pass within tolerance.
- *                                    Exit 1 with stderr describing failures.
+ *   bp reconcile receipt <file>      Reconcile a receipt against the 16 rules
+ *                                    (Rules 1-8 per-receipt math, 9-10 multi-step,
+ *                                    11 softmax normalization, 12 loss formula,
+ *                                    13 GATED dual-form, 14 engine-recompute
+ *                                    differential, 15 skip-basis, 16 GATED
+ *                                    attestation digest binding).
+ *                                    Exit 0 if all applicable rules pass within
+ *                                    tolerance; exit 1 with stderr describing failures.
  *
- *   bp verify mazur [<file>]         Full Mazur gate per docs/reconciliation.md:264:
+ *   bp verify mazur [<file>]         Full Mazur gate per docs/reconciliation.md:
  *                                    schema-validate + reconcile + engine-reproduce
  *                                    + byte-equal-vs-golden + fixture_status enum
  *                                    + published-anchor drift (hard vs soft gate).
@@ -16,12 +21,15 @@
  *                                    v0.1.0-schema receipts.
  *
  *   bp verify general <file>         Generalized verify gate. Works on any
- *                                    v0.2.0-schema receipt (XOR, iris, arbitrary
- *                                    user-authored topology). Composes:
- *                                    schema-validate + reconcile (Rules 1-8) +
- *                                    verifyGeneralEngineReproduces. Skips Mazur-
- *                                    specific checks (byte-equal vs Mazur golden,
- *                                    published-anchor drift).
+ *                                    v0.2+ receipt (XOR, iris, softmax+CE,
+ *                                    observer-mode imports, arbitrary user-
+ *                                    authored topology). Composes schema-validate
+ *                                    (auto-detects v0.2.0 / v0.3.0 / v0.4.0) +
+ *                                    Rules 1-16 as applicable + engine reproduction
+ *                                    (engine-authored) or Rule 14 differential
+ *                                    (observer-mode imports). Skips Mazur-specific
+ *                                    checks (byte-equal vs Mazur golden, published-
+ *                                    anchor drift).
  *
  *   bp verify multi <file.jsonl>     Multi-record verify. Reads N-record JSONL,
  *                                    validates + reconciles each record (Rules
@@ -29,30 +37,41 @@
  *                                    parameter-chain (Rule 9) and trace-identity
  *                                    (Rule 10) cross-record checks.
  *
- *   bp generate mazur                Re-run the Mazur 2-2-2 engine and emit the
- *                                    canonical JSONL receipt to stdout, or to
+ *   bp generate {mazur,xor,iris,from-config}    Re-run the named engine and emit
+ *                                    the canonical JSONL receipt to stdout, or to
  *                                    --out <file>, or compare against the golden
- *                                    with --check (exit 1 on drift).
+ *                                    with --check (exit 1 on drift). from-config
+ *                                    reads a topology+input JSON.
  *
- *   bp generate xor                  Re-run the XOR-sigmoid 2-2-1 engine and emit
- *                                    the canonical JSONL receipt. Same mode
- *                                    dispatch as `generate mazur`; --check compares
- *                                    against fixtures/xor.golden.jsonl.
+ *   bp import {pytorch,jax,tensorflow} <sidecar.jsonl>
+ *                                    Ingest an external framework trace (v0.6+).
+ *                                    Reads a framework-trace.v0.1.0 sidecar and
+ *                                    produces an observer-mode v0.4.0 receipt.
+ *                                    Runs Rule 14 engine-recompute differential
+ *                                    at import time; downstream reconcile re-runs
+ *                                    it independently (Reproducible Builds discipline).
+ *                                    Per-framework subcommand discipline: no
+ *                                    auto-detection from file contents.
  *
- *   bp generate iris                 Re-run the iris 4-3-3 sigmoid engine and emit
- *                                    the canonical JSONL receipt. Same mode
- *                                    dispatch as `generate mazur`; --check compares
- *                                    against fixtures/iris.golden.jsonl.
+ *   bp scaffold topology --topology mazur|xor|iris    Write a starter
+ *                                    GeneralInput JSON for editing.
+ *
+ *   bp validate-input <file>         Schema-validate a topology+input config
+ *                                    without running the engine.
  *
  *   bp validate <file>               Schema-validate a receipt against the schema
  *                                    matching its declared schema_version
- *                                    (auto-detects v0.1.0 vs v0.2.0). No math.
+ *                                    (auto-detects v0.1.0 / v0.2.0 / v0.3.0 / v0.4.0).
+ *                                    No math.
  *
  *   bp --version | -v                Print package version, exit 0.
  *   bp --help    | -h                Print usage, exit 0.
  *
  *   bp ... --json                    Machine-readable JSON output to stdout.
- *                                    Color is suppressed under --json.
+ *                                    Errors follow the Tier-1 structured shape
+ *                                    {ok:false, error:{code, message, hint?,
+ *                                    cause?, retryable?}}. Color is suppressed
+ *                                    under --json.
  *
  *   bp ... --verbose | -V            Diagnostic stderr (file path, schema_version,
  *                                    fixture id) before the run.
@@ -61,30 +80,29 @@
  *                                    output. Honors NO_COLOR. Default: auto
  *                                    (color iff the destination is a TTY).
  *
- *   <file> = "-"                     For reconcile / validate / verify general,
- *                                    read JSON from stdin (assume .json shape;
- *                                    no .jsonl extension sniffing). For verify
- *                                    multi, read JSONL from stdin.
+ *   <file> = "-"                     For reconcile / validate / verify general /
+ *                                    import, read from stdin. For verify multi,
+ *                                    read JSONL from stdin.
  *
- * Exit codes (4-bucket; aligns with study-swarm + shellcheck convention):
+ * Exit codes (5-bucket; aligns with study-swarm + shellcheck convention):
  *   0  success / pass
- *   1  reconciliation or verification failure
+ *   1  reconciliation or verification failure (or import differential disagreement)
  *   2  usage or I/O error (missing file, permission denied, malformed JSON, …)
  *   3  invalid CLI argument (unknown flag, malformed --color value, …)
+ *   4  reserved (framework adapter declared but not implemented)
  *
  * The CLI is itself a consumer of the public library API — every domain
  * primitive comes from "../index.js" (the published barrel) so the surface
  * tested by the CLI matches the surface a third-party caller would see.
  *
- * v0.3 import strategy: the v0.3 generalized-engine surface
- * (runGeneralStep, emitGeneralReceipt, XOR_INPUT, IRIS_INPUT,
- * reconcileMultiStep, verifyGeneralEngineReproduces) is consumed via the
- * namespace import `bplib`. Named-import would fail at ESM load time on a
- * missing binding — namespace import returns `undefined` at access time,
- * so the existing v0.1/v0.2 subcommands keep loading cleanly while the
- * Math + Library + Reconciler agents land their exports. The new
- * subcommands surface a clear runtime error pointing at the missing
- * export until those agents finish.
+ * Import strategy: the generalized-engine surface (runGeneralStep,
+ * emitGeneralReceipt, XOR_INPUT, IRIS_INPUT, reconcileMultiStep,
+ * verifyGeneralEngineReproduces, importPytorchSidecar, importJaxSidecar,
+ * importTensorflowSidecar) is consumed via the namespace import `bplib`.
+ * Named-import would fail at ESM load time on a missing binding —
+ * namespace import returns `undefined` at access time, so v0.1/v0.2
+ * subcommands keep loading cleanly and the lazy `requireLibExport` helper
+ * surfaces a clear runtime error pointing at any missing export.
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -110,11 +128,13 @@ const pkg = require("../../package.json") as { version: string };
 
 /**
  * Human-readable label per reconciliation rule index. Matches
- * docs/reconciliation.md "The ten rules" section. All 10 rules are
- * wired as of v0.3; rule 0 is the structural-failure sentinel. Rules 1-8
- * are per-step (fire on `bp verify mazur` and `bp verify general` and
- * once per record under `bp verify multi`); Rules 9, 10 are cross-step
- * (fire only on `bp verify multi`).
+ * docs/reconciliation.md. All 16 rules are wired as of v0.6 (v0.7
+ * adds no new rules; only a third adapter). Rule 0 is the structural-
+ * failure sentinel; Rules 1-8 are per-step (fire on `bp verify mazur`
+ * and `bp verify general` and once per record under `bp verify multi`);
+ * Rules 9, 10 are cross-step (fire only on `bp verify multi`); Rules
+ * 11, 12, 13 fire on softmax+CE receipts (v0.5+); Rules 14, 15, 16 fire
+ * on observer-mode imported receipts (v0.6+).
  */
 const RULE_LABELS: Record<number, string> = {
   0: "structural failure",
@@ -248,20 +268,47 @@ function color(text: string, code: string, enabled: boolean): string {
 // =============================================================================
 
 /**
- * Emit a usage/IO error. In human mode (default): writes to stderr and
- * exits with the given code (default 2). In JSON mode: writes a structured
- * error envelope to stdout and exits with the same code. Stderr is
- * suppressed under --json so CI consumers can parse stdout cleanly.
+ * v0.7.0 — Emit a usage/IO error in the shipcheck Tier-1 Structured Error
+ * Shape (`code`, `message`, `hint`, `cause?`, `retryable?`). Additive over
+ * the v0.6.x signature: `hint` / `cause` / `retryable` are optional via
+ * `opts`. Existing callers that pass only (message, code, exitCode) get
+ * the v0.6.x envelope shape (no hint / cause / retryable fields). Callers
+ * that pass `opts` get the full Tier-1 shape — preferred for new code.
+ *
+ * In human mode (default): writes the message to stderr; if `opts.hint`
+ * is supplied, writes "Hint: <hint>" on the following line. In JSON mode:
+ * writes a structured error envelope to stdout. Stderr is suppressed under
+ * --json so CI consumers can parse stdout cleanly.
+ *
+ * Migration strategy: legacy callers embed "Hint: …" in the message string.
+ * New callers should pass hint via `opts.hint` so CI consumers can parse
+ * the structured field. Migration is incremental — both styles work; the
+ * Tier-1 envelope is the eventual canonical shape.
  */
-function exitWithUsageError(message: string, code = "USAGE", exitCode = 2): never {
+function exitWithUsageError(
+  message: string,
+  code = "USAGE",
+  exitCode = 2,
+  opts?: { hint?: string; cause?: string; retryable?: boolean },
+): never {
   if (jsonMode) {
-    const envelope = JSON.stringify({
-      ok: false,
-      error: { code, message },
-    });
+    const errorBody: {
+      code: string;
+      message: string;
+      hint?: string;
+      cause?: string;
+      retryable?: boolean;
+    } = { code, message };
+    if (opts?.hint !== undefined) errorBody.hint = opts.hint;
+    if (opts?.cause !== undefined) errorBody.cause = opts.cause;
+    if (opts?.retryable !== undefined) errorBody.retryable = opts.retryable;
+    const envelope = JSON.stringify({ ok: false, error: errorBody });
     process.stdout.write(`${envelope}\n`);
   } else {
     process.stderr.write(`bp: ${message}\n`);
+    if (opts?.hint !== undefined) {
+      process.stderr.write(`Hint: ${opts.hint}\n`);
+    }
   }
   process.exit(exitCode);
 }
@@ -385,22 +432,35 @@ function readMultiRecordJsonl(file: string): unknown[] {
  */
 function exitOnReadError(err: unknown, file: string): never {
   const e = err as NodeJS.ErrnoException;
+  // v0.7.0: migrated to Tier-1 envelope shape — hint, cause?, retryable?
+  // emitted as structured fields under --json. Human-mode output
+  // unchanged for ENOENT/EACCES/EISDIR (hint appears on second stderr
+  // line via exitWithUsageError's opts.hint handling).
   if (e && e.code === "ENOENT") {
     exitWithUsageError(
-      `file not found: ${file}. Hint: check the path or run from the repo root.`,
+      `file not found: ${file}.`,
       "ENOENT",
+      2,
+      {
+        hint: "check the path or run from the repo root.",
+        retryable: false,
+      },
     );
   }
   if (e && e.code === "EACCES") {
     exitWithUsageError(
-      `permission denied: ${file}. Hint: check file permissions.`,
+      `permission denied: ${file}.`,
       "EACCES",
+      2,
+      { hint: "check file permissions.", retryable: false },
     );
   }
   if (e && e.code === "EISDIR") {
     exitWithUsageError(
-      `path is a directory, not a file: ${file}. Hint: provide a file path.`,
+      `path is a directory, not a file: ${file}.`,
       "EISDIR",
+      2,
+      { hint: "provide a file path.", retryable: false },
     );
   }
   const codeStr = (e as Error & { code?: string }).code;
@@ -412,21 +472,34 @@ function exitOnReadError(err: unknown, file: string): never {
   }
   if (codeStr === "BP_JSONL_PARSE_ERROR") {
     exitWithUsageError(
-      `${e.message}. Hint: each line of a multi-record JSONL file must be a standalone JSON object.`,
+      e.message,
       "BP_JSONL_PARSE_ERROR",
+      2,
+      {
+        hint: "each line of a multi-record JSONL file must be a standalone JSON object.",
+        retryable: false,
+      },
     );
   }
   if (err instanceof SyntaxError) {
     exitWithUsageError(
-      `invalid JSON in ${file}: ${err.message}. Hint: validate the receipt structure against schemas/receipt.v0.1.0.json or schemas/receipt.v0.2.0.json before reconciling.`,
+      `invalid JSON in ${file}: ${err.message}.`,
       "INVALID_JSON",
+      2,
+      {
+        hint: "validate the receipt structure against schemas/receipt.v0.1.0.json or schemas/receipt.v0.2.0.json before reconciling.",
+        retryable: false,
+      },
     );
   }
   // Unknown I/O failure — preserve the stack for developer visibility
   // in human mode; emit a structured fallback in JSON mode.
   if (jsonMode) {
     const message = err instanceof Error ? err.message : String(err);
-    exitWithUsageError(`unexpected error reading ${file}: ${message}`, "IO_ERROR");
+    exitWithUsageError(`unexpected error reading ${file}: ${message}`, "IO_ERROR", 2, {
+      hint: "this is an unexpected I/O error; retry after checking the path and file permissions.",
+      retryable: true,
+    });
   }
   throw err;
 }
@@ -525,19 +598,24 @@ function usageText(): string {
     "",
     "Usage:",
     "  Reconcile / verify:",
-    "    bp reconcile receipt <file>     Reconcile a receipt (Rules 1-8)",
+    "    bp reconcile receipt <file>     Reconcile a receipt against the 16 rules",
     "    bp verify mazur [<file>]        Full Mazur gate (v0.1 receipts)",
-    "    bp verify general <file>        Generalized verify (v0.2 receipts)",
+    "    bp verify general <file>        Generalized verify (v0.2+ receipts; softmax+CE; observer-mode)",
     "    bp verify multi <file.jsonl>    Multi-record verify (Rules 1-8 per record + Rules 9, 10)",
-    "    bp validate <file>              Schema-validate receipt (auto-detects v0.1 vs v0.2)",
+    "    bp validate <file>              Schema-validate receipt (auto-detects v0.1/0.2/0.3/0.4)",
     "",
-    "  Generate canonical receipt bytes:",
+    "  Generate canonical receipt bytes (engine-authored fixtures):",
     "    bp generate mazur [--out <file>]              Re-run Mazur engine",
     "    bp generate xor   [--out <file>]              Re-run XOR engine",
     "    bp generate iris  [--out <file>]              Re-run iris engine",
     "    bp generate from-config <file> [--out <file>] Re-run engine from a topology+input JSON",
     "",
-    "  Author / validate topology+input configs (v0.4):",
+    "  Ingest external framework traces (v0.6+; observer-mode receipts):",
+    "    bp import pytorch    <sidecar.jsonl>          Ingest PyTorch framework trace + Rule 14 diff",
+    "    bp import jax        <sidecar.jsonl>          Ingest JAX framework trace + Rule 14 diff",
+    "    bp import tensorflow <sidecar.jsonl>          Ingest TensorFlow framework trace + Rule 14 diff",
+    "",
+    "  Author / validate topology+input configs:",
     "    bp scaffold topology --topology mazur|xor|iris [--out <file>]",
     "                                    Write a starter GeneralInput JSON for editing",
     "    bp validate-input <file>        Schema-validate a topology+input config",
@@ -547,10 +625,10 @@ function usageText(): string {
     "    bp --help                       Print this message",
     "",
     "OPTIONS",
-    "  --json                          Machine-readable JSON output",
+    "  --json                          Machine-readable JSON output (Tier-1 error envelope)",
     "  --verbose, -V                   Diagnostic stderr",
     "  --color=auto|never|always       Color output (auto detects TTY; honors NO_COLOR)",
-    "  --out <file>                    (generate / scaffold) write to file",
+    "  --out <file>                    (generate / scaffold / import) write to file",
     "  --check                         (generate) compare vs golden, exit 1 on drift",
     "  --topology <name>               (scaffold topology) which seed topology to write",
     "  --warn-as-fail                  (verify) treat WARNs as failures",
@@ -560,21 +638,24 @@ function usageText(): string {
     "",
     "Exit codes",
     "  0  success / pass",
-    "  1  reconciliation/verification failure",
+    "  1  reconciliation/verification failure (or import differential disagreement)",
     "  2  usage or I/O error",
     "  3  invalid CLI argument",
+    "  4  reserved (framework adapter declared but not implemented)",
     "",
     "EXAMPLES",
     "  bp reconcile receipt fixtures/mazur.golden.jsonl",
     "  bp verify mazur",
     "  bp verify general fixtures/xor.golden.jsonl",
-    "  bp verify multi fixtures/training-run.jsonl",
+    "  bp verify general fixtures/softmax-ce.golden.jsonl",
+    "  bp verify multi fixtures/xor.multi-step.jsonl",
     "  bp generate mazur --check",
     "  bp generate xor   --out my-xor.jsonl",
     "  bp generate iris  --check",
     "  bp generate from-config my-topology.json",
-    "  bp generate from-config - < my-topology.json --out my.golden.jsonl",
-    "  bp generate from-config my-topology.json --check --out fixtures/my.golden.jsonl",
+    "  bp import pytorch    fixtures/external/pytorch.softmax-ce.sidecar.jsonl",
+    "  bp import jax        fixtures/external/jax.softmax-ce.sidecar.jsonl",
+    "  bp import tensorflow fixtures/external/tensorflow.softmax-ce.sidecar.jsonl",
     "  bp scaffold topology --topology xor --out my-xor.input.json",
     "  bp validate-input my-topology.json",
     "  bp validate fixtures/mazur.golden.jsonl",
@@ -589,8 +670,12 @@ function receiptUsageText(): string {
   return [
     "Usage: bp reconcile receipt <file> [--json] [--verbose]",
     "",
-    "  Reconcile the math claims in a receipt against the 8 rules in",
-    "  docs/reconciliation.md.",
+    "  Reconcile the math claims in a receipt against the 16 rules in",
+    "  docs/reconciliation.md (Rules 1-8 per-receipt math, Rules 9-10",
+    "  multi-step, Rule 11 softmax normalization, Rule 12 loss formula,",
+    "  Rule 13 GATED dual-form, Rule 14 engine-recompute differential",
+    "  for observer-mode imports, Rule 15 skip-basis, Rule 16 GATED",
+    "  attestation digest binding).",
     "",
     "  <file>  Path to a receipt JSON document. Accepted extensions:",
     "            .json   — parsed as a single JSON document.",
@@ -615,17 +700,19 @@ function verifyGeneralUsageText(): string {
   return [
     "Usage: bp verify general <file> [--json] [--verbose] [--warn-as-fail] [--strict]",
     "",
-    "  Generalized verify gate for v0.2-schema receipts. Composes:",
-    "    1. Schema validation against schemas/receipt.v0.2.0.json",
-    "    2. Reconciliation against Rules 1-8 (per-step)",
-    "    3. Engine reproduction via verifyGeneralEngineReproduces",
+    "  Generalized verify gate for v0.2+ receipts (XOR, iris, softmax+CE,",
+    "  observer-mode imports). Composes:",
+    "    1. Schema validation (auto-detects v0.2.0 / v0.3.0 / v0.4.0)",
+    "    2. Reconciliation against Rules 1-16 as applicable",
+    "    3. Engine reproduction (engine-authored) or Rule 14 differential",
+    "       (observer-mode imported) via verifyGeneralEngineReproduces",
     "",
     "  This subcommand intentionally skips Mazur-specific checks:",
     "    - No byte-equal vs a Mazur golden fixture",
     "    - No published-anchor drift (Mazur-only)",
     "    - Multi-step Rules 9, 10 fire only on 'bp verify multi'",
     "",
-    "  <file>  Path to a v0.2-schema receipt (.json or .jsonl, single",
+    "  <file>  Path to a v0.2+ receipt (.json or .jsonl, single",
     "          record), or '-' to read from stdin.",
     "",
     "  Options:",
@@ -780,7 +867,7 @@ function validateUsageText(): string {
     "Usage: bp validate <file> [--json] [--verbose]",
     "",
     "  Validate a receipt against the schema matching its declared",
-    "  schema_version. Auto-detects v0.1.0 vs v0.2.0.",
+    "  schema_version. Auto-detects v0.1.0 / v0.2.0 / v0.3.0 / v0.4.0.",
     "  Schema only — no math reconciliation, no engine reproduction.",
     "",
     "  <file>  Path to a receipt (.json or .jsonl), or '-' to read from stdin.",
@@ -903,9 +990,9 @@ function importUsageText(): string {
     "  re-run the verification.",
     "",
     "  Frameworks (per-framework subcommands; no auto-detection):",
-    "    bp import pytorch <sidecar.jsonl>     — shipped v0.6.0",
-    "    bp import jax     <sidecar.jsonl>     — shipped v0.6.1",
-    "    bp import tensorflow                  — planned for v0.6.x",
+    "    bp import pytorch    <sidecar.jsonl>  — shipped v0.6.0",
+    "    bp import jax        <sidecar.jsonl>  — shipped v0.6.1",
+    "    bp import tensorflow <sidecar.jsonl>  — shipped v0.7.0",
     "",
     "  Run `bp import <framework> --help` for framework-specific details.",
     "",
@@ -952,6 +1039,54 @@ function importJaxUsageText(): string {
   ].join("\n");
 }
 
+function importTensorflowUsageText(): string {
+  return [
+    "Usage: bp import tensorflow <sidecar.jsonl> [--out <file>] [--json]",
+    "",
+    "  Convert a framework-trace.v0.1.0 sidecar (emitted by a TensorFlow",
+    "  training-loop helper) into an observer-mode v0.4.0 receipt.",
+    "",
+    "  Same trust model as bp import pytorch / bp import jax: foreign claims",
+    "  become the canonical fields, the backprop-trace engine runs",
+    "  differentially as witness, Rule 14 enforces agreement within",
+    "  attestor.differential_tolerance at reconcile time.",
+    "",
+    "  <sidecar.jsonl>  Path to a framework-trace.v0.1.0 sidecar JSON file.",
+    "                   The file must declare source_framework.name == 'tensorflow'.",
+    "                   Use '-' to read from stdin.",
+    "",
+    "  Options:",
+    "    --out <file>   Write the receipt to <file> instead of stdout.",
+    "    --json         Emit machine-readable JSON summary with the",
+    "                    import result + differential check outcome.",
+    "    --verbose, -V  Diagnostic stderr.",
+    "",
+    "  TensorFlow-specific authoring notes (extractor side, not importer):",
+    "    - model.trainable_variables returns vars in creation order (stable",
+    "      but non-obvious). Sorting that list — e.g., alphabetically by",
+    "      var.name — surfaces as Rule 14 disagreement on forward fields.",
+    "    - BatchNorm / moving-stats parameters are non-trainable Variables.",
+    "      Don't pull them into parameters_before — they have no gradient",
+    "      update, and Rule 7 will fire on parameters_after.",
+    "    - tf.GradientTape default is non-persistent. tape.gradient(...) may",
+    "      be called only once. Use persistent=True deliberately.",
+    "    - Eager vs graph mode (tf.function / XLA): constant folding + op",
+    "      fusion may diverge slightly in the last few ULPs from eager-mode",
+    "      recompute. Default differential_tolerance {atol:1e-6, rtol:1e-4}",
+    "      absorbs this for small networks; tighten per-receipt if needed.",
+    "    - Mixed precision (float16 / bfloat16 policies): per-tensor values",
+    "      carry the framework precision; cross-precision drift against",
+    "      engine binary64 is bounded by attestor.differential_tolerance.",
+    "",
+    "  Exit codes (identical to bp import pytorch / bp import jax):",
+    "    0  Import succeeded AND engine-recompute differential agreed.",
+    "    1  Import succeeded but differential check DISAGREED.",
+    "    2  Usage / I/O / schema-validation error.",
+    "    3  Invalid CLI argument.",
+    "",
+  ].join("\n");
+}
+
 function importPytorchUsageText(): string {
   return [
     "Usage: bp import pytorch <sidecar.jsonl> [--out <file>] [--json]",
@@ -983,7 +1118,7 @@ function importPytorchUsageText(): string {
     "         for audit, but the verifier-side gate has flagged it.",
     "    2  Usage / I/O / schema-validation error.",
     "    3  Invalid CLI argument.",
-    "    4  Framework adapter not implemented (e.g., 'bp import jax' in v0.6.0).",
+    "    4  Reserved: framework adapter declared but not implemented.",
     "",
   ].join("\n");
 }
@@ -1947,7 +2082,10 @@ function runValidateInput(file: string): void {
  */
 function runImportFramework(
   file: string,
-  libExportName: "importPytorchSidecar" | "importJaxSidecar",
+  libExportName:
+    | "importPytorchSidecar"
+    | "importJaxSidecar"
+    | "importTensorflowSidecar",
   callerLabel: string,
 ): void {
   const outPath = valueFlag("--out");
@@ -2069,7 +2207,7 @@ function runImportFramework(
 /**
  * Per-framework thin wrapper for PyTorch. v0.6.0 shipped this as
  * runImportPytorch; v0.6.1 refactored the body into runImportFramework
- * so JAX (and future TensorFlow) share the same CLI machinery.
+ * so JAX (and TensorFlow as of v0.7.0) share the same CLI machinery.
  */
 function runImportPytorch(file: string): void {
   runImportFramework(file, "importPytorchSidecar", "bp import pytorch");
@@ -2082,6 +2220,18 @@ function runImportPytorch(file: string): void {
  */
 function runImportJax(file: string): void {
   runImportFramework(file, "importJaxSidecar", "bp import jax");
+}
+
+/**
+ * Per-framework thin wrapper for TensorFlow (v0.7.0). Third adapter on
+ * the v0.6 framework-trace pattern. Same CLI ergonomics + same observer-
+ * mode pipeline as PyTorch and JAX; only the library export name differs
+ * ("importTensorflowSidecar"). Validates the v0.6 framework-trace pattern
+ * generalizes to a third adapter without trust-model drift, schema drift,
+ * or new rules.
+ */
+function runImportTensorflow(file: string): void {
+  runImportFramework(file, "importTensorflowSidecar", "bp import tensorflow");
 }
 
 // =============================================================================
@@ -3010,19 +3160,38 @@ if (argv[0] === "import") {
     runImportJax(file);
   }
 
-  // TensorFlow follows as v0.6.x patch.
+  // v0.7.0: bp import tensorflow — third adapter on the v0.6 framework-
+  // trace pattern. Same dispatch shape as pytorch and jax above; only the
+  // source_framework name + extractor identity + library export differ.
   if (framework === "tensorflow") {
-    exitWithUsageError(
-      `'bp import tensorflow' is not implemented in v0.6.1. v0.6.0 shipped PyTorch ingestion; ` +
-        `v0.6.1 added JAX. TensorFlow adapter is planned for a v0.6.x patch. ` +
-        `Run 'bp import --help' for the current import surface.`,
-      "FRAMEWORK_NOT_IMPLEMENTED",
-      4,
-    );
+    const file = argv[2];
+    if (typeof file !== "string" || file.length === 0) {
+      if (jsonMode) {
+        exitWithUsageError(
+          "missing required argument <sidecar-file> for 'import tensorflow'. Run 'bp import tensorflow --help' for usage.",
+          "MISSING_FILE_ARG",
+        );
+      }
+      process.stderr.write(importTensorflowUsageText());
+      process.exit(2);
+    }
+    if (file === "--help" || file === "-h") {
+      process.stdout.write(importTensorflowUsageText());
+      process.exit(0);
+    }
+    if (file.startsWith("-") && file !== "-" && file !== "--") {
+      exitWithUsageError(
+        `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
+          `Use 'bp import tensorflow --help' for usage.`,
+        "INVALID_FILE_ARG",
+        3,
+      );
+    }
+    runImportTensorflow(file);
   }
 
   // Unknown framework.
-  const knownFrameworks = ["pytorch", "jax", "tensorflow (planned)"];
+  const knownFrameworks = ["pytorch", "jax", "tensorflow"];
   exitWithUsageError(
     `unknown framework '${framework}' for 'bp import'. Known: ${knownFrameworks.join(", ")}. ` +
       `bp does NOT auto-detect framework from file contents — name it explicitly. ` +

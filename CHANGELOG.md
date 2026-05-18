@@ -14,6 +14,180 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.7.0] - 2026-05-17
+
+The v0.7.0 release-readiness slice. **Not a v1.0.0 promotion** — see
+SHIP_GATE.md "Product-completeness gaps blocking v1.0.0" for the
+multi-step / Adam / batching / live-helper / real-world-fixture /
+adopter-validation work that must close before any v1.0 promotion.
+What v0.7.0 actually does:
+
+- **TensorFlow adapter.** Third framework adapter on the v0.6 framework-
+  trace pattern; same shared `buildObserverReceiptFromSidecar` core; no
+  new schema, no new rule, no new trust model. Confirms the v0.6 pattern
+  generalizes beyond two adapters.
+- **README rewrite.** Out of the v0.4 frozen mental model; now reflects
+  the v0.7.0 product truth (16 rules, softmax+CE, external trace
+  ingestion, observer-mode receipts, PyTorch+JAX+TensorFlow). Explicit
+  "Threat model" section. Honest "What's not in this version (yet)" section
+  naming the v1.0 product-completeness gaps.
+- **Shipcheck hard-gate closure.** B1 (Tier-1 structured error envelope),
+  D1 (verify script), D3 (pnpm audit step in CI), C4 (--help spot-audit
+  across the v0.7 surface).
+- **Staleness sweep.** SECURITY.md supported-versions, CONTRIBUTING.md
+  rule count (8 → 16 + doctrine-ratchet language), bp.ts header docstring,
+  RULE_LABELS docstring, GH repo description + topics.
+- **npm package description rewrite.** Replaced internal release-
+  engineering paragraph with a cold-user-facing product description that
+  states mid-v0 status up front.
+
+### Added
+
+- **`importTensorflowSidecar`** library API (`src/import-tensorflow.ts`).
+  Third per-framework wrapper over `buildObserverReceiptFromSidecar`.
+  Rejects sidecars whose `source_framework.name !== "tensorflow"`. Same
+  `ObserverImportOptions` / `ObserverImportResult` shape as PyTorch + JAX.
+- **`bp import tensorflow <sidecar.jsonl> [--out <file>] [--json]`** CLI
+  subcommand. Identical ergonomics + exit codes to `bp import pytorch` /
+  `bp import jax`. Replaces the v0.6.1-era exit-4 stub.
+- **`fixtures/external/tensorflow.softmax-ce.sidecar.jsonl`** — canonical
+  TensorFlow framework-trace sidecar. Different weights + sample
+  (x1=0.75, x2=0.25, one-hot target class o3) + learning_rate (0.1) than
+  the PyTorch / JAX fixtures so the TF golden is byte-distinct.
+- **`fixtures/external/tensorflow.softmax-ce.golden.jsonl`** — v0.4.0
+  observer-mode receipt produced by `bp import tensorflow`. Reproducible
+  via `scripts/generate-tensorflow-softmax-ce-fixtures.ts`.
+- **`fixtures/bad/tensorflow.bad-variable-list-order.jsonl`** — single
+  TensorFlow-distinctive bad fixture. Swaps `parameters_before.{w_x1_h1,
+  w_x2_h1}` to mimic an extractor that sorted `model.trainable_variables`
+  alphabetically by `var.name` (instead of preserving the stable creation
+  order TF returns by default). Same failure shape as JAX's pytree-
+  flatten-order, different root cause. Rule 14 (engine recompute) fires
+  on `forward.h1.net`; Rule 7 (parameters_after consistency) also fires.
+  No new rule needed.
+- **`scripts/generate-tensorflow-softmax-ce-fixtures.ts`** +
+  **`scripts/generate-tensorflow-bad-fixtures.ts`** — reproducible
+  generators.
+- **Library re-exports**: `importTensorflowSidecar`,
+  `ImportTensorflowOptions`, `ImportTensorflowResult` from package root +
+  `./import-tensorflow` subpath.
+- **`bp import tensorflow --help`** text with TF-distinctive authoring
+  notes (variable list ordering, trainable vs non-trainable Variables,
+  `tf.GradientTape` persistence, eager-vs-graph ULP drift, mixed-
+  precision skew).
+- **`verify` script** in `package.json`: `pnpm typecheck && pnpm test
+  && pnpm build`. Single command for contributors.
+- **`audit` script** + dedicated CI job: `pnpm audit
+  --audit-level=moderate` runs on every push / PR. Closes shipcheck D3.
+- **`test/cli.error-envelope.test.ts`** asserts the Tier-1 structured
+  error envelope shape `{ok:false, error:{code, message, hint?, cause?,
+  retryable?}}` under `--json`.
+- **SHIP_GATE.md "Product-completeness gaps blocking v1.0.0" section** —
+  the user-facing version of "v0.7.0 closes artifact hygiene but is NOT
+  v1.0.0 ready."
+
+### Changed
+
+- **README.md** — full rewrite from v0.4 frozen surface to v0.7.0 product
+  truth. Mid-v0 status banner. Tagline updated (Csmith/CompCert lineage).
+  Three NOT-this comparisons by name (MLflow/W&B/TensorBoard, PoL/zkML
+  with Fang 2023 forgery caveat, Sigstore model-signing/SLSA/CycloneDX
+  ML-BOM). Dedicated Threat model section. 16-rule table. Bring-your-
+  own-training-trace section honest about the hand-authored sidecar
+  friction. What's not in this version (yet) section with roadmap-target
+  versions for multi-step / Adam / batching / live helpers / real-world
+  fixture / adopter validation.
+- **`exitWithUsageError`** in `src/bin/bp.ts` — extended additively to
+  support the Tier-1 shape via optional `opts.hint` / `opts.cause` /
+  `opts.retryable`. Legacy callers (embed-Hint-in-message style) continue
+  to work; ENOENT / EACCES / EISDIR / BP_JSONL_PARSE_ERROR / INVALID_JSON
+  / IO_ERROR paths in `exitOnReadError` migrated to the structured shape
+  as proof. Remaining call sites are an incremental v0.7.x task.
+- **`bp.ts` header docstring** — v0.3-surface text → v0.7.0-surface text.
+  RULE_LABELS docstring — "All 10 rules wired as of v0.3" → "All 16 rules
+  wired as of v0.6". Top-level `bp --help` rewritten to include the
+  `bp import` block and current rule range. Per-subnoun `--help` texts
+  for `bp reconcile receipt`, `bp verify general`, `bp validate` updated
+  for the v0.7.0 surface.
+- **CONTRIBUTING.md** — "eight reconciler rules" → "sixteen reconciler
+  rules"; doctrine-ratchet enforcement explicitly noted; naming-convention
+  guidance generalized beyond the v0.2 `mazur.bad-rule-<N>.jsonl` form.
+- **SECURITY.md** — supported-versions table refreshed from the stale
+  "0.1.x yes" row to a real current/previous/best-effort window for the
+  0.5.x → 0.7.x lines. Explicit pre-v1.0 disclosure.
+- **`bp import` overview help** — `tensorflow` row flipped from "planned
+  for v0.6.x" to "shipped v0.7.0". `importPytorchUsageText` exit-code 4
+  description generalized from the now-stale "e.g. `bp import jax` in
+  v0.6.0" reference to "Reserved: framework adapter declared but not
+  implemented."
+- **GitHub repo metadata** — description rewritten ("16 rules", external
+  trace ingestion, mid-v0 disclosure); 8 new topics (softmax, cross-
+  entropy, pytorch-import, jax-import, tensorflow-import, external-trace-
+  ingestion, observer-mode-receipts, attestor); `proof-of-learning`
+  dropped (technically misleading per the README's Fang 2023 PoL
+  forgeability caveat).
+- **`package.json`** — version 0.7.0; description rewritten out of
+  internal release-engineering copy; `jax-import` + `tensorflow-import`
+  added to keywords; new `./import-tensorflow` subpath export.
+- **Doctrine ratchet test** (`test/reconcile.doctrine.test.ts`) —
+  `FILENAME_KIND_TO_RULE` gains `bad-variable-list-order → 14` for the
+  TensorFlow bad fixture.
+
+### Tests
+
+- 359 → 375 total (+16 v0.7.0 tests across `test/import-tensorflow.test.ts`,
+  `test/reconcile.bad-tensorflow.test.ts`, `test/cli.error-envelope.test.ts`,
+  minus 2 obsolete stub tests removed from `test/import-pytorch.test.ts`
+  and `test/import-jax.test.ts`). 375 pass / 0 fail / 0 skip.
+- New test categories:
+  - TensorFlow importer round-trip byte-equality vs
+    `tensorflow.softmax-ce.golden.jsonl`
+  - Schema-validation + reconciliation on the TensorFlow observer-mode
+    receipt
+  - Per-framework subcommand discipline at the library layer (3-way
+    refusal matrix: TF importer rejects PyTorch + JAX sidecars; PyTorch +
+    JAX importers reject TF sidecar)
+  - `bp import tensorflow` CLI end-to-end (succeeds on TF sidecar;
+    rejects PyTorch and JAX sidecars with exit 2)
+  - `tensorflow.bad-variable-list-order` fires Rule 14 on `forward.h1.net`
+    + Rule 7 on the chain
+  - Tier-1 structured error envelope shape under `--json` (ENOENT, EISDIR,
+    USAGE; backward-compat for legacy callers without `opts.hint`)
+- Pre-existing `error-messages.test.ts` updated: the v0.7.0 envelope
+  migration moves "Hint:" out of `error.message` into the structured
+  `error.hint` field, so the v0.6.x assertion that the message contains
+  "Hint:" was inverted (now asserts message does NOT contain "Hint:" and
+  hint is a structured field).
+- All v0.1-v0.6.1 fixtures byte-identical. TensorFlow adapter shipped
+  through the same shared `buildObserverReceiptFromSidecar` core that
+  PyTorch and JAX use; engine identity stays at
+  `backprop-trace-engine@0.6.0` (engine semantics unchanged — v0.7.0 adds
+  only a third adapter wrapper + CLI dispatch + fixtures + docs).
+
+### Migration notes (v0.6.1 → v0.7.0)
+
+- **Pure additive on engine semantics.** Engine code unchanged. All
+  engine-authored receipts byte-identical. PyTorch + JAX importer outputs
+  byte-identical (the third adapter shares the same observer-mode core).
+- **JSON error envelope shape.** Under `--json`, the `error` object now
+  may include `hint` / `cause` / `retryable` as structured fields
+  (Tier-1 shape). Existing consumers reading only `error.code` +
+  `error.message` continue to work; the new fields are additive optional.
+  Consumers that parsed "Hint: …" out of the `message` string for
+  migrated callers (ENOENT/EACCES/EISDIR/BP_JSONL_PARSE_ERROR/
+  INVALID_JSON/IO_ERROR) should switch to reading `error.hint` directly.
+- **`bp import tensorflow`** now exits 0 / 1 / 2 / 3 on real import
+  paths instead of the v0.6.1-era universal exit 4. CI consumers that
+  tested "`bp import tensorflow exits 4`" as a smoke for adapter
+  absence should update to exercise the real adapter, or remove the
+  assertion.
+- **Exit code 4** remains in the documented surface as RESERVED (for
+  framework adapters declared but not implemented). No current code path
+  returns it.
+- **GitHub repo description + topics changed.** Tooling that scraped the
+  repo metadata for the old "10 mathematical rules" phrasing should
+  refresh.
+
 ## [0.6.1] - 2026-05-17
 
 The JAX adapter pressure test on the v0.6 pattern. v0.6.0 shipped PyTorch
