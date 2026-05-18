@@ -1,7 +1,7 @@
 {
   "name": "@mcptoolshop/backprop-trace",
-  "version": "0.9.2",
-  "description": "Deterministic structural-trace verifier for neural-network training steps. Re-derives gradients, signals, and parameter updates from named factors via a 26-rule reconciler and emits canonical bytewise JSONL receipts. Ingests external PyTorch / JAX / TensorFlow training traces (single-step or multi-step v0.8+, batched or unbatched v0.9+) via framework-trace sidecars with per-step engine-recompute differential + optional bundle-integrity binding + batch reduction consistency + sample-set coherence + Adam/AdamW moment-progression + bias-correction + parameter-update + optimizer-state-chain + optimizer-config-constancy + classical PyTorch-style SGD momentum buffer-recurrence-and-parameter-update checks. AdamW adds decoupled weight decay (Loshchilov & Hutter 2017) — explicitly contrasted with coupled L2 to catch the most common porting bug. sgd_momentum is classical PyTorch-style (buffer_t = mu * buffer_{t-1} + gradient; lr outside the buffer per Sutskever et al. 2013) — Nesterov reserved for v0.9.3, dampening reserved for v0.9.3, SGD coupled L2 weight decay deferred to v0.10. In the Csmith/CompCert lineage of 'the oracle must not consult the artifact it judges.' Mid-v0 (v0.9.x): CPU-only, SGD/Adam/AdamW/sgd_momentum only — see README 'What's not in this version (yet)' for v1.0 gaps.",
+  "version": "0.9.3",
+  "description": "Deterministic structural-trace verifier for neural-network training steps. Re-derives gradients, signals, and parameter updates from named factors via a 26-rule reconciler and emits canonical bytewise JSONL receipts. Ingests external PyTorch / JAX / TensorFlow training traces (single-step or multi-step v0.8+, batched or unbatched v0.9+) via framework-trace sidecars with per-step engine-recompute differential + optional bundle-integrity binding + batch reduction consistency + sample-set coherence + Adam/AdamW moment-progression + bias-correction + parameter-update + optimizer-state-chain + optimizer-config-constancy + PyTorch-style SGD momentum buffer-recurrence + effective-direction + parameter-update checks (Rule 21 sub-checks 21a/21b/21c). AdamW adds decoupled weight decay (Loshchilov & Hutter 2017) — explicitly contrasted with coupled L2. sgd_momentum is PyTorch's torch.optim.SGD recurrence with classical + Nesterov (Sutskever et al. 2013 ICML) + dampening (in [0, 1)) variants; PyTorch's nesterov=true && dampening>0 rejection mirrored at schema + engine boundary. SGD coupled L2 weight decay deferred to v0.10. In the Csmith/CompCert lineage of 'the oracle must not consult the artifact it judges.' Mid-v0 (v0.9.x): CPU-only, SGD/Adam/AdamW/sgd_momentum (full PyTorch torch.optim.SGD surface) only — see README 'What's not in this version (yet)' for v1.0 gaps.",
   "type": "module",
   "license": "MIT",
   "author": "mcp-tool-shop <64996768+mcp-tool-shop@users.noreply.github.com>",
@@ -139,12 +139,14 @@
     "./schema/receipt-0.4.0": "./schemas/receipt.v0.4.0.json",
     "./schema/receipt-0.5.0": "./schemas/receipt.v0.5.0.json",
     "./schema/receipt-0.6.0": "./schemas/receipt.v0.6.0.json",
+    "./schema/receipt-0.7.0": "./schemas/receipt.v0.7.0.json",
     "./schema/0.4.0": "./schemas/topology-input.v0.4.0.json",
     "./schema/framework-trace-0.1.0": "./schemas/framework-trace.v0.1.0.json",
     "./schema/framework-trace-0.2.0": "./schemas/framework-trace.v0.2.0.json",
     "./schema/framework-trace-0.3.0": "./schemas/framework-trace.v0.3.0.json",
     "./schema/framework-trace-0.4.0": "./schemas/framework-trace.v0.4.0.json",
     "./schema/framework-trace-0.5.0": "./schemas/framework-trace.v0.5.0.json",
+    "./schema/framework-trace-0.6.0": "./schemas/framework-trace.v0.6.0.json",
     "./package.json": "./package.json"
   },
   "bin": {

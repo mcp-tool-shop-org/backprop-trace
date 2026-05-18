@@ -27,6 +27,9 @@ import type { GeneralReceipt } from "../src/general-engine.js"
 
 const SINGLE_GOLDEN_PATH = "fixtures/external/pytorch.sgd-momentum.golden.jsonl"
 const MULTI_GOLDEN_PATH = "fixtures/external/pytorch.sgd-momentum.multi-step.golden.jsonl"
+// v0.9.3 — Nesterov-specific source goldens.
+const NESTEROV_SINGLE_GOLDEN_PATH = "fixtures/external/pytorch.sgd-momentum.nesterov.golden.jsonl"
+const NESTEROV_MULTI_GOLDEN_PATH = "fixtures/external/pytorch.sgd-momentum.nesterov.multi-step.golden.jsonl"
 
 function freshSingle(): GeneralReceipt {
   return JSON.parse(
@@ -36,6 +39,19 @@ function freshSingle(): GeneralReceipt {
 
 function freshMulti(): GeneralReceipt[] {
   return readFileSync(MULTI_GOLDEN_PATH, "utf-8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as GeneralReceipt)
+}
+
+function freshNesterovSingle(): GeneralReceipt {
+  return JSON.parse(
+    readFileSync(NESTEROV_SINGLE_GOLDEN_PATH, "utf-8").trim(),
+  ) as GeneralReceipt
+}
+
+function freshNesterovMulti(): GeneralReceipt[] {
+  return readFileSync(NESTEROV_MULTI_GOLDEN_PATH, "utf-8")
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line) as GeneralReceipt)
@@ -397,4 +413,235 @@ function writeMultiStepBadFixture(
   )
 }
 
-console.log(`\n--- momentum adversarial plate complete (6 bad fixtures) ---`)
+// ============================================================================
+// v0.9.3 NEW: rename momentum.bad-formula-mismatch → momentum.bad-nesterov-flag-mismatch
+// ============================================================================
+//
+// The v0.9.2 fixture's mutation: classical-declared receipt (nesterov absent
+// = false), update mutated to Nesterov-look-ahead form. Under v0.9.2 this
+// fired Rule 21b (then 21b, scope-agnostic phrasing "update matches a
+// momentum variant the reconciler does not recognize"). Under v0.9.3 with
+// Nesterov as a recognized branch, the more precise framing is
+// "declared nesterov=false but emitted Nesterov-form update." Same byte
+// mutation; new meta + new filename. v0.9.2 generator script explicitly
+// forward-compat-authored this rename (see line 248 of the v0.9.2 script's
+// `formula-mismatch` block).
+//
+// Also: DELETE the v0.9.2 fixture file + its meta so the doctrine test
+// doesn't pick up stale `bad-formula-mismatch` entries.
+
+import { unlinkSync, existsSync } from "node:fs"
+
+{
+  const v092Single = "fixtures/bad/momentum.bad-formula-mismatch.jsonl"
+  const v092Meta = "fixtures/bad/momentum.bad-formula-mismatch.meta.json"
+  if (existsSync(v092Single)) {
+    unlinkSync(v092Single)
+    console.log(`deleted ${v092Single} (renamed to momentum.bad-nesterov-flag-mismatch)`)
+  }
+  if (existsSync(v092Meta)) {
+    unlinkSync(v092Meta)
+    console.log(`deleted ${v092Meta} (renamed to momentum.bad-nesterov-flag-mismatch.meta.json)`)
+  }
+
+  const r = freshSingle()
+  r.fixture = "momentum.bad-nesterov-flag-mismatch"
+  const targetIdx = 0
+  const u = r.updates[targetIdx]!
+  const opt = u.optimizer
+  const lr = opt.learning_rate
+  const mu = r.optimizer_config!.momentum!
+  const bufAfter = (opt.state_after as { buffer: number }).buffer
+  const grad = u.gradient
+  const originalUpdate = u.update
+  // Same mutation as v0.9.2: update mutated to Nesterov-look-ahead form
+  //   update = lr * (gradient + mu * buffer_after)
+  // Receipt declares classical (no nesterov flag → defaults to false).
+  // Under v0.9.3, Rule 21b ("effective gradient direction") fires:
+  // declared nesterov=false → expected effective = buffer_after; stored
+  // update / lr = (gradient + mu * buffer_after) → Nesterov-form mismatch.
+  const lookaheadUpdate = lr * (grad + mu * bufAfter)
+  u.update = lookaheadUpdate
+  u.weight_after = u.weight_before + lookaheadUpdate
+  r.parameters_after[u.parameter_id] = u.weight_after
+
+  writeSingleBadFixture(
+    "momentum.bad-nesterov-flag-mismatch.jsonl",
+    "nesterov-flag-mismatch",
+    r,
+    {
+      kind: "mutate_update_to_nesterov_lookahead_form_while_declaring_classical",
+      field_path: `updates[${targetIdx}].update`,
+      parameter_id: u.parameter_id,
+      original_update_classical: originalUpdate,
+      mutated_update_nesterov_lookahead: lookaheadUpdate,
+      explanation:
+        `Receipt declares optimizer_config.nesterov absent (= false; classical PyTorch-style); ` +
+        `stored update matches the Nesterov look-ahead form lr * (gradient + mu * buffer_after). ` +
+        `v0.9.3 Rule 21b ("effective gradient direction") catches this classical-vs-Nesterov ` +
+        `confusion bug: declared classical, emitted Nesterov form. This fixture was named ` +
+        `momentum.bad-formula-mismatch in v0.9.2 (with scope-agnostic "unrecognized variant" ` +
+        `framing because Nesterov wasn't recognized yet); renamed and reframed in v0.9.3 now ` +
+        `that Nesterov is a first-class branch. Same byte mutation; the v0.9.2 generator ` +
+        `script's scope-agnostic phrasing was explicitly forward-compat-authored to support ` +
+        `this rename.`,
+    },
+    21,
+    "Classical-vs-Nesterov confusion — receipt declares nesterov=false (or absent) but stored update matches the Nesterov look-ahead form lr * (gradient + mu * buffer_after) instead of classical lr * buffer_after. Rule 21b fires.",
+  )
+}
+
+// ============================================================================
+// 7 (v0.9.3). momentum.bad-nesterov-formula-mismatch → Rule 21b
+// ============================================================================
+//
+// Inverse of #6 above: declares nesterov=true, emits classical-form update.
+// MUST source from step_index=1 of the multi-step Nesterov golden — at
+// step 0 with zero-init buffer, the Nesterov-vs-classical effective values
+// differ by only mu * gradient (small but visible); step 1+ amplifies the
+// signal because buffer_before is non-zero.
+{
+  const multiReceipts = freshNesterovMulti()
+  const r = multiReceipts[1]!
+  delete (r as { trace_id?: unknown }).trace_id
+  delete (r as { step_index?: unknown }).step_index
+  if (r.attestor) {
+    delete (r.attestor as { bundle_root_digest?: unknown }).bundle_root_digest
+  }
+  r.fixture = "momentum.bad-nesterov-formula-mismatch"
+  const targetIdx = 0
+  const u = r.updates[targetIdx]!
+  const opt = u.optimizer
+  const lr = opt.learning_rate
+  const bufAfter = (opt.state_after as { buffer: number }).buffer
+  const originalUpdate = u.update
+  // Mutate update to classical form: lr * buffer_after (drops the Nesterov
+  // lookahead term). Receipt still declares nesterov=true. Rule 21b catches:
+  // declared nesterov=true → expected effective = gradient + mu * buffer_after;
+  // stored update / lr = buffer_after → classical-form mismatch.
+  const classicalUpdate = lr * bufAfter
+  u.update = classicalUpdate
+  u.weight_after = u.weight_before + classicalUpdate
+  r.parameters_after[u.parameter_id] = u.weight_after
+
+  writeSingleBadFixture(
+    "momentum.bad-nesterov-formula-mismatch.jsonl",
+    "nesterov-formula-mismatch",
+    r,
+    {
+      kind: "mutate_update_to_classical_form_while_declaring_nesterov",
+      field_path: `updates[${targetIdx}].update`,
+      parameter_id: u.parameter_id,
+      source_step_index: 1,
+      original_update_nesterov_lookahead: originalUpdate,
+      mutated_update_classical: classicalUpdate,
+      explanation:
+        `Receipt declares optimizer_config.nesterov=true; stored update matches the CLASSICAL ` +
+        `form lr * buffer_after (drops the Nesterov lookahead term lr * mu * buffer_after). ` +
+        `Source receipt is step_index=1 from the multi-step Nesterov golden (extracted as ` +
+        `single-step) so buffer_before is non-zero — at step 0 with buffer_before=0, the ` +
+        `Nesterov-vs-classical divergence is only mu * gradient (small but visible); step 1+ ` +
+        `amplifies the signal. Rule 21b fires: declared nesterov=true → expected effective = ` +
+        `gradient + mu * buffer_after; stored implies effective = buffer_after.`,
+    },
+    21,
+    "Classical-vs-Nesterov confusion — receipt declares nesterov=true but stored update matches the classical form lr * buffer_after instead of Nesterov lookahead lr * (gradient + mu * buffer_after). Rule 21b fires.",
+    { basedOn: NESTEROV_MULTI_GOLDEN_PATH },
+  )
+}
+
+// ============================================================================
+// 8 (v0.9.3). momentum.bad-dampening-ignored → Rule 21a
+// ============================================================================
+//
+// Declares dampening=0.1 but emits buffer_after computed WITHOUT the (1-tau)
+// factor on gradient (uses the classical recurrence mu * buf_before + gradient).
+// Step 0 source is fine — the (1-tau) factor on gradient is visible at any
+// step, including zero-init buffer_before (mu * 0 + 0.9*g vs mu * 0 + g
+// differ by 0.1*g; clearly detectable).
+{
+  // Source: fresh single-step classical golden, mutate to declare dampening=0.1
+  // (which would normally cause the recurrence to use (1-0.1)*g = 0.9*g) but
+  // KEEP the buffer_after computed under classical (no dampening, so buf_after
+  // = mu * 0 + 1.0*g = g). Rule 21a catches: expected buf_after = mu * 0 + 0.9*g
+  // = 0.9*g; stored buf_after = g; mismatch by 0.1*g.
+  const r = freshSingle()
+  r.fixture = "momentum.bad-dampening-ignored"
+  const DECLARED_DAMPENING = 0.1
+  // Mutate optimizer_config to declare dampening=0.1 + bump schema_version
+  // (since dampening>0 requires v0.7.0).
+  r.optimizer_config!.dampening = DECLARED_DAMPENING
+  r.schema_version = "0.7.0"
+  const targetIdx = 0
+  const u = r.updates[targetIdx]!
+  const opt = u.optimizer
+  const originalBufAfter = (opt.state_after as { buffer: number }).buffer
+
+  writeSingleBadFixture(
+    "momentum.bad-dampening-ignored.jsonl",
+    "dampening-ignored",
+    r,
+    {
+      kind: "declare_dampening_0_1_but_keep_buffer_after_computed_without_1_minus_tau_factor",
+      field_path: `optimizer_config.dampening (or updates[${targetIdx}].optimizer.state_after.buffer)`,
+      parameter_id: u.parameter_id,
+      declared_dampening: DECLARED_DAMPENING,
+      stored_buffer_after: originalBufAfter,
+      explanation:
+        `Receipt declares dampening=0.1 in optimizer_config but stored buffer_after equals ` +
+        `mu * buffer_before + gradient (the dampening=0 recurrence) instead of mu * buffer_before + ` +
+        `(1 - 0.1) * gradient. Rule 21a fires: expected = mu * buffer_before + 0.9 * gradient; ` +
+        `stored = mu * buffer_before + gradient; mismatch by 0.1 * gradient. Catches the ` +
+        `"declared dampening but didn't actually apply it" porting bug.`,
+    },
+    21,
+    "PyTorch-style SGD momentum buffer recurrence — declared dampening=0.1 but buffer_after computed without the (1-tau) factor on gradient.",
+  )
+}
+
+// ============================================================================
+// 9 (v0.9.3). momentum-multi-step.bad-nesterov-flag-inconstancy → Rule 26
+// ============================================================================
+//
+// nesterov=true at step 0, nesterov=false (absent) at step 1. Rule 26's
+// constancy key list for sgd_momentum already includes `nesterov` (set up
+// in v0.9.2 anticipating v0.9.3); this fixture activates that test coverage.
+{
+  const receipts = freshNesterovMulti()
+  // Bump schema_version on receipts that have nesterov=true (v0.9.3 dispatch).
+  // Step 0 keeps nesterov=true ("0.7.0"); step 1 drops nesterov → reverts to
+  // classical schema ("0.6.0"). Rule 26 catches the inconstancy at step 1.
+  receipts[1]!.fixture = "momentum-multi-step.bad-nesterov-flag-inconstancy-step-1"
+  const originalNesterov = receipts[1]!.optimizer_config!.nesterov
+  delete (receipts[1]!.optimizer_config as { nesterov?: unknown }).nesterov
+  // Schema version dispatch: if nesterov is now absent (and dampening absent
+  // = 0), the receipt should declare "0.6.0" instead of "0.7.0". But this
+  // is a BAD fixture — the mutation creates structural inconsistency, so
+  // schema_version stays at the emit-time "0.7.0" (which v0.7.0 schema
+  // accepts since nesterov is now absent = default false).
+  // No schema_version change needed (the original step 1 was emitted at
+  // "0.7.0"; classical-with-no-flags also validates against v0.7.0 since
+  // v0.7.0 is a superset of v0.6.0).
+
+  writeMultiStepBadFixture(
+    "momentum-multi-step.bad-nesterov-flag-inconstancy.jsonl",
+    "nesterov-flag-inconstancy",
+    receipts,
+    {
+      kind: "drop_nesterov_flag_at_step_1_while_step_0_declared_nesterov_true",
+      field_path: `receipts[1].optimizer_config.nesterov`,
+      original_step_1_nesterov: originalNesterov,
+      mutated_step_1_nesterov: "absent (treated as false)",
+      explanation:
+        `Receipts[0] declares nesterov=true; receipts[1] drops the nesterov flag (defaults to ` +
+        `false = classical). Rule 26 catches the inconstancy: nesterov is in sgd_momentum's ` +
+        `constancy key list (set up in v0.9.2 anticipating v0.9.3). A training run cannot ` +
+        `switch optimizer variants mid-stream — Sutskever 2013 / PyTorch convention assumes ` +
+        `consistent optimizer config across steps (LR is the only legitimately-scheduled hyperparameter).`,
+    },
+    26,
+    "Multi-step optimizer-config inconstancy — receipts[1].optimizer_config.nesterov differs from receipts[0] (dropped from true → absent/false).",
+  )
+}
+
+console.log(`\n--- momentum adversarial plate complete (v0.9.3: 9 bad fixtures = 6 v0.9.2 + 3 v0.9.3 new + 1 v0.9.2 renamed) ---`)

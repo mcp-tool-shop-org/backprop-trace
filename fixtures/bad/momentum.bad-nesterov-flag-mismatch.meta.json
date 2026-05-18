@@ -1,0 +1,17 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "momentum.bad-nesterov-flag-mismatch.meta",
+  "describes": "fixtures/bad/momentum.bad-nesterov-flag-mismatch.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.sgd-momentum.golden.jsonl. v0.9.2 classical PyTorch-style SGD momentum adversarial plate — each fixture surfaces a distinct attack class with a deterministic mutation. v0.9.2 ships CLASSICAL ONLY — Nesterov + dampening RESERVED for v0.9.3, SGD coupled L2 deferred to v0.10.",
+  "mutation": {
+    "kind": "mutate_update_to_nesterov_lookahead_form_while_declaring_classical",
+    "field_path": "updates[0].update",
+    "parameter_id": "w_x1_h1",
+    "original_update_classical": -0.00000438567734,
+    "mutated_update_nesterov_lookahead": -0.000008332786946,
+    "explanation": "Receipt declares optimizer_config.nesterov absent (= false; classical PyTorch-style); stored update matches the Nesterov look-ahead form lr * (gradient + mu * buffer_after). v0.9.3 Rule 21b (\"effective gradient direction\") catches this classical-vs-Nesterov confusion bug: declared classical, emitted Nesterov form. This fixture was named momentum.bad-formula-mismatch in v0.9.2 (with scope-agnostic \"unrecognized variant\" framing because Nesterov wasn't recognized yet); renamed and reframed in v0.9.3 now that Nesterov is a first-class branch. Same byte mutation; the v0.9.2 generator script's scope-agnostic phrasing was explicitly forward-compat-authored to support this rename."
+  },
+  "reconciliation_check_targeted_first": "Rule 21: Classical-vs-Nesterov confusion — receipt declares nesterov=false (or absent) but stored update matches the Nesterov look-ahead form lr * (gradient + mu * buffer_after) instead of classical lr * buffer_after. Rule 21b fires.",
+  "purpose": "v0.9.2 momentum anti-circularity fixture (kind: 'nesterov-flag-mismatch'). Pressure-tests that the named rule fires BEFORE the reconciler consults fixture_status metadata.",
+  "v0_9_2_trust_framing": "Rule 21 (classical PyTorch-style SGD momentum) is a STRUCTURAL CONSISTENCY check, NOT a producer-authenticity check. An attacker who controls every byte of the sidecar and recomputes a consistent (g, buffer, update) triple passes Rule 21 trivially — analogous to Rule 17's bundle-integrity caveat, Rules 22-24's Adam caveat, and the Fang et al. 2023 EuroS&P spoofing class against Proof-of-Learning (arXiv:2208.03567)."
+}

@@ -272,14 +272,34 @@ const FILENAME_KIND_TO_RULE: Record<string, number> = {
   "coefficient-omitted": 20,
   "bad-coefficient-swapped": 21,
   "coefficient-swapped": 21,
-  "bad-formula-mismatch": 21,
-  "formula-mismatch": 21,
   "bad-stale-buffer": 25,
   "stale-buffer": 25,
   "bad-buffer-drop": 20,
   "buffer-drop": 20,
   "bad-engine-recompute-disagrees-momentum": 14,
   "engine-recompute-disagrees-momentum": 14,
+  // v0.9.3 Nesterov + dampening adversarial plate. Rule 21 split into
+  // sub-checks 21a (buffer recurrence), 21b (effective gradient
+  // direction), 21c (parameter update) — all fire as Rule 21 in the
+  // doctrine map.
+  //   - nesterov-formula-mismatch  → Rule 21 (declares nesterov=true,
+  //     emits classical-form update; 21b fires)
+  //   - nesterov-flag-mismatch     → Rule 21 (declares nesterov=false,
+  //     emits Nesterov-form update; 21b fires). RENAMED from v0.9.2's
+  //     bad-formula-mismatch — same mutation, more precise framing now
+  //     that Nesterov is a recognized branch.
+  //   - dampening-ignored          → Rule 21 (declares dampening=0.1,
+  //     emits recurrence without (1-tau) factor; 21a fires)
+  //   - nesterov-flag-inconstancy  → Rule 26 (nesterov drifts across
+  //     bundle; multi-step)
+  "bad-nesterov-formula-mismatch": 21,
+  "nesterov-formula-mismatch": 21,
+  "bad-nesterov-flag-mismatch": 21,
+  "nesterov-flag-mismatch": 21,
+  "bad-dampening-ignored": 21,
+  "dampening-ignored": 21,
+  "bad-nesterov-flag-inconstancy": 26,
+  "nesterov-flag-inconstancy": 26,
 };
 
 /**

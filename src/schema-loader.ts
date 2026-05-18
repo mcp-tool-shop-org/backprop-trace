@@ -68,11 +68,22 @@ import { dirname, resolve } from "node:path";
  *     on required [m, v]; widening to ["sgd","adam","adamw","sgd_momentum"]
  *     plus new MomentumState shape {buffer} could not happen in-place).
  *     SGD/Adam/AdamW receipts stay at v0.4.0/v0.5.0 byte-equal;
- *     sgd_momentum receipts declare "0.6.0". Rule 21 (classical
+ *     classical sgd_momentum receipts declare "0.6.0". Rule 21 (classical
  *     PyTorch-style recurrence + parameter update) fires on this version.
  *     Reserves nesterov: const false + dampening: const 0 for v0.9.3
  *     forward-compat. Rejects weight_decay on sgd_momentum at schema
  *     level (SGD coupled L2 deferred to v0.10).
+ *   - "0.7.0" — v0.9.3 Nesterov + dampening extension for sgd_momentum
+ *     (FORCED bump: v0.6.0 reserved nesterov: const false and dampening:
+ *     const 0; widening these consts to boolean and number-in-[0,1) is
+ *     schema-breaking for v0.6.0-pinned validators). v0.6.0 classical
+ *     sgd_momentum receipts stay byte-equal; v0.9.3 receipts with
+ *     nesterov: true OR dampening != 0 declare "0.7.0". Rule 21 splits
+ *     into sub-checks 21a (buffer recurrence widened for dampening),
+ *     21b (effective gradient direction — Nesterov vs classical), 21c
+ *     (parameter update). PyTorch's torch.optim.SGD.__init__ raises
+ *     ValueError on nesterov=true && dampening>0; v0.7.0 mirrors this
+ *     rejection at schema (allOf if/then) + engine boundary.
  *
  * Receipts that say `schema_version: "0.1.0"` continue to validate against
  * the v0.1.0 schema for byte-equal preservation. v0.3-onward generalized
@@ -81,10 +92,11 @@ import { dirname, resolve } from "node:path";
  * receipts (output of `bp import pytorch`) declare "0.4.0". v0.9.1 Adam +
  * AdamW receipts declare "0.5.0" (SGD-only observer-mode receipts stay
  * at "0.4.0" for byte-equal preservation). v0.9.2 classical PyTorch-style
- * sgd_momentum receipts declare "0.6.0" (SGD-only at "0.4.0", Adam/AdamW
- * at "0.5.0", all byte-equal preserved).
+ * sgd_momentum receipts declare "0.6.0". v0.9.3 Nesterov OR dampening
+ * sgd_momentum receipts declare "0.7.0" (classical sgd_momentum stays at
+ * "0.6.0"; SGD at "0.4.0"; Adam/AdamW at "0.5.0"; all byte-equal preserved).
  */
-export const SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0"] as const;
+export const SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0"] as const;
 
 /**
  * Union of currently-shipped receipt schema versions. Use this for any
@@ -241,10 +253,18 @@ export function getInputSchema(
  *     weight_decay rejected for sgd_momentum at schema level — SGD coupled
  *     L2 deferred to v0.10; MomentumState shape {buffer} as state_before/
  *     state_after on the Update.optimizer). Existing v0.4.0 Adam/AdamW
- *     sidecars stay byte-equal; sgd_momentum sidecars declare format:
- *     "framework-trace.v0.5.0".
+ *     sidecars stay byte-equal; classical sgd_momentum sidecars declare
+ *     format: "framework-trace.v0.5.0".
+ *   - "0.6.0" — v0.9.3 Nesterov + dampening additive for sgd_momentum
+ *     (FORCED bump: v0.5.0's reserved consts widen — nesterov from
+ *     const false to boolean, dampening from const 0 to number in
+ *     [0, 1)). PyTorch's torch.optim.SGD.__init__ rejection of
+ *     nesterov=true && dampening>0 mirrored at schema via allOf
+ *     if/then clause + engine boundary. v0.5.0 classical sgd_momentum
+ *     sidecars stay byte-equal; sidecars with nesterov=true OR
+ *     dampening>0 declare format: "framework-trace.v0.6.0".
  */
-export const FRAMEWORK_TRACE_SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0"] as const;
+export const FRAMEWORK_TRACE_SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0"] as const;
 
 /**
  * Union of currently-shipped framework-trace sidecar schema versions.

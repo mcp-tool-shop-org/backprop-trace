@@ -51,6 +51,48 @@ This matches the v0.8 precedent and CONTRIBUTING.md's "additive evolution
 is allowed within the same schema_version if existing receipts remain
 valid" policy.
 
+### v0.9.3 FORCED bump to receipt.v0.7.0 + framework-trace.v0.6.0 (Nesterov + dampening)
+
+**v0.9.3 forces the bump to `receipt.v0.7.0` + `framework-trace.v0.6.0`.**
+v0.9.2 reserved `nesterov: { const: false }` and `dampening: { const: 0 }`
+as schema slots; widening these consts to `boolean` and `number ∈ [0, 1)`
+is a schema-breaking change for v0.6.0-pinned validators (the new values
+would fail `const` validation). Same doctrine as v0.9.1/v0.9.2's enum-
+widening forced bumps.
+
+The v0.9.3 slice adds:
+- `OptimizerConfig.nesterov` widens `{ const: false }` → `{ type: "boolean" }`
+- `OptimizerConfig.dampening` widens `{ const: 0 }` → `{ type: "number",
+  minimum: 0, exclusiveMaximum: 1 }`
+- New `allOf` clause mirroring PyTorch's
+  `torch.optim.SGD.__init__` `ValueError("Nesterov momentum requires
+  a momentum and zero dampening")`: when `nesterov === true`,
+  `dampening` MUST be absent or `0`. The `if`-clause requires
+  `nesterov` to be PRESENT (not just `properties` check) so that
+  classical-and-dampened receipts (`nesterov` absent, `dampening > 0`)
+  don't trigger the `then`-clause vacuously.
+
+v0.6.0 classical sgd_momentum receipts continue to declare
+`schema_version: "0.6.0"` and validate byte-identical (engine emits
+`nesterov` only when `true`, `dampening` only when `> 0`, so classical
+receipts have no new fields). Receipts with `nesterov: true` OR
+`dampening > 0` declare `schema_version: "0.7.0"`. `package.json`
+`exports` adds `./schema/receipt-0.7.0` + `./schema/framework-trace-0.6.0`
+subpath exports.
+
+**Live-helper sign-convention pin** (forward-looking for v0.10):
+`MomentumState.buffer` stores the **descent-direction** velocity.
+PyTorch's `state["momentum_buffer"]` stores the **ascent-direction**
+velocity (since PyTorch's `param.grad` is in ascent direction). Live-
+helper extractors at v0.10 MUST sign-flip on read:
+`buffer_descent = -state["momentum_buffer"]`. This keeps the Nesterov
+formula sign-symmetric: in our convention `update = lr * (gradient_descent
++ mu * buffer_descent)`; in PyTorch `update = -lr * (gradient_ascent +
+mu * buffer_ascent)`. v0.9.3 fixtures are engine-authored so the
+descent-direction buffer is correct by construction; the sign-flip is
+a v0.10 live-helper concern. Documented in `MomentumState` docstring
+to prevent live-helper authors from getting it wrong.
+
 ### v0.9.2 FORCED bump to receipt.v0.6.0 + framework-trace.v0.5.0 (classical PyTorch-style SGD momentum)
 
 **v0.9.2 forces the bump to `receipt.v0.6.0` + `framework-trace.v0.5.0`** for

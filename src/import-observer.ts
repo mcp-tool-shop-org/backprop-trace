@@ -71,6 +71,7 @@ export type FrameworkTraceSidecar = {
     | "framework-trace.v0.3.0"
     | "framework-trace.v0.4.0"
     | "framework-trace.v0.5.0"
+    | "framework-trace.v0.6.0"
   source_framework: SourceFramework
   topology: Topology
   learning_rate: number
@@ -111,8 +112,10 @@ export type FrameworkTraceSidecar = {
     weight_decay?: number
     t?: number
     momentum?: number
-    nesterov?: false
-    dampening?: 0
+    /** v0.9.3 — widened from const false to boolean (PyTorch torch.optim.SGD nesterov). */
+    nesterov?: boolean
+    /** v0.9.3 — widened from const 0 to number in [0, 1) (PyTorch dampening tau). */
+    dampening?: number
   }
   numeric_policy?: GeneralInput["numeric_policy"]
   bias_policy?: GeneralInput["bias_policy"]
@@ -480,17 +483,27 @@ export function buildObserverReceiptFromSidecar(
   // v0.9.1 — schema_version "0.5.0" for Adam/AdamW receipts (forced bump),
   // "0.4.0" for SGD observer-mode receipts (byte-equal preservation with
   // v0.6/v0.7/v0.8/v0.9.0 SGD observer-mode receipts).
-  // v0.9.2 — schema_version "0.6.0" for sgd_momentum receipts (forced bump).
+  // v0.9.2 — schema_version "0.6.0" for classical sgd_momentum receipts.
+  // v0.9.3 — schema_version "0.7.0" for sgd_momentum receipts with
+  // nesterov=true OR dampening>0 (classical sgd_momentum stays at "0.6.0"
+  // for byte-equal preservation).
   const isAdamFamilyImport =
     sidecar.optimizer !== undefined &&
     (sidecar.optimizer.name === "adam" || sidecar.optimizer.name === "adamw")
   const isSgdMomentumImport =
     sidecar.optimizer !== undefined && sidecar.optimizer.name === "sgd_momentum"
-  const receiptSchemaVersion: "0.4.0" | "0.5.0" | "0.6.0" = isSgdMomentumImport
-    ? "0.6.0"
-    : isAdamFamilyImport
-      ? "0.5.0"
-      : "0.4.0"
+  const usesNesterovOrDampening =
+    isSgdMomentumImport &&
+    sidecar.optimizer !== undefined &&
+    ((sidecar.optimizer.nesterov === true) ||
+      (sidecar.optimizer.dampening !== undefined && sidecar.optimizer.dampening !== 0))
+  const receiptSchemaVersion: "0.4.0" | "0.5.0" | "0.6.0" | "0.7.0" = usesNesterovOrDampening
+    ? "0.7.0"
+    : isSgdMomentumImport
+      ? "0.6.0"
+      : isAdamFamilyImport
+        ? "0.5.0"
+        : "0.4.0"
 
   const receipt: GeneralReceipt = {
     schema_version: receiptSchemaVersion,
@@ -538,6 +551,10 @@ export function buildObserverReceiptFromSidecar(
               : {}),
             ...(sidecar.optimizer.momentum !== undefined
               ? { momentum: sidecar.optimizer.momentum }
+              : {}),
+            ...(sidecar.optimizer.nesterov === true ? { nesterov: true } : {}),
+            ...(typeof sidecar.optimizer.dampening === "number" && sidecar.optimizer.dampening !== 0
+              ? { dampening: sidecar.optimizer.dampening }
               : {}),
           } satisfies OptimizerConfig,
         }
@@ -733,22 +750,24 @@ export function buildObserverReceiptStreamFromSidecar(
           `the single-step subcommand (drop 'multi' from the CLI invocation).`,
       )
     }
-    // v0.9.2: multi-step ingestion accepts framework-trace.v0.2.0 (unbatched
+    // v0.9.3: multi-step ingestion accepts framework-trace.v0.2.0 (unbatched
     // SGD), v0.3.0 (batched or unbatched SGD), v0.4.0 (Adam/AdamW + optimizer
-    // state), AND v0.5.0 (sgd_momentum + classical PyTorch-style buffer
-    // recurrence). v0.1.0 single-step sidecars are still rejected — they
-    // lack trace_id/step_index and must use the single-step subcommand.
+    // state), v0.5.0 (classical sgd_momentum), AND v0.6.0 (sgd_momentum with
+    // Nesterov / dampening — PyTorch-style SGD momentum widened beyond
+    // classical). v0.1.0 single-step sidecars are still rejected — they lack
+    // trace_id/step_index and must use the single-step subcommand.
     if (
       validation.schemaVersion !== "0.2.0" &&
       validation.schemaVersion !== "0.3.0" &&
       validation.schemaVersion !== "0.4.0" &&
-      validation.schemaVersion !== "0.5.0"
+      validation.schemaVersion !== "0.5.0" &&
+      validation.schemaVersion !== "0.6.0"
     ) {
       throw new Error(
         `${callerLabel}: sidecar line ${i + 1} declares format='framework-trace.v${validation.schemaVersion}' but multi-step ` +
           `ingestion requires 'framework-trace.v0.2.0', 'framework-trace.v0.3.0', ` +
-          `'framework-trace.v0.4.0', or 'framework-trace.v0.5.0'. Use the single-step subcommand ` +
-          `for v0.1.0 sidecars.`,
+          `'framework-trace.v0.4.0', 'framework-trace.v0.5.0', or 'framework-trace.v0.6.0'. ` +
+          `Use the single-step subcommand for v0.1.0 sidecars.`,
       )
     }
     sidecars.push(validation.sidecar as FrameworkTraceSidecarV2)
@@ -1035,18 +1054,28 @@ export function buildObserverReceiptStreamFromSidecar(
       : "engine_recompute_disagreed"
 
     // v0.9.1 — schema_version "0.5.0" when sidecar declares Adam/AdamW.
-    // v0.9.2 — schema_version "0.6.0" when sidecar declares sgd_momentum.
+    // v0.9.2 — schema_version "0.6.0" when sidecar declares classical
+    // sgd_momentum.
+    // v0.9.3 — schema_version "0.7.0" when sidecar declares sgd_momentum
+    // with nesterov=true OR dampening>0.
     // Otherwise stays "0.4.0" (byte-equal preservation for SGD multi-step).
     const isAdamFamilyRecord =
       sidecar.optimizer !== undefined &&
       (sidecar.optimizer.name === "adam" || sidecar.optimizer.name === "adamw")
     const isSgdMomentumRecord =
       sidecar.optimizer !== undefined && sidecar.optimizer.name === "sgd_momentum"
-    const recordSchemaVersion: "0.4.0" | "0.5.0" | "0.6.0" = isSgdMomentumRecord
-      ? "0.6.0"
-      : isAdamFamilyRecord
-        ? "0.5.0"
-        : "0.4.0"
+    const recordUsesNesterovOrDampening =
+      isSgdMomentumRecord &&
+      sidecar.optimizer !== undefined &&
+      ((sidecar.optimizer.nesterov === true) ||
+        (sidecar.optimizer.dampening !== undefined && sidecar.optimizer.dampening !== 0))
+    const recordSchemaVersion: "0.4.0" | "0.5.0" | "0.6.0" | "0.7.0" = recordUsesNesterovOrDampening
+      ? "0.7.0"
+      : isSgdMomentumRecord
+        ? "0.6.0"
+        : isAdamFamilyRecord
+          ? "0.5.0"
+          : "0.4.0"
     const receipt: GeneralReceipt = {
       schema_version: recordSchemaVersion,
       fixture: `${fixtureLabelBase}-step-${i}`,
@@ -1095,6 +1124,10 @@ export function buildObserverReceiptStreamFromSidecar(
                 : {}),
               ...(sidecar.optimizer.momentum !== undefined
                 ? { momentum: sidecar.optimizer.momentum }
+                : {}),
+              ...(sidecar.optimizer.nesterov === true ? { nesterov: true } : {}),
+              ...(typeof sidecar.optimizer.dampening === "number" && sidecar.optimizer.dampening !== 0
+                ? { dampening: sidecar.optimizer.dampening }
                 : {}),
             } satisfies OptimizerConfig,
           }

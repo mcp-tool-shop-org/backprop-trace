@@ -307,3 +307,274 @@ function zeroMomentumState(params: Record<string, number>): Record<string, Momen
   console.log(`  allDifferentialsPassed: ${result.allDifferentialsPassed}`)
   console.log(`  bundleRootDigest: ${result.bundleRootDigest}`)
 }
+
+// ===========================================================================
+// v0.9.3 — single-step Nesterov sgd_momentum
+// ===========================================================================
+{
+  const optimizer_config: OptimizerConfig = {
+    name: "sgd_momentum",
+    learning_rate: LEARNING_RATE,
+    momentum: MOMENTUM,
+    nesterov: true,
+  }
+  const engineInput: GeneralInput = {
+    topology: MOMENTUM_TOPOLOGY,
+    learning_rate: LEARNING_RATE,
+    inputs: INPUTS,
+    targets: TARGETS,
+    parameters_before: INITIAL_PARAMETERS,
+    numeric_policy: NUMERIC_POLICY,
+    bias_policy: BIAS_POLICY,
+    optimizer_config,
+    optimizer_state_before: zeroMomentumState(INITIAL_PARAMETERS),
+    fixture: "pytorch-sgd-momentum-nesterov-engine-step",
+    metadata: {
+      source:
+        "src/import-pytorch.ts (PyTorch Nesterov SGD momentum single-step observer-mode; " +
+        "Sutskever et al. 2013 ICML §2 lookahead form; PyTorch torch.optim.SGD nesterov=True default for vision/timm)",
+      gradient_convention: "descent_direction",
+    },
+  }
+  const er = runGeneralStep(engineInput)
+
+  const sidecar = {
+    format: "framework-trace.v0.6.0",
+    source_framework: {
+      name: "pytorch",
+      version: PINNED_PYTORCH_VERSION,
+      information_uri: "https://pytorch.org/docs/stable/generated/torch.optim.SGD.html",
+      extractor: {
+        name: "bp-import-pytorch-sgd-momentum-nesterov-helper",
+        version: "0.9.3",
+      },
+    },
+    topology: MOMENTUM_TOPOLOGY,
+    learning_rate: LEARNING_RATE,
+    optimizer: {
+      name: "sgd_momentum" as const,
+      learning_rate: LEARNING_RATE,
+      momentum: MOMENTUM,
+      nesterov: true,
+    },
+    numeric_policy: NUMERIC_POLICY,
+    bias_policy: BIAS_POLICY,
+    inputs: INPUTS,
+    targets: TARGETS,
+    parameters_before: er.parameters_before,
+    forward: er.forward,
+    loss: er.loss,
+    backward: er.backward,
+    updates: er.updates,
+    parameters_after: er.parameters_after,
+    post_update_forward: {
+      status: er.post_update_forward.status,
+      ...er.post_update_forward.units,
+    },
+    post_update_loss: er.post_update_loss,
+  }
+  const sidecarBytes = JSON.stringify(sidecar) + "\n"
+  writeFileSync("fixtures/external/pytorch.sgd-momentum.nesterov.sidecar.jsonl", sidecarBytes)
+  console.log(`wrote fixtures/external/pytorch.sgd-momentum.nesterov.sidecar.jsonl`)
+
+  const imported = importPytorchSidecar(sidecarBytes, {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: "pytorch-sgd-momentum-nesterov-imported",
+  })
+  writeFileSync("fixtures/external/pytorch.sgd-momentum.nesterov.golden.jsonl", imported.emittedBytes)
+  console.log(`wrote fixtures/external/pytorch.sgd-momentum.nesterov.golden.jsonl`)
+  console.log(`  differentialPassed: ${imported.differentialPassed}`)
+  console.log(`  schema_version: ${imported.receipt.schema_version} (expected 0.7.0)`)
+}
+
+// ===========================================================================
+// v0.9.3 — single-step sgd_momentum with dampening
+// ===========================================================================
+{
+  const DAMPENING = 0.1
+  const optimizer_config: OptimizerConfig = {
+    name: "sgd_momentum",
+    learning_rate: LEARNING_RATE,
+    momentum: MOMENTUM,
+    dampening: DAMPENING,
+  }
+  const engineInput: GeneralInput = {
+    topology: MOMENTUM_TOPOLOGY,
+    learning_rate: LEARNING_RATE,
+    inputs: INPUTS,
+    targets: TARGETS,
+    parameters_before: INITIAL_PARAMETERS,
+    numeric_policy: NUMERIC_POLICY,
+    bias_policy: BIAS_POLICY,
+    optimizer_config,
+    optimizer_state_before: zeroMomentumState(INITIAL_PARAMETERS),
+    fixture: "pytorch-sgd-momentum-dampening-engine-step",
+    metadata: {
+      source:
+        "src/import-pytorch.ts (PyTorch SGD momentum with dampening single-step observer-mode; " +
+        "recurrence buffer_t = mu * buffer_{t-1} + (1 - tau) * gradient; PyTorch torch.optim.SGD dampening parameter)",
+      gradient_convention: "descent_direction",
+    },
+  }
+  const er = runGeneralStep(engineInput)
+
+  const sidecar = {
+    format: "framework-trace.v0.6.0",
+    source_framework: {
+      name: "pytorch",
+      version: PINNED_PYTORCH_VERSION,
+      information_uri: "https://pytorch.org/docs/stable/generated/torch.optim.SGD.html",
+      extractor: {
+        name: "bp-import-pytorch-sgd-momentum-dampening-helper",
+        version: "0.9.3",
+      },
+    },
+    topology: MOMENTUM_TOPOLOGY,
+    learning_rate: LEARNING_RATE,
+    optimizer: {
+      name: "sgd_momentum" as const,
+      learning_rate: LEARNING_RATE,
+      momentum: MOMENTUM,
+      dampening: DAMPENING,
+    },
+    numeric_policy: NUMERIC_POLICY,
+    bias_policy: BIAS_POLICY,
+    inputs: INPUTS,
+    targets: TARGETS,
+    parameters_before: er.parameters_before,
+    forward: er.forward,
+    loss: er.loss,
+    backward: er.backward,
+    updates: er.updates,
+    parameters_after: er.parameters_after,
+    post_update_forward: {
+      status: er.post_update_forward.status,
+      ...er.post_update_forward.units,
+    },
+    post_update_loss: er.post_update_loss,
+  }
+  const sidecarBytes = JSON.stringify(sidecar) + "\n"
+  writeFileSync("fixtures/external/pytorch.sgd-momentum.dampening.sidecar.jsonl", sidecarBytes)
+  console.log(`wrote fixtures/external/pytorch.sgd-momentum.dampening.sidecar.jsonl`)
+
+  const imported = importPytorchSidecar(sidecarBytes, {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: "pytorch-sgd-momentum-dampening-imported",
+  })
+  writeFileSync("fixtures/external/pytorch.sgd-momentum.dampening.golden.jsonl", imported.emittedBytes)
+  console.log(`wrote fixtures/external/pytorch.sgd-momentum.dampening.golden.jsonl`)
+  console.log(`  differentialPassed: ${imported.differentialPassed}`)
+  console.log(`  schema_version: ${imported.receipt.schema_version} (expected 0.7.0)`)
+}
+
+// ===========================================================================
+// v0.9.3 — multi-step Nesterov sgd_momentum (3 steps)
+//   exercises Rule 25 buffer chain + Rule 26 constancy (nesterov flag stays true across steps)
+// ===========================================================================
+{
+  const STEP_COUNT = 3
+  const PINNED_TRACE_ID_NEST = "d1e2f30405061728394a5b6c7d8e9f02"
+  const engineReceipts: GeneralReceipt[] = []
+  let parameters_before: Record<string, number> = { ...INITIAL_PARAMETERS }
+  let state_before: Record<string, MomentumState> = zeroMomentumState(INITIAL_PARAMETERS)
+  for (let i = 0; i < STEP_COUNT; i += 1) {
+    const optimizer_config: OptimizerConfig = {
+      name: "sgd_momentum",
+      learning_rate: LEARNING_RATE,
+      momentum: MOMENTUM,
+      nesterov: true,
+    }
+    const input: GeneralInput = {
+      topology: MOMENTUM_TOPOLOGY,
+      learning_rate: LEARNING_RATE,
+      inputs: INPUTS,
+      targets: TARGETS,
+      parameters_before,
+      numeric_policy: NUMERIC_POLICY,
+      bias_policy: BIAS_POLICY,
+      optimizer_config,
+      optimizer_state_before: state_before,
+      trace_id: PINNED_TRACE_ID_NEST,
+      step_index: i,
+      fixture: `pytorch-sgd-momentum-nesterov-multi-step-engine-step-${i}`,
+      metadata: {
+        source:
+          "src/import-pytorch.ts (PyTorch Nesterov SGD momentum multi-step observer-mode; " +
+          "Sutskever et al. 2013 ICML §2 lookahead form)",
+        gradient_convention: "descent_direction",
+      },
+    }
+    const r = runGeneralStep(input)
+    engineReceipts.push(r)
+    parameters_before = { ...r.parameters_after }
+    const nextState: Record<string, MomentumState> = {}
+    for (const u of r.updates) {
+      const sa = u.optimizer.state_after
+      if (sa && typeof (sa as MomentumState).buffer === "number") {
+        nextState[u.parameter_id] = { buffer: (sa as MomentumState).buffer }
+      }
+    }
+    state_before = nextState
+  }
+
+  const sidecarRecords = engineReceipts.map((er, i) => ({
+    format: "framework-trace.v0.6.0",
+    source_framework: {
+      name: "pytorch",
+      version: PINNED_PYTORCH_VERSION,
+      information_uri: "https://pytorch.org/",
+      extractor: {
+        name: "bp-import-pytorch-sgd-momentum-nesterov-multi-step-helper",
+        version: "0.9.3",
+      },
+    },
+    trace_id: PINNED_TRACE_ID_NEST,
+    step_index: i,
+    topology: MOMENTUM_TOPOLOGY,
+    learning_rate: LEARNING_RATE,
+    optimizer: {
+      name: "sgd_momentum" as const,
+      learning_rate: LEARNING_RATE,
+      momentum: MOMENTUM,
+      nesterov: true,
+    },
+    numeric_policy: NUMERIC_POLICY,
+    bias_policy: BIAS_POLICY,
+    inputs: INPUTS,
+    targets: TARGETS,
+    parameters_before: er.parameters_before,
+    forward: er.forward,
+    loss: er.loss,
+    backward: er.backward,
+    updates: er.updates,
+    parameters_after: er.parameters_after,
+    post_update_forward: {
+      status: er.post_update_forward.status,
+      ...er.post_update_forward.units,
+    },
+    post_update_loss: er.post_update_loss,
+  }))
+
+  const sidecarBytes = sidecarRecords.map((r) => JSON.stringify(r)).join("\n") + "\n"
+  writeFileSync(
+    "fixtures/external/pytorch.sgd-momentum.nesterov.multi-step.sidecar.jsonl",
+    sidecarBytes,
+  )
+  console.log(
+    `wrote fixtures/external/pytorch.sgd-momentum.nesterov.multi-step.sidecar.jsonl (${STEP_COUNT} steps, trace_id=${PINNED_TRACE_ID_NEST})`,
+  )
+
+  const result = importPytorchSidecarStream(sidecarBytes, {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: "pytorch-sgd-momentum-nesterov-multi-step-imported",
+  })
+  writeFileSync(
+    "fixtures/external/pytorch.sgd-momentum.nesterov.multi-step.golden.jsonl",
+    result.emittedBytes,
+  )
+  console.log(
+    `wrote fixtures/external/pytorch.sgd-momentum.nesterov.multi-step.golden.jsonl (${result.steps.length} receipts)`,
+  )
+  console.log(`  allDifferentialsPassed: ${result.allDifferentialsPassed}`)
+  console.log(`  bundleRootDigest: ${result.bundleRootDigest}`)
+}

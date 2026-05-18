@@ -186,7 +186,7 @@ test("Rule 21b (parameter update): update == lr * buffer_after (descent directio
   }
 })
 
-test("runGeneralStep rejects sgd_momentum with nesterov: true at the boundary (deferred to v0.9.3)", () => {
+test("runGeneralStep ACCEPTS sgd_momentum with nesterov: true in v0.9.3 (was deferred in v0.9.2)", () => {
   const input: GeneralInput = {
     topology: MAZUR_TOPOLOGY,
     learning_rate: 0.01,
@@ -199,15 +199,17 @@ test("runGeneralStep rejects sgd_momentum with nesterov: true at the boundary (d
       name: "sgd_momentum",
       learning_rate: 0.01,
       momentum: 0.9,
-      // @ts-expect-error: nesterov: true is rejected at runtime in v0.9.2
       nesterov: true,
     },
     optimizer_state_before: zeroMomentumState(),
   }
-  assert.throws(() => runGeneralStep(input), /nesterov === true is NOT supported in v0.9.2/i)
+  // Should NOT throw — v0.9.3 widens nesterov: const false → boolean.
+  const r = runGeneralStep(input)
+  assert.equal(r.schema_version, "0.7.0", "Nesterov receipt declares schema_version 0.7.0")
+  assert.equal(r.optimizer_config!.nesterov, true, "optimizer_config.nesterov emitted as true")
 })
 
-test("runGeneralStep rejects sgd_momentum with dampening !== 0 at the boundary (deferred to v0.9.3)", () => {
+test("runGeneralStep ACCEPTS sgd_momentum with dampening 0.1 in v0.9.3 (was deferred in v0.9.2)", () => {
   const input: GeneralInput = {
     topology: MAZUR_TOPOLOGY,
     learning_rate: 0.01,
@@ -220,12 +222,64 @@ test("runGeneralStep rejects sgd_momentum with dampening !== 0 at the boundary (
       name: "sgd_momentum",
       learning_rate: 0.01,
       momentum: 0.9,
-      // @ts-expect-error: dampening !== 0 is rejected at runtime in v0.9.2
       dampening: 0.1,
     },
     optimizer_state_before: zeroMomentumState(),
   }
-  assert.throws(() => runGeneralStep(input), /dampening !== 0 is NOT supported in v0.9.2/i)
+  // Should NOT throw — v0.9.3 widens dampening: const 0 → number in [0, 1).
+  const r = runGeneralStep(input)
+  assert.equal(r.schema_version, "0.7.0", "dampening receipt declares schema_version 0.7.0")
+  assert.equal(r.optimizer_config!.dampening, 0.1, "optimizer_config.dampening emitted as 0.1")
+})
+
+test("runGeneralStep REJECTS sgd_momentum with nesterov: true + dampening > 0 in v0.9.3 (PyTorch torch.optim.SGD ValueError mirror)", () => {
+  const input: GeneralInput = {
+    topology: MAZUR_TOPOLOGY,
+    learning_rate: 0.01,
+    inputs: MINIMAL_INPUTS,
+    targets: MINIMAL_TARGETS,
+    parameters_before: MINIMAL_PARAMETERS,
+    numeric_policy: MINIMAL_NUMERIC_POLICY,
+    bias_policy: MINIMAL_BIAS_POLICY,
+    optimizer_config: {
+      name: "sgd_momentum",
+      learning_rate: 0.01,
+      momentum: 0.9,
+      nesterov: true,
+      dampening: 0.1,
+    },
+    optimizer_state_before: zeroMomentumState(),
+  }
+  assert.throws(
+    () => runGeneralStep(input),
+    /nesterov === true requires optimizer_config\.dampening absent or === 0/i,
+    "PyTorch's torch.optim.SGD.__init__ ValueError is mirrored: nesterov=true + dampening>0 rejected",
+  )
+})
+
+test("runGeneralStep ACCEPTS sgd_momentum with nesterov: true + dampening: 0 (explicit zero is fine)", () => {
+  const input: GeneralInput = {
+    topology: MAZUR_TOPOLOGY,
+    learning_rate: 0.01,
+    inputs: MINIMAL_INPUTS,
+    targets: MINIMAL_TARGETS,
+    parameters_before: MINIMAL_PARAMETERS,
+    numeric_policy: MINIMAL_NUMERIC_POLICY,
+    bias_policy: MINIMAL_BIAS_POLICY,
+    optimizer_config: {
+      name: "sgd_momentum",
+      learning_rate: 0.01,
+      momentum: 0.9,
+      nesterov: true,
+      dampening: 0, // explicit zero — PyTorch accepts; engine accepts
+    },
+    optimizer_state_before: zeroMomentumState(),
+  }
+  const r = runGeneralStep(input)
+  assert.equal(r.schema_version, "0.7.0")
+  assert.equal(r.optimizer_config!.nesterov, true)
+  // dampening: 0 is the default — NOT emitted in receipt to preserve byte-equality
+  assert.equal(r.optimizer_config!.dampening, undefined, "dampening: 0 omitted (equals default)")
 })
 
 test("runGeneralStep rejects sgd_momentum with weight_decay at the boundary (deferred to v0.10)", () => {

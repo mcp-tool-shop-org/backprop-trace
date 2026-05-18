@@ -3005,12 +3005,19 @@ function checkRule14EngineRecomputeDifferential(
             stateBefore[u.parameter_id] = { buffer: sb.buffer }
           }
         }
+        // v0.9.3 — forward nesterov + dampening through Rule 14's engine
+        // recompute so the differential check sees the same configuration
+        // the receipt's update was computed under.
         const momentumInput: GeneralInput = {
           ...baseInput,
           optimizer_config: {
             name: "sgd_momentum",
             learning_rate: oc.learning_rate ?? r.learning_rate,
             ...(oc.momentum !== undefined ? { momentum: oc.momentum } : {}),
+            ...(oc.nesterov === true ? { nesterov: true } : {}),
+            ...(typeof oc.dampening === "number" && oc.dampening !== 0
+              ? { dampening: oc.dampening }
+              : {}),
           },
           optimizer_state_before: stateBefore,
         }
@@ -3945,29 +3952,48 @@ function checkRule20OptimizerStateShape(
           `uses mu in (0, 1); typically 0.9.`,
       })
     }
-    // v0.9.2 reserved-for-v0.9.3 fields. Schema enforces const false / const 0;
-    // reconciler defense-in-depth confirms.
-    if (oc.nesterov !== undefined && oc.nesterov !== false) {
+    // v0.9.3 — Nesterov + dampening accepted. Bounds + PyTorch combo check.
+    if (oc.nesterov !== undefined && typeof oc.nesterov !== "boolean") {
       failures.push({
         rule: 20,
         field_path: "optimizer_config.nesterov",
         stored: 0, recomputed: 0, delta: 0, tolerance: 0,
         message:
-          `Rule 20: optimizer_config.nesterov === true is NOT supported in v0.9.2 (got ${String(oc.nesterov)}). ` +
-          `Nesterov accelerated gradient is RESERVED for v0.9.3. v0.9.2 ships classical PyTorch-style SGD ` +
-          `momentum ONLY (nesterov: false or absent). Sutskever et al. 2013 ICML §2 for the lookahead form.`,
+          `Rule 20: optimizer_config.nesterov must be a boolean when present (got ${String(oc.nesterov)}). ` +
+          `v0.9.3 widens nesterov from v0.9.2's const false to boolean; the schema's enum/type clause ` +
+          `should have already rejected this — reconciler defense-in-depth.`,
       })
     }
-    if (oc.dampening !== undefined && oc.dampening !== 0) {
+    if (oc.dampening !== undefined) {
+      if (typeof oc.dampening !== "number" || !Number.isFinite(oc.dampening) || oc.dampening < 0 || oc.dampening >= 1) {
+        failures.push({
+          rule: 20,
+          field_path: "optimizer_config.dampening",
+          stored: typeof oc.dampening === "number" ? oc.dampening : 0,
+          recomputed: 0, delta: 0, tolerance: 0,
+          message:
+            `Rule 20: optimizer_config.dampening must be a finite number in [0, 1) when present ` +
+            `(got ${String(oc.dampening)}). PyTorch's torch.optim.SGD(dampening=tau) recurrence: ` +
+            `buffer_t = momentum * buffer_{t-1} + (1 - tau) * gradient.`,
+        })
+      }
+    }
+    // v0.9.3 NEW: PyTorch's torch.optim.SGD.__init__ raises ValueError on
+    // nesterov=true && dampening>0. Schema mirrors via allOf if/then; this
+    // is defense-in-depth at the reconciler.
+    if (oc.nesterov === true && typeof oc.dampening === "number" && oc.dampening !== 0) {
       failures.push({
         rule: 20,
         field_path: "optimizer_config.dampening",
-        stored: typeof oc.dampening === "number" ? oc.dampening : 0,
-        recomputed: 0, delta: 0, tolerance: 0,
+        stored: oc.dampening,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
         message:
-          `Rule 20: optimizer_config.dampening !== 0 is NOT supported in v0.9.2 (got ${String(oc.dampening)}). ` +
-          `PyTorch's torch.optim.SGD(dampening=tau) recurrence is RESERVED for v0.9.3. v0.9.2 ships ` +
-          `dampening=0 ONLY (recurrence buffer_t = mu * buffer_{t-1} + gradient).`,
+          `Rule 20: optimizer_config.nesterov === true requires optimizer_config.dampening absent or === 0 ` +
+          `(got dampening=${oc.dampening}). PyTorch's torch.optim.SGD.__init__ raises ValueError ` +
+          `("Nesterov momentum requires a momentum and zero dampening") on this exact combination — ` +
+          `Sutskever et al. 2013 ICML §2 Nesterov lookahead derivation assumes an undamped buffer.`,
       })
     }
     // SGD coupled L2 weight decay deferred to v0.10.
@@ -4118,6 +4144,11 @@ function checkRule21SgdMomentumRecurrence(
   if (!oc || oc.name !== "sgd_momentum") return
   if (typeof oc.momentum !== "number") return // Rule 20 already fired
   const mu = oc.momentum
+  // v0.9.3 — widened recurrence reads optional dampening (default 0) and
+  // optional nesterov (default false). Classical v0.9.2 behavior collapses
+  // exactly when dampening=0 + nesterov=false (preserves byte-equality).
+  const tau = typeof oc.dampening === "number" ? oc.dampening : 0
+  const useNesterov = oc.nesterov === true
   for (let i = 0; i < r.updates.length; i += 1) {
     const u = r.updates[i]!
     if (!isSgdMomentumUpdate(u)) continue
@@ -4135,8 +4166,11 @@ function checkRule21SgdMomentumRecurrence(
     const grad = u.gradient
     const bufBefore = opt.state_before.buffer
     const bufAfter = opt.state_after.buffer
-    // 21a: classical PyTorch-style buffer recurrence (no dampening; no Nesterov).
-    const expectedBufAfter = mu * bufBefore + grad
+    //
+    // 21a — buffer recurrence (widened for dampening):
+    //   buffer_after == momentum * buffer_before + (1 - dampening) * gradient
+    //
+    const expectedBufAfter = mu * bufBefore + (1 - tau) * grad
     const check21a = applyToleranceCheck(expectedBufAfter, bufAfter, tolerance)
     if (!check21a.ok) {
       failures.push({
@@ -4148,40 +4182,83 @@ function checkRule21SgdMomentumRecurrence(
         delta: check21a.delta,
         tolerance: check21a.appliedTolerance,
         message:
-          `Rule 21a (classical PyTorch-style SGD momentum buffer recurrence): buffer_after ${bufAfter} ` +
-          `does not match momentum * buffer_before + gradient = ${mu} * ${bufBefore} + ${grad} = ` +
-          `${expectedBufAfter}. Sutskever et al. 2013 ICML / PyTorch torch.optim.SGD reference; Polyak 1964 ` +
-          `for the underlying heavy-ball method. v0.9.2 ships CLASSICAL PyTorch-style ONLY — Nesterov ` +
-          `accelerated gradient (lookahead form) is RESERVED for v0.9.3; dampening (recurrence with ` +
-          `(1-tau) factor on gradient) is RESERVED for v0.9.3. Common bugs caught here: dampening ` +
-          `coefficient applied without declaration, Nesterov formula used while declaring classical, ` +
-          `wrong momentum coefficient. STRUCTURAL CHECK — does not verify the gradient came from real ` +
-          `data (Fang et al. 2023 EuroS&P PoL spoofing class applies).`,
+          `Rule 21a (PyTorch-style SGD momentum buffer recurrence): buffer_after ${bufAfter} does not ` +
+          `match momentum * buffer_before + (1 - dampening) * gradient = ${mu} * ${bufBefore} + ` +
+          `${1 - tau} * ${grad} = ${expectedBufAfter}. Sutskever et al. 2013 ICML / PyTorch ` +
+          `torch.optim.SGD reference; Polyak 1964 heavy-ball foundation. Common bugs caught here: ` +
+          `dampening coefficient ignored when declared non-zero, wrong momentum coefficient, sign-flip ` +
+          `omitted on PyTorch import (PyTorch stores ascent-direction momentum_buffer; backprop-trace ` +
+          `stores descent-direction buffer — live-helper importer MUST negate, see MomentumState ` +
+          `docstring). STRUCTURAL CHECK — does not verify producer authenticity (Fang et al. 2023 ` +
+          `EuroS&P PoL spoofing class applies).`,
       })
-      continue // skip 21b on the same update — recurrence broken first
+      continue // 21a broken — skip 21b/21c on this update
     }
-    // 21b: classical PyTorch-style parameter update.
-    // update = lr * buffer_after (descent direction; sign in gradient).
-    const expectedUpdate = lr * bufAfter
-    const stored = u.update
-    const check21b = applyToleranceCheck(expectedUpdate, stored, tolerance)
+    //
+    // 21b — effective gradient direction:
+    //   effective == (gradient + momentum * buffer_after)  if nesterov === true
+    //   effective == buffer_after                          otherwise
+    //
+    // `effective` is DERIVED (never stored on receipt). We back-compute it
+    // from the stored update via `effective = update / lr` and compare to
+    // the formula-expected value. Diagnostically clean: a classical-vs-
+    // Nesterov confusion bug surfaces precisely at 21b.
+    //
+    const expectedEffective = useNesterov ? grad + mu * bufAfter : bufAfter
+    const storedEffective = u.update / lr
+    const check21b = applyToleranceCheck(expectedEffective, storedEffective, tolerance)
     if (!check21b.ok) {
+      const variantLabel = useNesterov
+        ? "Nesterov (lookahead) — effective == gradient + momentum * buffer_after"
+        : "classical — effective == buffer_after"
+      const otherVariantHint = useNesterov
+        ? `${grad + mu * bufAfter} (Nesterov, declared) vs ${bufAfter} (classical, not declared)`
+        : `${bufAfter} (classical, declared) vs ${grad + mu * bufAfter} (Nesterov, not declared)`
+      failures.push({
+        rule: 21,
+        parameter_id: u.parameter_id,
+        field_path: `updates[${i}].update`,
+        stored: storedEffective,
+        recomputed: expectedEffective,
+        delta: check21b.delta,
+        tolerance: check21b.appliedTolerance,
+        message:
+          `Rule 21b (PyTorch-style SGD momentum effective-gradient direction): effective gradient ` +
+          `implied by stored update / learning_rate = ${storedEffective} does not match the formula ` +
+          `required by optimizer_config.nesterov = ${useNesterov}. Expected ${variantLabel}: ` +
+          `${expectedEffective}. ` +
+          `Classical-vs-Nesterov confusion is the canonical bug class here — values: ${otherVariantHint}. ` +
+          `Sutskever et al. 2013 ICML §2 (lookahead form) / Nesterov 1983 (original accelerated gradient). ` +
+          `STRUCTURAL CHECK — does not verify producer authenticity.`,
+      })
+      continue // 21b broken — skip 21c (it would cascade)
+    }
+    //
+    // 21c — parameter update (always):
+    //   update == learning_rate * effective_gradient
+    //
+    // 21a + 21b already passed at this point. If 21c fails, the bug is a
+    // scalar lr mismatch or numerical drift, NOT a recurrence/Nesterov
+    // shape error.
+    //
+    const expectedUpdate = lr * expectedEffective
+    const stored = u.update
+    const check21c = applyToleranceCheck(expectedUpdate, stored, tolerance)
+    if (!check21c.ok) {
       failures.push({
         rule: 21,
         parameter_id: u.parameter_id,
         field_path: `updates[${i}].update`,
         stored,
         recomputed: expectedUpdate,
-        delta: check21b.delta,
-        tolerance: check21b.appliedTolerance,
+        delta: check21c.delta,
+        tolerance: check21c.appliedTolerance,
         message:
-          `Rule 21b (classical PyTorch-style SGD momentum parameter update): update ${stored} does not ` +
-          `match learning_rate * buffer_after = ${lr} * ${bufAfter} = ${expectedUpdate}. ` +
-          `Sutskever et al. 2013 ICML / PyTorch torch.optim.SGD reference. v0.9.2 ships CLASSICAL ` +
-          `PyTorch-style ONLY — Nesterov lookahead update (-lr * (mu * buf_after + gradient)) is RESERVED ` +
-          `for v0.9.3. A stored update that matches the Nesterov form here is a "classical-vs-Nesterov ` +
-          `confusion" porting bug (or a future Nesterov receipt that needs to declare nesterov: true once ` +
-          `v0.9.3 lands). STRUCTURAL CHECK — does not verify producer authenticity.`,
+          `Rule 21c (PyTorch-style SGD momentum parameter update): update ${stored} does not match ` +
+          `learning_rate * effective_gradient = ${lr} * ${expectedEffective} = ${expectedUpdate}. ` +
+          `Descent-direction sign convention (sign lives in gradient; engine adds lr * effective). ` +
+          `21a + 21b passed — the bug here is a scalar lr mismatch or numerical drift, NOT a ` +
+          `recurrence/Nesterov shape error. STRUCTURAL CHECK.`,
       })
     }
   }

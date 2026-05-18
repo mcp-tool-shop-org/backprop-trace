@@ -220,24 +220,24 @@ export type OptimizerConfig = {
    */
   momentum?: number
   /**
-   * v0.9.2 — RESERVED for v0.9.3 Nesterov accelerated gradient
-   * (Sutskever et al. 2013 §2 lookahead form). In v0.9.2, MUST be
-   * literally false when present (schema-enforced via const). When
-   * absent, treated as false (classical momentum). The engine rejects
-   * any sidecar that bypasses schema with nesterov: true via a clear
-   * "deferred to v0.9.3" message.
+   * v0.9.3 — Nesterov accelerated gradient flag (widened from v0.9.2's
+   * reserved `const: false`). When true, the update formula uses the
+   * Nesterov lookahead form: `effective = gradient + momentum * buffer_after;
+   * update = lr * effective`. When false (or absent), classical form:
+   * `effective = buffer_after; update = lr * effective`. Sutskever et al.
+   * 2013 ICML §2 / PyTorch torch.optim.SGD reference. PyTorch's
+   * torch.optim.SGD.__init__ raises ValueError on nesterov=true && dampening>0;
+   * the engine boundary mirrors this rejection.
    */
-  nesterov?: false
+  nesterov?: boolean
   /**
-   * v0.9.2 — RESERVED for v0.9.3 dampening (PyTorch's
-   * torch.optim.SGD(dampening=tau) recurrence
-   * buffer_t = mu * buffer_{t-1} + (1-tau) * gradient). In v0.9.2,
-   * MUST be literally 0 when present (schema-enforced via const).
-   * When absent, treated as 0. The engine rejects any sidecar that
-   * bypasses schema with dampening !== 0 via a clear
-   * "deferred to v0.9.3" message.
+   * v0.9.3 — PyTorch dampening tau (widened from v0.9.2's reserved
+   * `const: 0`). Recurrence: `buffer_t = momentum * buffer_{t-1} +
+   * (1 - dampening) * gradient`. Default 0 (classical recurrence
+   * collapses). Must be in [0, 1) when present. PyTorch rejects
+   * nesterov=true with dampening>0 — engine boundary mirrors.
    */
-  dampening?: 0
+  dampening?: number
 }
 
 /**
@@ -524,7 +524,7 @@ export type GeneralReceipt = {
   // based on optimizer_config.name (adam/adamw → 0.5.0) + topology.loss
   // + (source_framework presence) inside runGeneralStep so legacy
   // callers don't need to pass it explicitly.
-  schema_version: "0.2.0" | "0.3.0" | "0.4.0" | "0.5.0" | "0.6.0"
+  schema_version: "0.2.0" | "0.3.0" | "0.4.0" | "0.5.0" | "0.6.0" | "0.7.0"
   fixture: string
   // step is integer ≥1 per receipt.v0.4.0 schema. Engine-authored single-step
   // receipts hardcode step:1. v0.8 multi-step observer-mode receipts set
@@ -757,25 +757,37 @@ function assertOptimizerConfig(input: GeneralInput): void {
         `runGeneralStep: optimizer_config.momentum must be a finite number in (0, 1) (got ${oc.momentum}).`,
       )
     }
-    // Reserved-for-v0.9.3 fields: nesterov MUST be absent or literally false;
-    // dampening MUST be absent or literally 0. Loud rejection — avoids silent
-    // misverification of Nesterov/dampened PyTorch traces against the
-    // classical-only v0.9.2 verifier.
-    if (oc.nesterov !== undefined && oc.nesterov !== false) {
+    // v0.9.3 — Nesterov + dampening accepted (widened from v0.9.2's reserved
+    // const slots). Boundary validates types + ranges + PyTorch's
+    // nesterov=true && dampening>0 rejection.
+    if (oc.nesterov !== undefined && typeof oc.nesterov !== "boolean") {
       throw new Error(
-        `runGeneralStep: optimizer_config.nesterov === true is NOT supported in v0.9.2 (got ${String(oc.nesterov)}). ` +
-          `Nesterov accelerated gradient (Sutskever et al. 2013 ICML lookahead form) is RESERVED for v0.9.3. ` +
-          `v0.9.2 ships classical PyTorch-style SGD momentum ONLY; the schema enforces nesterov: const false. ` +
-          `Hint: defer to v0.9.3 for Nesterov support, OR set nesterov: false (or omit) for classical momentum.`,
+        `runGeneralStep: optimizer_config.nesterov must be boolean when present (got ${String(oc.nesterov)}). ` +
+          `Sutskever et al. 2013 ICML §2 lookahead form when true; classical PyTorch-style recurrence when false ` +
+          `(or absent).`,
       )
     }
-    if (oc.dampening !== undefined && oc.dampening !== 0) {
+    if (oc.dampening !== undefined) {
+      if (
+        typeof oc.dampening !== "number" ||
+        !Number.isFinite(oc.dampening) ||
+        oc.dampening < 0 ||
+        oc.dampening >= 1
+      ) {
+        throw new Error(
+          `runGeneralStep: optimizer_config.dampening must be a finite number in [0, 1) when present ` +
+            `(got ${String(oc.dampening)}). PyTorch's torch.optim.SGD(dampening=tau) recurrence: ` +
+            `buffer_t = momentum * buffer_{t-1} + (1 - tau) * gradient. Default 0 (classical recurrence collapses).`,
+        )
+      }
+    }
+    if (oc.nesterov === true && oc.dampening !== undefined && oc.dampening !== 0) {
       throw new Error(
-        `runGeneralStep: optimizer_config.dampening !== 0 is NOT supported in v0.9.2 (got ${String(oc.dampening)}). ` +
-          `PyTorch's torch.optim.SGD(dampening=tau) recurrence buffer_t = mu * buffer_{t-1} + (1-tau) * gradient ` +
-          `is RESERVED for v0.9.3. v0.9.2 ships dampening=0 ONLY (recurrence buffer_t = mu * buffer_{t-1} + gradient); ` +
-          `the schema enforces dampening: const 0. Hint: defer to v0.9.3 for dampening support, OR set ` +
-          `dampening: 0 (or omit) for classical momentum.`,
+        `runGeneralStep: optimizer_config.nesterov === true requires optimizer_config.dampening absent or === 0 ` +
+          `(got dampening=${oc.dampening}). PyTorch's torch.optim.SGD.__init__ raises ValueError ` +
+          `("Nesterov momentum requires a momentum and zero dampening") on this exact combination — ` +
+          `Sutskever et al. 2013 ICML §2 Nesterov lookahead derivation assumes an undamped buffer. ` +
+          `Hint: set dampening: 0 (or omit) when nesterov: true, OR set nesterov: false when dampening > 0.`,
       )
     }
     // SGD coupled L2 weight decay deferred to v0.10 — needs Rules 6/7 third
@@ -1115,16 +1127,29 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
       }
     }
     // ---------------------------------------------------------------------
-    // v0.9.2 — classical PyTorch-style SGD momentum branch.
-    // Recurrence (Sutskever et al. 2013 ICML / PyTorch torch.optim.SGD):
-    //   buffer_t = mu * buffer_{t-1} + gradient  (dampening hardcoded 0)
-    //   update   = lr * buffer_t                 (descent direction; sign
-    //                                             already in `gradient`)
-    //   weight_after = weight_before + update    (no AdamW-style decoupled
-    //                                             decay branch — sgd_momentum
-    //                                             with weight_decay is deferred
-    //                                             to v0.10; rejected at boundary)
-    // Rule 21 verifies both 21a (buffer recurrence) and 21b (update formula).
+    // v0.9.3 — PyTorch-style SGD momentum branch (classical + Nesterov + dampening).
+    // Recurrence (Sutskever et al. 2013 ICML / PyTorch torch.optim.SGD;
+    // _single_tensor_sgd in torch/optim/sgd.py):
+    //   buffer_t = mu * buffer_{t-1} + (1 - dampening) * gradient        (Rule 21a)
+    //   effective = (gradient + mu * buffer_t)  if nesterov               (Rule 21b)
+    //             = buffer_t                   otherwise
+    //   update    = lr * effective                                        (Rule 21c)
+    //   weight_after = weight_before + update                             (Rule 6)
+    //
+    // Descent-direction sign convention: sign already in `gradient`; engine
+    // adds. PyTorch ascent form `θ ← θ − lr * g_eff_ascent` becomes
+    // `θ ← θ + lr * g_eff_descent` here. `effective` is DERIVED (never
+    // stored on receipt); 21b/21c recompute from (gradient, buffer_after,
+    // nesterov, momentum).
+    //
+    // v0.9.2 byte-equality preserved: with dampening=0 (default) and
+    // nesterov=false (default), the recurrence collapses to v0.9.2's
+    // `buffer_t = mu * buffer_{t-1} + gradient` and update collapses to
+    // `lr * buffer_after` exactly — same bit pattern as v0.9.2's engine.
+    //
+    // PyTorch's `nesterov=true && dampening>0` rejection (ValueError) is
+    // enforced at assertOptimizerConfig and at schema. No engine-side
+    // branch needed here — that combination cannot reach this point.
     // ---------------------------------------------------------------------
     if (isSgdMomentum) {
       const cfg = oc!
@@ -1135,6 +1160,8 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
         )
       }
       const mu = cfg.momentum!
+      const tau = cfg.dampening ?? 0
+      const useNesterov = cfg.nesterov ?? false
       // MomentumState shape ({buffer}); narrow via property check.
       const stMom = stateBefore as Partial<MomentumState> & Partial<AdamState>
       const bufferBefore = stMom.buffer
@@ -1145,10 +1172,15 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
             `not AdamState ({m, v}).`,
         )
       }
-      // Rule 21a: classical PyTorch-style recurrence.
-      const bufferAfter = mu * bufferBefore + gradient
-      // Rule 21b: classical update formula (lr OUTSIDE buffer; sign in gradient).
-      const update = lr * bufferAfter
+      // Rule 21a: buffer recurrence (widened for dampening; collapses to
+      // v0.9.2's classical form when tau=0).
+      const bufferAfter = mu * bufferBefore + (1 - tau) * gradient
+      // Rule 21b: effective gradient direction (Nesterov branch vs classical).
+      const effective = useNesterov
+        ? gradient + mu * bufferAfter
+        : bufferAfter
+      // Rule 21c: parameter update (always lr * effective; descent direction).
+      const update = lr * effective
       const wAfter = wBefore + update
       return {
         update,
@@ -1157,11 +1189,10 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
           name: "sgd_momentum",
           learning_rate: lr,
           // Factors stay SGD-shape [signal, upstream] (or [signal] for bias).
-          // Rule 4 (gradient == product(factors)) continues to hold —
-          // gradient is still the descent-direction gradient at this step;
-          // momentum dynamics live in buffer_before/buffer_after, NOT in
-          // the factor decomposition. Keeps factor reading consistent
-          // across SGD / Adam / AdamW / sgd_momentum.
+          // Rule 4 (gradient == product(factors)) continues to hold — gradient
+          // is the descent-direction gradient at this step; momentum +
+          // Nesterov dynamics live in buffer_before/buffer_after + nesterov
+          // flag, NOT in the factor decomposition.
           factors,
           product_order: "left_to_right",
           state_before: { buffer: bufferBefore },
@@ -1775,19 +1806,25 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
   // loss). All other receipts (Mazur, XOR, iris, per-neuron-bias, and any
   // future half_squared_error receipts) continue to emit "0.2.0" so the
   // shipped fixtures stay byte-identical.
-  // v0.9.1: "0.5.0" for Adam/AdamW receipts (FORCED bump — see receipt.v0.5.0
-  // docstring). v0.9.2: "0.6.0" for sgd_momentum receipts (FORCED bump — see
-  // receipt.v0.6.0 docstring). Adam/AdamW + softmax+CE + sgd_momentum all
-  // compose additively at the schema layer; the version reflects the
-  // optimizer-with-state shape that's present on the receipt, with v0.6.0
-  // > v0.5.0 > v0.3.0 > v0.2.0 in fields-carried order.
-  const schemaVersionForReceipt: "0.2.0" | "0.3.0" | "0.5.0" | "0.6.0" = isSgdMomentum
-    ? "0.6.0"
-    : isAdamFamily
-      ? "0.5.0"
-      : t.loss === "cross_entropy_softmax" || t.activation_output === "softmax"
-        ? "0.3.0"
-        : "0.2.0"
+  // v0.9.1: "0.5.0" for Adam/AdamW receipts. v0.9.2: "0.6.0" for classical
+  // sgd_momentum. v0.9.3: "0.7.0" for sgd_momentum receipts with nesterov=true
+  // OR dampening>0 (FORCED bump — see receipt.v0.7.0 docstring). Classical
+  // sgd_momentum (default nesterov=false, dampening=0) STAYS at "0.6.0" for
+  // v0.9.2 byte-equality preservation. The version reflects the
+  // optimizer-with-state shape + the smallest schema that accepts it.
+  const usesNesterovOrDampening =
+    isSgdMomentum &&
+    ((oc?.nesterov === true) ||
+      (oc?.dampening !== undefined && oc.dampening !== 0))
+  const schemaVersionForReceipt: "0.2.0" | "0.3.0" | "0.5.0" | "0.6.0" | "0.7.0" = usesNesterovOrDampening
+    ? "0.7.0"
+    : isSgdMomentum
+      ? "0.6.0"
+      : isAdamFamily
+        ? "0.5.0"
+        : t.loss === "cross_entropy_softmax" || t.activation_output === "softmax"
+          ? "0.3.0"
+          : "0.2.0"
   const receipt: GeneralReceipt = {
     schema_version: schemaVersionForReceipt,
     fixture: input.fixture ?? "general-engine-first-run",
@@ -1848,10 +1885,14 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
       learning_rate: cfg.learning_rate,
       momentum: cfg.momentum,
     }
-    // v0.9.2 — reserved fields (nesterov, dampening) are NOT emitted to keep
-    // receipt bytes minimal and forward-compatible with v0.9.3 (when the
-    // const-false / const-0 restrictions widen, the emitter can opt into
-    // these fields without changing existing v0.9.2 receipts).
+    // v0.9.3 — emit nesterov only when explicitly true (absence === false
+    // per default semantics; preserves v0.9.2 classical-sgd_momentum
+    // byte-equality). Emit dampening only when > 0 (absence === 0 per
+    // default; classical preserves byte-equality).
+    if (cfg.nesterov === true) ocOut.nesterov = true
+    if (cfg.dampening !== undefined && cfg.dampening !== 0) {
+      ocOut.dampening = cfg.dampening
+    }
     receipt.optimizer_config = ocOut
   }
   if (input.trace_id !== undefined) receipt.trace_id = input.trace_id

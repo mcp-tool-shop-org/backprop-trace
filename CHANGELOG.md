@@ -14,6 +14,265 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.9.3] - 2026-05-18
+
+The v0.9.3 Nesterov + dampening wave. **Not a v1.0.0 promotion** —
+backprop-trace remains mid-v0 (no SGD coupled L2 weight decay — deferred
+to v0.10; no AMSGrad/NAdam/RAdam/Lion; no live framework helpers; no
+real-world fixture; no adopter validation). What v0.9.3 actually does:
+**closes the SGD momentum branch cleanly** by widening v0.9.2's
+classical-only `sgd_momentum` to PyTorch's full `torch.optim.SGD`
+recurrence — Nesterov accelerated gradient + dampening together. After
+v0.9.3, the next major product-power move is **v0.10 live framework
+helpers**, not more optimizer variants.
+
+**Doctrine guardrail (preserved from v0.9.2)**: Rule 21 is framed as
+"**PyTorch-style SGD momentum recurrence**" — NOT "momentum correctness"
+in the abstract. Future SGD coupled L2 / AMSGrad / NAdam variants are
+NOT bugs in v0.9.3; they are explicitly deferred variants that the
+v0.9.3 reconciler does not recognize.
+
+**PyTorch combo rejection**: `nesterov=true && dampening>0` is rejected
+at both schema (allOf if/then with `required: ["nesterov"]` to avoid
+JSON-Schema's vacuous-properties pitfall) and engine boundary
+(`assertOptimizerConfig`). This mirrors PyTorch's
+`torch.optim.SGD.__init__` which raises
+`ValueError("Nesterov momentum requires a momentum and zero dampening")`.
+If someone hands us a trace PyTorch itself would reject, we do not
+normalize it into a "variant" — we reject it loudly with the same
+boundary discipline.
+
+### Added
+
+- **`receipt.v0.7.0` schema** (NEW file). FORCED bump over `receipt.v0.6.0`:
+  the closed `OptimizerConfig.nesterov: const false` + `dampening: const 0`
+  reserved-slot widening still counts as a closed-schema change, so
+  doctrine forces the bump. v0.7.0 widens `nesterov` to `boolean` and
+  `dampening` to `number ∈ [0, 1)` (exclusive upper bound — PyTorch
+  default 0.0). Adds `allOf` if/then clause enforcing PyTorch combo
+  rejection. **Load-bearing detail**: the if-clause MUST require
+  `nesterov` to be PRESENT (`"required": ["nesterov"]`) — otherwise
+  JSON-Schema's properties-only check fires vacuously on absent fields
+  and the then-clause runs incorrectly on classical-and-dampened
+  receipts. `weight_decay` continues to be rejected for sgd_momentum
+  (deferred to v0.10). MomentumState docstring extended with live-helper
+  sign-flip note (PyTorch ascent vs backprop-trace descent direction —
+  see v0.10 helpers).
+- **`framework-trace.v0.6.0` schema** (NEW file). FORCED bump for the
+  same reasons. Parallel sidecar shape with identical allOf if/then
+  + `required: ["nesterov"]` enforcement. v0.1.0 through v0.5.0
+  sidecars continue to validate against their own schemas unchanged.
+  Importer dispatcher accepts all six versions on the multi-step path.
+- **`runGeneralStep` sgd_momentum Nesterov + dampening dispatch** in
+  `src/general-engine.ts`. Widened `OptimizerConfig.nesterov` from
+  `false` to `boolean` and `dampening` from `0` to `number`. Recurrence
+  now: `tau = cfg.dampening ?? 0`; `useNesterov = cfg.nesterov ?? false`;
+  `bufferAfter = mu * bufferBefore + (1 - tau) * gradient`;
+  `effective = useNesterov ? gradient + mu * bufferAfter : bufferAfter`;
+  `update = lr * effective`. The `effective` quantity is derived
+  per-rule-application, **never stored** in receipts (preserves
+  byte-equality with v0.9.2 classical fixtures). Engine identity stays
+  `"backprop-trace-engine@0.6.0"` (additive optimizer variants; existing
+  SGD/Adam/AdamW/classical-momentum math byte-equal).
+- **`assertOptimizerConfig` sgd_momentum Nesterov + dampening
+  acceptance + PyTorch combo rejection**:
+  - `nesterov` accepted as boolean (no longer rejected when `true`)
+  - `dampening` accepted as `number ∈ [0, 1)` (no longer rejected
+    when `> 0`)
+  - **NEW**: `nesterov === true && dampening > 0` rejected with clear
+    message citing PyTorch's `torch.optim.SGD(dampening=tau)` ValueError
+  - Type/range validation: `nesterov` must be boolean; `dampening` must
+    be finite number in `[0, 1)`
+  - `weight_decay` still rejected for sgd_momentum (deferred to v0.10)
+- **Rule 21 split to 21a / 21b / 21c** in `src/reconcile.ts`:
+  - **21a**: `buffer_after == momentum * buffer_before + (1 - dampening) * gradient`
+    (PyTorch `torch.optim.SGD` recurrence with dampening; Sutskever
+    et al. 2013 ICML / Polyak 1964 heavy-ball foundation; `lr` OUTSIDE
+    the buffer so LR schedules don't retroactively rescale history)
+  - **21b**: `effective = gradient + momentum * buffer_after` if
+    `nesterov` else `buffer_after` (derived direction selection;
+    NEVER stored in the receipt — preserves canonical bytes;
+    Sutskever et al. 2013 lookahead reformulation)
+  - **21c**: `update == learning_rate * effective` (descent direction;
+    sign already in `gradient`)
+  - Each sub-check cascades to skip downstream sub-checks on failure
+    (21a fail → skip 21b/21c; 21b fail → skip 21c)
+  - GATED on `optimizer.name === "sgd_momentum"`
+  - Failure messages cite "PyTorch-style" (NOT "abstract momentum
+    correctness") + Sutskever/Polyak/PyTorch references + STRUCTURAL
+    CHECK + Fang et al. 2023 PoL spoofing caveat
+- **Rule 20 sgd_momentum nesterov + dampening type/range checks** —
+  relaxed reserved-slot rejections (`nesterov: false` ONLY / `dampening:
+  0` ONLY no longer required); added defense-in-depth PyTorch combo
+  rejection (catches a hypothetical schema-bypass where invalid combo
+  reaches reconciler).
+- **Rule 14 sgd_momentum-aware (v0.9.3 widening)** — when receipt
+  declares `optimizer_config.name === "sgd_momentum"`, Rule 14 forwards
+  the receipt's `nesterov` (when true) and `dampening` (when != 0) to
+  the engine recompute input. Bad fixture coverage extended.
+- **PyTorch-style SGD momentum good fixtures** (Nesterov + dampening)
+  in `fixtures/external/`:
+  - `pytorch.sgd-momentum.nesterov.{sidecar,golden}.jsonl` — single-step
+    (Mazur 2-2-2 topology, mu=0.9, dampening=0, nesterov=true, zero-init
+    buffer)
+  - `pytorch.sgd-momentum.dampening.{sidecar,golden}.jsonl` — single-step
+    (mu=0.9, dampening=0.1, nesterov=false)
+  - `pytorch.sgd-momentum.nesterov.multi-step.{sidecar,golden}.jsonl` —
+    3-step Nesterov exercising Rules 25 buffer chain + 26 config
+    constancy + bundle binding (trace_id pinned to
+    `d1e2f30405061728394a5b6c7d8e9f02`)
+- **Momentum adversarial fixture plate extension (4 new bad fixtures)**
+  in `fixtures/bad/`:
+  - `momentum.bad-nesterov-flag-mismatch.jsonl` → Rule 21 (RENAMED from
+    v0.9.2's `momentum.bad-formula-mismatch.jsonl` — same byte mutation,
+    more precise framing now that Nesterov is a recognized branch:
+    update mutated to look like a Nesterov-form on a non-Nesterov receipt)
+  - `momentum.bad-nesterov-formula-mismatch.jsonl` → Rule 21 (NEW;
+    nesterov=true receipt with `update` mutated to NON-Nesterov form;
+    sourced from step_index=1 of multi-step Nesterov golden so
+    buffer_before is non-zero — at step 0 with buffer_before=0, the
+    nesterov / non-nesterov divergence collapses to zero)
+  - `momentum.bad-dampening-ignored.jsonl` → Rule 21 (NEW; dampening=0.1
+    declared but buffer_after computed as if dampening=0; Rule 21a
+    catches it)
+  - `momentum-multi-step.bad-nesterov-flag-inconstancy.jsonl` → Rule 26
+    (NEW; multi-step bundle where step 0 has nesterov=true and step 1
+    has nesterov absent / false — Rule 26 fires on optimizer_config
+    constancy)
+- **`schemas/receipt.v0.7.0.json` + `schemas/framework-trace.v0.6.0.json`
+  subpath exports** in `package.json` exports map
+  (`./schema/receipt-0.7.0`, `./schema/framework-trace-0.6.0`).
+- **`bp` CLI** Rule 21 label updated for 21a/21b/21c sub-check
+  framing (`src/bin/bp.ts` RULE_LABELS).
+- **Tests**: 4 new acceptance tests in
+  `test/import-pytorch-momentum.test.ts` — accepts `nesterov: true`
+  alone, accepts `dampening: 0.1` alone, accepts `nesterov: true +
+  dampening: 0` (explicit zero is fine), rejects the PyTorch combo
+  (`nesterov: true + dampening > 0`). 4 new bad-fixture entries in
+  `test/reconcile.doctrine.test.ts` (replaces v0.9.2's
+  `bad-formula-mismatch` entry; `FILENAME_KIND_TO_RULE` extended).
+  453 → 458 tests (+5, all passing).
+
+### Changed
+
+- **`package.json` version 0.9.2 → 0.9.3.** Description rewritten:
+  "PyTorch-style SGD momentum (classical + Nesterov + dampening)"
+  framing; preserves Mid-v0 status flag (CPU-only, SGD/Adam/AdamW/
+  sgd_momentum-all-PyTorch-variants; SGD coupled L2 explicitly
+  deferred with v0.10 target).
+- **`docs/reconciliation.md`** — Quick-reference rule table updated:
+  Rule 21 widened to 21a/21b/21c with full PyTorch-style framing
+  (`(1 - dampening) * gradient` dampening factor; derived `effective`
+  direction selection; descent-direction update). "Classical
+  PyTorch-style SGD momentum (v0.9.2)" section renamed and rewritten
+  as "PyTorch-style SGD momentum (v0.9.2 + v0.9.3)" with v0.9.2 →
+  v0.9.3 transition table explaining the closed-const widening +
+  PyTorch combo rejection.
+- **`docs/schema.md`** — Added "v0.9.3 FORCED bump to receipt.v0.7.0 +
+  framework-trace.v0.6.0 (Nesterov + dampening)" section. Documents
+  the `nesterov: const false` → boolean / `dampening: const 0` →
+  `number ∈ [0, 1)` widening, the allOf if/then PyTorch combo
+  rejection clause with the load-bearing `required: ["nesterov"]`
+  trap, and the **v0.10 live-helper sign-convention pin** (PyTorch's
+  `momentum_buffer` lives in ascent space; backprop-trace's `buffer`
+  lives in descent space; live helpers MUST sign-flip at the
+  trace-extraction boundary). v0.9.2 classical fixtures remain
+  byte-identical under the v0.9.3 widened engine.
+- **`SHIP_GATE.md`** — "Optimizers beyond vanilla SGD" gap upgraded to
+  MOSTLY CLOSED in v0.9.3 (Adam/AdamW v0.9.1 + classical sgd_momentum
+  v0.9.2 + Nesterov + dampening v0.9.3). "Nesterov accelerated
+  gradient + dampening" row marked CLOSED in v0.9.3.
+- **`README.md`** — Status line updated to v0.9.3; description framing
+  widened from "classical PyTorch-style" to "PyTorch-style" (preserves
+  the "not abstract momentum correctness" guardrail); 26-rule table
+  Rule 21 widened to 21a/21b/21c; What's-not-in-this-version Nesterov
+  + dampening entry marked CLOSED.
+- **Schema-loader docstrings** (`src/schema-loader.ts`) —
+  `SCHEMA_VERSIONS = ["0.1.0", ..., "0.6.0", "0.7.0"]`;
+  `FRAMEWORK_TRACE_SCHEMA_VERSIONS = ["0.1.0", ..., "0.5.0", "0.6.0"]`.
+  Docstrings updated.
+- **Validator dispatcher** (`src/validate.ts`) —
+  `validateFrameworkTraceSidecar` recognizes
+  `format: "framework-trace.v0.6.0"` and routes to the new validator.
+- **Importer (`src/import-observer.ts`)** — both single-step and
+  multi-step receipt construction emit `nesterov: true` (only when
+  true) and `dampening: X` (only when > 0). Multi-step path was the
+  load-bearing fix discovered during test runs (Edit's replace_all
+  matched only one signature; multi-step block needed the same
+  conditional emission). Schema_version dispatch: `"0.7.0"` when
+  sgd_momentum has nesterov=true OR dampening>0; `"0.6.0"` otherwise
+  for sgd_momentum (preserves v0.9.2 byte-equality on classical
+  fixtures).
+
+### Notes (forward compatibility)
+
+- **SGD coupled L2 weight decay** is v0.10. Rules 6/7 grow a third
+  branch (sgd_momentum + weight_decay applies `grad ← grad + lambda *
+  theta` BEFORE the buffer update — coupled L2 form, distinct from
+  AdamW's decoupled). Touches Rule 4's factor narrative; needs its
+  own slice.
+- **AMSGrad / NAdam / RAdam / Lion** are v0.10+. AMSGrad's
+  `max(v_t, v_{t-1})` projection doesn't fit Rule 4's
+  `product(factors)` vocabulary; needs new rule design pass.
+- **Batched sgd_momentum (with Nesterov + dampening)** is v0.9.x /
+  v0.10 (same per-sample-runs-then-reduce gap that blocks batched
+  Adam). Single-sample (batch.size=1) sgd_momentum works today via
+  the unbatched path.
+- **Live helpers (v0.10)** MUST sign-flip PyTorch's
+  `momentum_buffer` (which lives in ascent space — PyTorch applies
+  `param.add_(d_p, alpha=-lr)` so `buf` accumulates gradient sign,
+  not descent sign) to backprop-trace's `buffer` (which lives in
+  descent space — `update = lr * buffer_after`, where `gradient` is
+  already signed for descent). Documented in `docs/schema.md`
+  MomentumState section + `receipt.v0.7.0.json` MomentumState
+  docstring.
+
+### Numbers
+
+- 458 tests pass (was 453; +5 from new acceptance + PyTorch combo
+  rejection tests, plus 4 new bad-fixture entries forced into
+  `reconcile.doctrine.test.ts`)
+- typecheck + build green
+- 8 src files modified (schema-loader, validate, general-engine,
+  emit, reconcile, import-observer, bin/bp, package.json;
+  schema-loader.test.ts + reconcile.doctrine.test.ts +
+  import-pytorch-momentum.test.ts updated)
+- 2 new schema files (`schemas/receipt.v0.7.0.json` +
+  `schemas/framework-trace.v0.6.0.json`)
+- 3 new fixture files in `fixtures/external/` (Nesterov single-step,
+  dampening single-step, Nesterov multi-step pairs = 6 actual files)
+- 4 new fixture files in `fixtures/bad/` (1 renamed from v0.9.2's
+  bad-formula-mismatch + 3 net-new; with sibling meta files = 8 files)
+- 2 fixture-generation scripts extended
+  (`scripts/generate-pytorch-momentum-fixtures.ts` +
+  `scripts/generate-momentum-bad-fixtures.ts`)
+- v0.1.0 through v0.9.2 fixtures remain byte-identical (SGD/Adam/AdamW/
+  classical-sgd_momentum goldens unchanged under the v0.9.3 widened
+  engine; Nesterov + dampening establish a new lineage at
+  schema_version `0.7.0`)
+
+### What v0.9.3 does NOT do
+
+- Does **not** promote to v1.0.0
+- Does **not** ship SGD coupled L2 weight decay (v0.10)
+- Does **not** ship AMSGrad / NAdam / RAdam / Lion (v0.10+)
+- Does **not** ship batched sgd_momentum with Nesterov + dampening
+  (deferred, same per-sample-runs-then-reduce gap)
+- Does **not** ship per-parameter-group hyperparameters (v0.10+)
+- Does **not** ship live Python helpers (still hand-authored sidecars;
+  v0.10 is next)
+- Does **not** add new CLI verbs (Nesterov + dampening dispatch is
+  sidecar-driven; same pattern as v0.9.1/v0.9.2)
+- Does **not** add a real-world fixture (Mazur 2-2-2 + softmax+CE +
+  sgd_momentum-Mazur remain the heroes; CNN / transformer-block
+  deferred to v0.11)
+- Does **not** add adopter validation (deferred to v0.12)
+- Does **not** change SGD/Adam/AdamW/classical-sgd_momentum byte-output
+  (v0.1-v0.9.2 fixtures byte-equal under the v0.9.3 widened engine)
+- Does **not** tag, publish to npm, or create a GitHub release
+- Does **not** regenerate translations (no README user-facing rewrite
+  warranting translation cycle; status line + entries only)
+
 ## [0.9.2] - 2026-05-19
 
 The v0.9.2 classical PyTorch-style SGD momentum wave. **Not a v1.0.0

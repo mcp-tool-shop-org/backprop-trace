@@ -951,11 +951,17 @@ function emitOptimizerConfig(oc: OptimizerConfig): string {
     parts.push(`"weight_decay":${N(oc.weight_decay)}`);
   }
   if (oc.t !== undefined) parts.push(`"t":${oc.t}`);
-  // v0.9.2 sgd_momentum field (emitted only when present). Reserved fields
-  // nesterov + dampening are NOT emitted in v0.9.2 (engine never sets them;
-  // when v0.9.3 widens them, the emitter can opt into emission without
-  // breaking v0.9.2 receipt byte-equality).
+  // v0.9.2 sgd_momentum field (emitted only when present).
   if (oc.momentum !== undefined) parts.push(`"momentum":${N(oc.momentum)}`);
+  // v0.9.3 sgd_momentum widening — emit nesterov only when true (default
+  // false; absence preserves classical byte-equality); emit dampening only
+  // when > 0 (default 0; absence preserves classical byte-equality). x-order:
+  // ["name", "learning_rate", "beta1", "beta2", "epsilon", "weight_decay", "t",
+  // "momentum", "nesterov", "dampening"] per receipt.v0.7.0 / .v0.6.0 schemas.
+  if (oc.nesterov === true) parts.push(`"nesterov":true`);
+  if (oc.dampening !== undefined && oc.dampening !== 0) {
+    parts.push(`"dampening":${N(oc.dampening)}`);
+  }
   return `{${parts.join(",")}}`;
 }
 

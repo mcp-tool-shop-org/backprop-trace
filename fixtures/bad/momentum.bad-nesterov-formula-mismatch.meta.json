@@ -1,0 +1,18 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "momentum.bad-nesterov-formula-mismatch.meta",
+  "describes": "fixtures/bad/momentum.bad-nesterov-formula-mismatch.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.sgd-momentum.nesterov.multi-step.golden.jsonl. v0.9.2 classical PyTorch-style SGD momentum adversarial plate — each fixture surfaces a distinct attack class with a deterministic mutation. v0.9.2 ships CLASSICAL ONLY — Nesterov + dampening RESERVED for v0.9.3, SGD coupled L2 deferred to v0.10.",
+  "mutation": {
+    "kind": "mutate_update_to_classical_form_while_declaring_nesterov",
+    "field_path": "updates[0].update",
+    "parameter_id": "w_x1_h1",
+    "source_step_index": 1,
+    "original_update_nesterov_lookahead": -0.0000118408053,
+    "mutated_update_classical": -0.00000830942892,
+    "explanation": "Receipt declares optimizer_config.nesterov=true; stored update matches the CLASSICAL form lr * buffer_after (drops the Nesterov lookahead term lr * mu * buffer_after). Source receipt is step_index=1 from the multi-step Nesterov golden (extracted as single-step) so buffer_before is non-zero — at step 0 with buffer_before=0, the Nesterov-vs-classical divergence is only mu * gradient (small but visible); step 1+ amplifies the signal. Rule 21b fires: declared nesterov=true → expected effective = gradient + mu * buffer_after; stored implies effective = buffer_after."
+  },
+  "reconciliation_check_targeted_first": "Rule 21: Classical-vs-Nesterov confusion — receipt declares nesterov=true but stored update matches the classical form lr * buffer_after instead of Nesterov lookahead lr * (gradient + mu * buffer_after). Rule 21b fires.",
+  "purpose": "v0.9.2 momentum anti-circularity fixture (kind: 'nesterov-formula-mismatch'). Pressure-tests that the named rule fires BEFORE the reconciler consults fixture_status metadata.",
+  "v0_9_2_trust_framing": "Rule 21 (classical PyTorch-style SGD momentum) is a STRUCTURAL CONSISTENCY check, NOT a producer-authenticity check. An attacker who controls every byte of the sidecar and recomputes a consistent (g, buffer, update) triple passes Rule 21 trivially — analogous to Rule 17's bundle-integrity caveat, Rules 22-24's Adam caveat, and the Fang et al. 2023 EuroS&P spoofing class against Proof-of-Learning (arXiv:2208.03567)."
+}
