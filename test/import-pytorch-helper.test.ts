@@ -56,7 +56,7 @@ test("v0.7.0 schema: helper block must declare name, version, distribution, sour
   //   - test/bp.examples-pytorch.cli.test.ts (HELPER_VERSION matches pkg.version)
   //   - scripts/pack-install-smoke.mjs (printed helper HELPER_VERSION ==
   //     installed package.version) — the v0.10.2 distribution-integrity gate
-  assert.equal(helper.version, "0.10.2")
+  assert.equal(helper.version, "0.10.3")
   assert.equal(helper.distribution, "repo-script")
   assert.match(helper.source_hash as string, /^sha256:[0-9a-f]{64}$/)
   assert.ok(helper.framework)

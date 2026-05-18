@@ -20,3 +20,9 @@ Thumbs.db
 # Local repo-knowledge DB + config (created by `rk init`; not shipped)
 data/
 rk.config.json
+
+# Astro + site-theme + pack-smoke artifacts
+site/.astro/
+site/dist/
+site/node_modules/
+mcptoolshop-backprop-trace-*.tgz

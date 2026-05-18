@@ -9,261 +9,173 @@
 <p align="center">
   <a href="https://github.com/mcp-tool-shop-org/backprop-trace/actions"><img alt="CI" src="https://github.com/mcp-tool-shop-org/backprop-trace/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
-  <a href="https://www.npmjs.com/package/@mcptoolshop/backprop-trace"><img alt="npm" src="https://img.shields.io/npm/v/@mcptoolshop/backprop-trace.svg"></a>
+  <a href="https://mcp-tool-shop-org.github.io/backprop-trace/"><img alt="Landing Page" src="https://img.shields.io/badge/landing-page-blue.svg"></a>
 </p>
 
-A deterministic structural-trace verifier for neural-network training steps — a 26-rule reconciler that re-derives gradients, signals, parameter updates, Adam/AdamW moment state, and PyTorch-style SGD momentum buffer state (classical + Nesterov + dampening) from named factors and emits canonical bytewise JSONL receipts. In the Csmith/CompCert lineage of *"the oracle must not consult the artifact it judges."*
+A deterministic 26-rule verifier for neural-network training steps. You hand it a receipt naming every factor that contributed to one gradient update; the reconciler re-derives every claim and rejects on disagreement. In the Csmith/CompCert lineage of *"the oracle must not consult the artifact it judges."*
 
-> **Status: mid-v0 (v0.10.1).** The core engine and reconciler are real and shipping. CPU-only. SGD + Adam + AdamW + PyTorch-style SGD momentum (classical + Nesterov + dampening) supported via hand-authored sidecars; **the live PyTorch helper now matches the verifier surface** — `scripts/extract/pytorch.py` extracts PyTorch SGD + Adam + AdamW + sgd_momentum (with the load-bearing `momentum_buffer` sign-flip at the extraction boundary). Single-file, repo-script-only, no pip distribution. The helper is **observer-only** — Rule 14 (engine-recompute differential) remains the authority on every helper-emitted sidecar regardless of what the helper's forensic metadata claims (Csmith/CompCert + Fang et al. 2023 PoL spoofing doctrine). JAX live helper v0.11 (adopter-pull triggered); TF live helper v0.12+. Hand-authored JAX/TF sidecars continue to work unchanged. SGD coupled L2 weight decay deferred to v0.11 (Rule 7 third branch). See [What's not in this version (yet)](#whats-not-in-this-version-yet) and [`docs/live-helpers.md`](./docs/live-helpers.md) before you pick this up for production work.
+> **Status: mid-v0 (v0.10.3).** CPU-only. Verifier covers SGD + Adam + AdamW + PyTorch-style SGD momentum (classical + Nesterov + dampening).
+> Live PyTorch helper (`scripts/extract/pytorch.py`) covers the same optimizer matrix. Observer-only — [Rule 14](./docs/reconciliation.md) is the authority.
+> No tag · no npm publish · no v1 framing until the [v1.0 gaps](#whats-not-in-this-version-yet) close. See [`docs/live-helpers.md`](./docs/live-helpers.md) before production use.
 
 ## 30-second quickstart
 
 ```bash
 pnpm add @mcptoolshop/backprop-trace
 
-# 1. Success path — the verifier accepts a well-formed receipt
+# 1. Success path — verifier accepts a well-formed receipt
 npx bp verify mazur
-# exit 0 — 16 rules pass on the bundled Mazur 2-2-2 fixture
-#          (schema + reconcile + engine-reproduce + byte-equal-vs-golden)
+# exit 0 — schema + reconcile + engine-reproduce + byte-equal-vs-golden
 
-# 2. Rejection path — the verifier rejects a deliberately-broken receipt
+# 2. Rejection path — verifier rejects a deliberately-broken receipt
 npx bp reconcile receipt node_modules/@mcptoolshop/backprop-trace/fixtures/bad/mazur.bad-gradient.jsonl
 # exit 1 — Rule 4: update.gradient mismatch on w5
-# (the fixture is broken on purpose; the verifier must reject it
-#  BEFORE consulting fixture_status metadata — the anti-circularity ratchet)
+# (the fixture is broken on purpose; the verifier rejects it BEFORE
+#  consulting fixture_status metadata — the anti-circularity ratchet)
 
 # 3. Canonical bytes — what an attestation envelope would wrap
 npx bp generate mazur | sha256sum
 # 9-sig-fig canonical bytes (V8/Node 22.x) — in-toto v1 attestation seam
 ```
 
-The Mazur 2-2-2 is the most-cited single-step backprop walkthrough on the open web (Matt Mazur, 2015 — [mattmazur.com/2015/03/17/a-step-by-step-backpropagation-example](https://mattmazur.com/2015/03/17/a-step-by-step-backpropagation-example/)). It's the hero fixture because every number in it is derivable by hand. For your own trace, see [Bring your own training trace](#bring-your-own-training-trace).
+The Mazur 2-2-2 is the most-cited single-step backprop walkthrough on the open web ([Matt Mazur, 2015](https://mattmazur.com/2015/03/17/a-step-by-step-backpropagation-example/)). Every number in it is derivable by hand.
 
 ## What this is
 
-backprop-trace is a numerical-correctness verifier for neural-network training steps. You hand it a receipt — a JSONL record naming every factor that contributed to a single gradient update — and the reconciler walks 26 rules that re-derive every claim from the named factors. If any rule disagrees within hybrid tolerance (`atol + rtol`, symmetric max form), the receipt is rejected. Multi-step observer-mode ingestion (v0.8+) produces one verified receipt per training step plus cross-step chain integrity checks (Rules 9 + 10) and optional bundle-integrity binding (Rule 17, GATED). Batched observer-mode ingestion (v0.9+) accepts multi-sample training steps with per-sample (`forward`, `loss`) data and reduced (`gradient`, `update`) values; Rule 18 verifies the batch reduction (mean vs sum) and Rule 19 verifies the sample-set is coherent. Adam + AdamW observer-mode ingestion (v0.9.1+) accepts per-update `(m, v)` state and top-level `optimizer_config`; Rules 22, 23, 24 verify the moment recurrences, bias correction, and parameter update against Kingma & Ba 2014 Algorithm 1. PyTorch-style SGD momentum observer-mode ingestion (v0.9.2+, widened to Nesterov + dampening in v0.9.3) accepts per-update `{buffer}` state; Rule 21 verifies the PyTorch `torch.optim.SGD` buffer recurrence + parameter update against Sutskever et al. 2013 / Polyak 1964 / PyTorch (`buffer_t = mu * buffer_{t-1} + (1 - tau) * gradient`; `effective = gradient + mu * buffer_t` when nesterov else `buffer_t`; `update = lr * effective`). Rules 25, 26 verify multi-step optimizer-state chain + config constancy across all stateful optimizers. None of this validates the overall training run; only that each recorded step (per sample, then reduced) is mathematically consistent and that the recorded chain is intact.
+A numerical-correctness verifier for one training step. The reconciler walks 26 rules that re-derive each claim from the named factors. If any rule disagrees within hybrid tolerance (`atol + rtol`), the receipt is rejected. Multi-step (Rules 9 + 10), batched (Rules 18 + 19), Adam moment recurrences (Rules 22-24), SGD momentum recurrence (Rules 20 + 21a/21b/21c + 25 + 26), and engine-recompute differential on imported framework traces (Rule 14) cover the production-relevant surfaces.
 
-**Trust-framing caveat (load-bearing).** Rules 21 (PyTorch-style SGD momentum — classical + Nesterov + dampening), 22, 23, 24 (Adam/AdamW math), Rule 17 (bundle binding), and Rules 18, 19 (batch reduction) are **structural consistency checks, NOT producer-authenticity checks**. An attacker who controls every byte of the sidecar and recomputes a consistent `(g, m, v, update)` quadruple passes Rules 22-24 trivially — analogous to the [Fang et al. 2023 EuroS&P spoofing class against Proof-of-Learning](https://arxiv.org/abs/2208.03567) ("'Adversarial Examples' for Proof-of-Learning"; the original PoL construction is [Jia et al. 2021 IEEE S&P](https://arxiv.org/abs/2103.05633)). For producer-identity binding, combine the rules with Rule 16 (`attestor.signed_subject_digest`), an external Sigstore / cosign signature, or an out-of-band attestation. backprop-trace is a **per-step structural complement** to PoL, not a replacement; both PoL and backprop-trace are themselves spoofable in isolation.
+It does **not** validate the overall training run, prove the model is correct, or replace an experiment tracker. It proves each recorded step is mathematically consistent and that the chain is intact. Adversarial corpora prove a verifier ([Csmith PLDI 2011](https://users.cs.utah.edu/~regehr/papers/pldi11-preprint.pdf); [CompCert CACM 2009](https://xavierleroy.org/publi/compcert-CACM.pdf)) — every rule ships with a paired bad fixture under [`fixtures/bad/`](./fixtures/bad) that the verifier must reject *before* reading any `fixture_status` metadata.
 
-The doctrinal anchor is Csmith (Yang, Chen, Eide, Regehr — PLDI 2011, [https://users.cs.utah.edu/~regehr/papers/pldi11-preprint.pdf](https://users.cs.utah.edu/~regehr/papers/pldi11-preprint.pdf)) and CompCert (Leroy, CACM 2009, [https://xavierleroy.org/publi/compcert-CACM.pdf](https://xavierleroy.org/publi/compcert-CACM.pdf)): adversarial corpora prove a verifier, passing tests do not. Every reconciler rule ships with a deliberately-broken fixture in [`fixtures/bad/`](./fixtures/bad) that the verifier must reject *before* reading any `fixture_status` lifecycle metadata. This anti-circularity discipline — the oracle must not consult the artifact it judges — is the load-bearing property.
+## Live PyTorch helper (v0.10+)
 
-## What this is *not*
+Single auditable Python file. No pip package by design — copy it into your repo, read it, run it.
 
-- **Not an experiment tracker.** If you want loss curves, dashboards, or longitudinal run storage, use [MLflow](https://mlflow.org), [Weights & Biases](https://wandb.ai), or [TensorBoard](https://www.tensorflow.org/tensorboard). Those log what the trainer claims happened. backprop-trace re-derives whether the math is internally consistent. Complementary, not overlapping.
-- **Not Proof-of-Learning or zkML.** The PoL line (Jia et al., IEEE S&P 2021 — [arxiv.org/abs/2103.05633](https://arxiv.org/abs/2103.05633)) was shown to be forgeable on real training (Fang et al., EuroS&P 2023 — [https://experts.illinois.edu/en/publications/proof-of-learning-is-currently-more-broken-than-you-think/](https://experts.illinois.edu/en/publications/proof-of-learning-is-currently-more-broken-than-you-think/)). zkML/opML (EZKL, Modulus, ORA) produces cryptographic or economically-backed proofs for trustless on-chain settlement. backprop-trace is non-cryptographic, single-step, audience-is-a-human-or-CI-reviewer.
-- **Not supply-chain attestation.** [Sigstore model-signing](https://github.com/sigstore/model-transparency), [SLSA-for-models](https://slsa.dev), and [CycloneDX ML-BOM](https://cyclonedx.org/capabilities/mlbom/) attest that *artifact X was produced by pipeline Y*. backprop-trace attests that *this update is mathematically derivable from these factors*. Complementary — an ML-BOM can reference a backprop-trace receipt as an internal-consistency predicate.
+```bash
+# 1. Install + copy the helper
+pnpm add @mcptoolshop/backprop-trace
+npx bp examples pytorch --print > pytorch_trace_helper.py
+
+# 2. Wrap your training loop (5-line diff)
+#    from pytorch_trace_helper import TraceDumper
+#    dumper = TraceDumper(model, optimizer, loss_fn, out="trace.jsonl")
+#    with dumper.step(inputs=..., targets=...):
+#        optimizer.zero_grad(); loss.backward(); optimizer.step()
+python my_train.py
+
+# 3. Verify
+npx bp import pytorch trace.jsonl | npx bp verify multi -
+# exit 0 — clean · 1 — Rule violation · 2 — I/O error
+```
+
+The helper emits a `framework-trace.v0.7.0` sidecar with a forensic `helper` block (name, version, source_hash, framework version, runtime, extraction timestamp). The block is **not a credential** — Rule 14 (engine-recompute differential) is the authority on every helper-emitted sidecar regardless of what the helper claims. A spoofed/wrong/missing `source_hash` does NOT bypass Rule 14. See [`docs/live-helpers.md`](./docs/live-helpers.md) for the trust-boundary statement, the forbidden list, the 9-fixture adversarial catalog, and the no-pip-distribution flip-signal contract.
+
+**Supported (v0.10.x)**: PyTorch SGD + Adam + AdamW + sgd_momentum (classical/Nesterov/dampening, with the `momentum_buffer` ascent→descent sign-flip per [PyTorch issue #1099](https://github.com/pytorch/pytorch/issues/1099)). CPU-first. Single + multi-step.
+**Rejected at boundary**: AMP/autocast, CUDA/MPS/XLA, SGD coupled-L2 weight decay, AMSGrad/NAdam/RAdam/Lion/LBFGS, multi-hidden-layer topologies. Hand-authored sidecars for those frameworks/optimizers continue to work via the standard `bp import` path.
+
+## What this isn't
+
+- **Not an experiment tracker.** Use [MLflow](https://mlflow.org), [Weights & Biases](https://wandb.ai), [TensorBoard](https://www.tensorflow.org/tensorboard) — those log claims; backprop-trace re-derives whether the math is internally consistent.
+- **Not Proof-of-Learning or zkML.** [PoL](https://arxiv.org/abs/2103.05633) was shown forgeable on real training ([Fang et al. EuroS&P 2023](https://arxiv.org/abs/2208.03567)); zkML produces cryptographic proofs. backprop-trace is non-cryptographic, single-step, audience-is-a-human-or-CI-reviewer.
+- **Not supply-chain attestation.** [Sigstore model-signing](https://github.com/sigstore/model-transparency), [SLSA-for-models](https://slsa.dev), [CycloneDX ML-BOM](https://cyclonedx.org/capabilities/mlbom/) attest pipeline provenance; backprop-trace attests numerical consistency. An ML-BOM can reference a backprop-trace receipt as an internal-consistency predicate.
 
 ## Threat model
 
-backprop-trace is a deterministic verifier: in scope is any receipt that should be rejected but is accepted — schema bypass, NaN/Infinity poisoning, canonical-emission divergence, anti-circularity violations (the reconciler consulting `fixture_status` before completing rule checks), and engine-recompute disagreement on imported framework traces. Out of scope is the trustworthiness of the training run itself, the correctness of the model being trained, side-channel or timing attacks against the verifier process, and anything beyond the receipt-acceptance decision. Determinism is bounded: byte-identical output is guaranteed only across the same backprop-trace version, the same Node.js major (currently 22.x), and the same canonical-emission spec version. Cross-engine (Hermes, JSC, Bun-JSC) and cross-Node-major (24.x, 26.x, …) reproduction are non-goals. The verifier trusts the receipt format and the canonical-emission contract; it does not trust the producer. See [SECURITY.md](./SECURITY.md) for the disclosure timeline, severity rubric, and full enumeration.
+In scope: any receipt that should be rejected but is accepted — schema bypass, NaN/Infinity poisoning, canonical-emission divergence, anti-circularity violations, engine-recompute disagreement on imported sidecars. Out of scope: trustworthiness of the training run itself, side-channel attacks on the verifier process. Determinism is bounded: byte-identical output is guaranteed only across the same backprop-trace version, Node.js 22.x, and the same canonical-emission spec. See [SECURITY.md](./SECURITY.md) for the full enumeration + disclosure timeline.
 
 ## Install
 
 ```bash
-pnpm add @mcptoolshop/backprop-trace
-# or
-npm install @mcptoolshop/backprop-trace
+pnpm add @mcptoolshop/backprop-trace   # or: npm install @mcptoolshop/backprop-trace
 ```
 
 Pinned to Node 22.x (V8 fdlibm `Math.exp` determinism is load-bearing — see [`docs/computation-order.md`](./docs/computation-order.md)).
 
-## CLI usage
+## CLI
 
-v0.9.3 ships the same 19 subcommands as v0.9. Full reference: [`docs/cli.md`](./docs/cli.md). v0.9.3 adds NO new subcommands — Nesterov + dampening (like Adam/AdamW in v0.9.1 and classical sgd_momentum in v0.9.2) is a property of the sidecar (declared via the optional `optimizer.nesterov` boolean + `optimizer.dampening` number ∈ [0, 1)), not a CLI verb. Same dispatch pattern as v0.9 batched ingestion.
+Full reference: [`docs/cli.md`](./docs/cli.md).
 
-```
-bp reconcile receipt <file>                Reconcile a receipt against the 25 rules (Rule 21 reserved for v0.9.2 momentum).
-bp verify mazur [<file>]                   Full gate (Mazur 2-2-2): schema + reconcile + engine-reproduce + byte-equal + drift.
-bp verify general <file>                   Generalized verify for any v0.2+ receipt (XOR, iris, softmax+CE, custom).
-bp verify multi <file.jsonl>               Multi-record JSONL; per-record Rules 1-8 + cross-record Rules 9 + 10.
-bp generate mazur [--out F]                Re-run the Mazur engine, emit canonical bytes.
-bp generate xor [--out F]                  Re-run the XOR engine, emit canonical bytes.
-bp generate iris [--out F]                 Re-run the iris engine, emit canonical bytes.
-bp generate from-config <file>             Read a topology+input JSON, emit a canonical receipt.
-bp scaffold topology --topology T          Write a sample input file (T = mazur|xor|iris).
-bp validate-input <file>                   Schema-validate an input config without running the engine.
-bp validate <file>                         Schema-only validation of a receipt (auto-detects v0.1/0.2/0.3/0.4).
-bp examples pytorch [--print]              v0.10 — print path of (or cat) the bundled PyTorch live helper.
-bp import pytorch <sidecar.jsonl>          Ingest a PyTorch framework trace (single-step, batched or not); emit observer-mode receipt + Rule 14 diff.
-bp import jax <sidecar.jsonl>              Ingest a JAX framework trace; same shape as PyTorch.
-bp import tensorflow <sidecar.jsonl>       Ingest a TensorFlow framework trace; same shape as PyTorch / JAX.
-bp import pytorch multi <sidecar.jsonl>    Ingest a PyTorch multi-step trace (JSONL stream; each record batched or not); emit N observer-mode receipts.
-bp import jax multi <sidecar.jsonl>        Ingest a JAX multi-step trace; same shape as PyTorch.
-bp import tensorflow multi <sidecar.jsonl> Ingest a TensorFlow multi-step trace; same shape as PyTorch / JAX.
-```
+| Verb | Purpose |
+|---|---|
+| `bp reconcile receipt <file>` | Run all 26 rules; exit 1 on first failure |
+| `bp verify mazur` | Full gate on the bundled Mazur fixture |
+| `bp verify general <file>` | Generalized gate (v0.2+ receipts: XOR, iris, softmax+CE, observer-mode) |
+| `bp verify multi <file.jsonl>` | Multi-record JSONL + cross-record Rules 9/10 |
+| `bp generate {mazur,xor,iris}` | Re-run the named engine, emit canonical bytes |
+| `bp generate from-config <file>` | Re-run engine from a topology+input JSON |
+| `bp scaffold topology --topology mazur\|xor\|iris` | Write a starter input config |
+| `bp validate-input <file>` | Schema-validate a topology+input config |
+| `bp validate <file>` | Schema-validate a receipt (auto-detects v0.1-v0.7) |
+| `bp import {pytorch,jax,tensorflow} [multi] <sidecar>` | Ingest external framework trace |
+| `bp examples pytorch [--print]` | Print path of (or cat) the bundled PyTorch helper |
 
-Batched sidecars are detected by the presence of a top-level `batch` block in the sidecar (no CLI flag, no new subcommand). Per-framework subcommand discipline still applies — `bp import pytorch` rejects JAX sidecars and vice versa.
+Common flags: `--out <file>`, `--json`, `--verbose`/`-V`, `--color=auto\|never\|always`, file arg `-` = stdin. Exit codes: `0` pass · `1` verification failure · `2` usage/I-O · `3` invalid CLI arg · `4` framework not implemented.
 
-Common flags (see [`docs/cli.md`](./docs/cli.md)):
-
-- `--out <file>` — write to file instead of stdout
-- `--json` — machine-readable JSON output (CI consumers)
-- `--verbose`, `-V` — diagnostic stderr before the run
-- `--color=auto|never|always` — color output; honors `NO_COLOR`
-- File argument `-` reads from stdin (`reconcile receipt`, `validate`, `verify general`)
-
-Exit codes: `0` pass · `1` verification failure · `2` usage or I/O error · `3` invalid CLI argument · `4` framework not implemented.
-
-## Library usage
+## Library
 
 ```ts
 import {
-  reconcileReceipt,
-  runMazurStep,
-  MAZUR_INPUT,
-  validateReceiptSchema,
-  hashReceipt,
-  verifyEngineReproduces,
-  importPytorchSidecar,
-  importJaxSidecar,
-  importTensorflowSidecar,
+  reconcileReceipt, runMazurStep, MAZUR_INPUT,
+  validateReceiptSchema, hashReceipt, verifyEngineReproduces,
+  importPytorchSidecar, importJaxSidecar, importTensorflowSidecar,
 } from '@mcptoolshop/backprop-trace';
 
-// Engine-authored receipt (built-in Mazur / XOR / iris path)
 const receipt = runMazurStep(MAZUR_INPUT);
+const validated = validateReceiptSchema(receipt);    // schema gate
+const result = reconcileReceipt(receipt);             // 26-rule gate
+const sha = hashReceipt(receipt);                     // in-toto seam
+const repro = verifyEngineReproduces(receipt);        // bit-equal recompute
 
-const validated = validateReceiptSchema(receipt);
-if (!validated.ok) { console.error(validated.errors); process.exit(1); }
-
-const result = reconcileReceipt(receipt);
-if (!result.ok) { console.error(result.failures); process.exit(1); }
-
-const sha = hashReceipt(receipt);                  // in-toto v1 attestation seam
-const repro = verifyEngineReproduces(receipt);     // confirm engine reproduces bit-equal
-
-// External framework trace (observer-mode receipt path — v0.6+)
-const { emittedBytes, receipt: imported, differentialPassed } =
-  importPytorchSidecar(sidecarBytes, { importTimestamp: '2026-05-17T00:00:00Z' });
-if (!differentialPassed) { /* engine recomputation disagreed; see receipt.attestor */ }
+const { receipt: imported, differentialPassed } =
+  importPytorchSidecar(sidecarBytes);                 // observer-mode + Rule 14
 ```
 
-Subpath imports: `./reconcile`, `./engine`, `./general-engine`, `./mazur`, `./topology`, `./activations`, `./emit`, `./format`, `./runtime-format`, `./validate`, `./parse`, `./parse-input`, `./hash`, `./schema-loader`, `./verify-engine`, `./extract`, `./import-pytorch`, `./import-jax`, `./import-tensorflow`, `./import-observer`, `./schema`, `./schema/0.1.0`, `./schema/0.2.0`, `./schema/0.3.0`, `./schema/receipt-0.4.0`, `./schema/0.4.0` (topology-input), `./schema/framework-trace-0.1.0`.
-
-## Bring your own training trace
-
-The v0.6 external-ingestion path lets PyTorch / JAX / TensorFlow users verify their own single-step or multi-step backprop traces, batched or unbatched, against the same 19 rules — but **today the sidecar is hand-authored**. There is no `pip install backprop-trace-pytorch` helper yet. To produce a sidecar:
-
-1. Read the [`framework-trace.v0.1.0`](./schemas/framework-trace.v0.1.0.json) schema (single-step), [`framework-trace.v0.2.0`](./schemas/framework-trace.v0.2.0.json) (multi-step, v0.8+), or [`framework-trace.v0.3.0`](./schemas/framework-trace.v0.3.0.json) (batched, v0.9+). All three define a JSONL contract for a training step (topology + input + forward + gradients + parameters_before + parameters_after + provenance); v0.2.0 adds optional `trace_id` + `step_index`; v0.3.0 adds optional `batch` (size, sample_order, reduction) + `per_sample` (per-sample inputs/targets/forward/loss).
-2. Extract those values from your training step (PyTorch `autograd`, JAX `grad`/`value_and_grad`, TF `tf.GradientTape` — all expose the necessary per-tensor numerics).
-3. Emit the sidecar as canonical JSONL (decimal strings, not binary floats — see [`docs/canonical-emission.md`](./docs/canonical-emission.md)). For single-step, one JSON object. For multi-step, one JSON object per line, in step order.
-4. Run `bp import pytorch <sidecar.jsonl>` for one step, or `bp import pytorch multi <sidecar.jsonl>` for a multi-step stream. Same for `jax` / `tensorflow`.
-5. The importer produces one **observer-mode receipt** per step: the framework's claims live as canonical fields; the backprop-trace engine recomputes the same step and runs **Rule 14** as a differential check. Disagreement = your extractor lied, or your framework drifted, or something is wrong with the trace.
-
-This is a real workflow today, but it is friction-heavy. See [What's not in this version (yet)](#whats-not-in-this-version-yet) for the live-helper packaging gap.
-
-Per-framework subcommand discipline is enforced: `bp import pytorch` rejects JAX sidecars and vice versa. No auto-detection (no live framework runtime dependency in this package — by design). Multi-step bundles also reject heterogeneous-framework streams — all records in one bundle must share `source_framework.name`.
-
-### Multi-step ingestion (v0.8+)
-
-Multi-step observer-mode lets you ingest a 2+ step training trace as a single JSONL stream — one record per training step in one file. The importer hashes the whole stream once, emits one observer-mode receipt per step (one JSONL line per receipt) with shared `trace_id` + dense `step_index` + identical `attestor.import_provenance.source_hash`, and runs **Rule 14** (engine-recompute differential) per step at import time. The output is pipe-ready for `bp verify multi`, which adds cross-step **Rules 9** (parameter chain: `parameters_before[N]` = prior `parameters_after[N-1]`) and **10** (trace identity: shared `trace_id` + sequential `step_index`):
-
-```bash
-bp import pytorch multi train.multi-step.sidecar.jsonl | bp verify multi -
-# exit 0 — per-step Rules 1-8 + Rule 14 pass on every step,
-#          cross-step Rules 9 + 10 pass on the chain
-```
-
-**Rule 17 (Trace-bundle binding, GATED).** When any receipt in the trace declares `attestor.bundle_root_digest`, ALL receipts must carry the same value, and that value must equal the recomputed canonical-byte digest of the receipt stream (with `bundle_root_digest` stripped). This catches **bundle-integrity** failures — accidental splice, post-binding mutation, inconsistent bundle roots when the digest is not recomputed. It does **NOT** prove producer authenticity: an attacker who controls all receipt bytes and recomputes the bundle digest passes Rule 17 trivially. For producer-identity binding, combine `bundle_root_digest` with Rule 16 (`attestor.signed_subject_digest`), an external signature, or an out-of-band attestation. Rule 17 is a tamper-evidence layer, not an authentication layer.
-
-The bundled hero fixture is a 3-step PyTorch softmax+CE SGD trace on a 2-2-3 network. Loss does not converge — it's a pedagogical trace, not a real training run. The verifier checks that the recorded updates are mathematically consistent with the recorded factors, not that the training is good.
-
-### Batched ingestion (v0.9+)
-
-Batched observer-mode lets you ingest a multi-sample training step (the default shape produced by every PyTorch / JAX / TensorFlow training loop with `batch_size > 1`). The sidecar declares a top-level `batch` block (size + sample_order + reduction) plus a `per_sample` block (per-sample inputs / targets / forward / loss). Top-level `inputs` / `targets` / `forward` carry the first sample's values by canonical convention; top-level `loss.per_output` + `loss.total` carry the reduced values; `loss.per_sample` carries the per-sample total loss for Rule 18; `updates[].gradient` is the reduced gradient the optimizer actually applied.
-
-```bash
-# Single-step batched (4 samples in one bundle):
-bp import pytorch train.batched.sidecar.jsonl
-
-# Multi-step + batched (2 steps × 4 samples each):
-bp import pytorch multi train.multi-step-batched.sidecar.jsonl | bp verify multi -
-# exit 0 — per-step + per-sample Rule 14 differentials pass,
-#          Rule 18 batch reduction passes, Rule 19 sample-set coherence passes,
-#          cross-step Rules 9 + 10 pass on the chain,
-#          Rule 17 bundle binding passes on the bundle digest
-```
-
-**Rule 18 — Batch reduction consistency (GATED).** When `batch` is present AND `loss.reduction` is `mean` or `sum`, asserts `loss.total == reduction(loss.per_sample.values(), batch.reduction)`. Catches the canonical mean-vs-sum confusion attack (a producer claiming `reduction: "mean"` but emitting `loss.total = sum(per_sample)`, off by a factor of N).
-
-**Rule 19 — Sample-set coherence (GATED, precisely scoped).** When `batch.sample_order` is present, every ordered per-sample projection used for reduction / emission / canonical digest construction MUST be derived by iterating exactly that order. Missing, duplicate, or out-of-order sample IDs fail. Concretely: per-sample maps' key sets (`loss.per_sample`, top-level `per_sample`) MUST equal the set of `batch.sample_order` entries.
-
-**v0.9.0 ships REDUCED gradients only.** Per-sample gradients are deferred to v0.9.x / v0.10 — the per_sample block carries `inputs`, `targets`, `forward`, `loss` but NOT per-sample gradients. The top-level `updates[].gradient` is the reduced gradient the optimizer actually applied. Rule 14 (engine recompute) verifies per-sample forward + per-sample loss + the reduced gradient via batch-aware `runBatchedGeneralStep`.
-
-The bundled batched hero fixture is a PyTorch 4-sample softmax+CE SGD trace on the same 2-2-3 network. A multi-step batched fixture (2 steps × 4 samples) is also bundled to demonstrate the cross-step + bundle-binding flow with batching active.
+Subpath imports: `./reconcile`, `./engine`, `./general-engine`, `./mazur`, `./topology`, `./activations`, `./emit`, `./validate`, `./parse`, `./parse-input`, `./hash`, `./schema-loader`, `./verify-engine`, `./extract`, `./import-pytorch`, `./import-jax`, `./import-tensorflow`, `./import-observer`, plus the schema family `./schema/...`.
 
 ## The 26 rules
+
+Full statements + adversarial fixtures: [`docs/reconciliation.md`](./docs/reconciliation.md).
 
 | # | Rule |
 |---|---|
 | 0 | Structural-failure sentinel (schema-level) |
 | 0.8 | Probability bounds — softmax outputs in [0, 1] |
-| 1 | Output error signal consistency |
-| 2 | Downstream contribution and backpropagated sum |
-| 3 | Hidden error signal consistency |
-| 4 | Update gradient consistency |
-| 5 | Update value consistency (v0.9.1: GATED OFF for non-SGD; Adam/AdamW use Rule 24) |
-| 6 | Weight progression (v0.9.1: AdamW branch adds `(1 - lr*wd)` decoupled-decay factor on `weight_after`) |
-| 7 | Final state consistency (v0.9.1: AdamW branch adds `(1 - lr*wd)` decoupled-decay factor on `parameters_after`) |
+| 1-4 | Error signals (output, downstream, hidden) + update gradient consistency |
+| 5-7 | Update value, weight progression, final state (AdamW branch on Rules 6/7 for decoupled wd) |
 | 8 | Provenance reference consistency |
-| 9 | Multi-step parameter chain (`parameters_before[N]` = prior `parameters_after[N-1]`) |
-| 10 | Multi-step trace identity (shared `trace_id` + sequential `step_index`) |
-| 11 | Softmax normalization (`sum(forward[output].out) == 1.0`) |
-| 12 | Loss formula consistency (half-squared-error + cross-entropy-softmax branches; skipped for batched receipts — Rule 18 handles batched loss) |
-| 13 | Dual-form consistency (softmax+CE jacobian decomposition; GATED — fires only when `dual_form` present) |
-| 14 | Engine-recompute differential (MANDATORY for observer-mode imported receipts; batch-aware via `runBatchedGeneralStep`; v0.9.1 Adam-aware — compares engine `state_after` against stored) |
-| 15 | Skip-basis required (closed enum `EXTERNAL_TRUST_BASIS`, 4 values) |
-| 16 | Attestation digest binding (GATED — fires when `attestor.signed_subject_digest` present) |
-| 17 | Trace-bundle binding — bundle-integrity / post-binding mutation detection (GATED — fires when `attestor.bundle_root_digest` present; NOT a producer-authenticity check) |
-| 18 | Batch reduction consistency — `loss.total == reduction(loss.per_sample.values(), batch.reduction)` (GATED — fires when `batch` is present AND `loss.reduction` in {`mean`, `sum`}; catches mean-vs-sum confusion) |
-| 19 | Sample-set coherence — every per-sample map's key set equals `batch.sample_order` set (GATED — fires when `batch.sample_order` is present; missing, duplicate, or extra sample IDs in any ordered per-sample projection used for reduction / emission / canonical digest construction fail) |
-| 20 | **v0.9.1+** Optimizer-state shape consistency — Adam/AdamW `{m, v}` or sgd_momentum `{buffer}` state presence + hyperparameter presence (GATED on stateful-optimizer updates) |
-| 21 | **v0.9.2 / v0.9.3** PyTorch-style SGD momentum (Sutskever et al. 2013 ICML / Polyak 1964 / PyTorch `torch.optim.SGD`): 21a `buffer_after == momentum * buffer_before + (1 - dampening) * gradient`; 21b `effective = gradient + momentum * buffer_after` if `nesterov` else `buffer_after` (derived, never stored); 21c `update == learning_rate * effective` (descent direction). GATED on `name === "sgd_momentum"`. v0.9.3 widens `nesterov` to boolean, `dampening` to `number ∈ [0, 1)`; PyTorch's `nesterov=true && dampening>0` rejected at both schema and engine (mirrors `torch.optim.SGD` `ValueError("Nesterov momentum requires a momentum and zero dampening")`) |
-| 22 | **v0.9.1** Adam moment recurrences — 22a `m_after == beta1 * m_before + (1-beta1) * gradient`; 22b `v_after == beta2 * v_before + (1-beta2) * gradient²` (Kingma & Ba 2014 Alg 1 lines 9-10) |
-| 23 | **v0.9.1** Adam bias correction + t consistency — `optimizer_config.t == step_index + 1` when both present |
-| 24 | **v0.9.1** Adam/AdamW parameter update — `update == lr * m_hat / (sqrt(v_hat) + epsilon)`, **epsilon OUTSIDE sqrt** (PyTorch convention; Kingma & Ba 2014 Alg 1 line 13) |
-| 25 | **v0.9.1** Multi-step optimizer-state chain — `state_before[step+1] == state_after[step]` for `m, v`; `t` monotonic +1 (analog of Rule 9) |
-| 26 | **v0.9.1** Multi-step optimizer-config constancy — `{name, beta1, beta2, epsilon, weight_decay}` identical across bundle; `learning_rate` EXCLUDED (LR schedules legitimate); `t` EXCLUDED (Rule 25 handles it) |
-
-Full statements in [`docs/reconciliation.md`](./docs/reconciliation.md). Every rule ships with a paired bad fixture in `fixtures/bad/` per the Csmith doctrine.
+| 9-10 | Multi-step parameter chain + trace identity |
+| 11-13 | Softmax normalization + loss formula + dual-form (GATED) |
+| 14 | Engine-recompute differential (MANDATORY on observer-mode imports) |
+| 15-17 | Skip-basis + signed-digest binding + bundle-root binding (GATED) |
+| 18-19 | Batch reduction consistency + sample-set coherence (GATED) |
+| 20 | Optimizer-state shape (Adam `{m, v}` / sgd_momentum `{buffer}`) |
+| 21 | **PyTorch-style SGD momentum**: 21a buffer recurrence + 21b effective direction + 21c parameter update |
+| 22-24 | Adam moment recurrences + bias correction + parameter update (epsilon OUTSIDE sqrt) |
+| 25-26 | Multi-step optimizer-state chain + optimizer-config constancy |
 
 ## Determinism scope
 
-What's contractual on the pinned matrix (Node 22.x × {ubuntu, macos, windows} × backprop-trace 0.7.x):
+Contractual on Node 22.x × {ubuntu, macos, windows} × backprop-trace 0.10.x: byte-equal goldens (Mazur, XOR, iris, softmax+CE, multi-step, batched, external sidecars); the Mazur anchor `post_update_loss.total = 0.29102777369359933`; per-rule reconciliation within `atol=1e-12`, `rtol=1e-9` for engine-authored.
 
-- Byte-equal `mazur.golden.jsonl` / `xor.golden.jsonl` / `iris.golden.jsonl` / `softmax-ce.golden.jsonl` / `xor-per-neuron-bias.golden.jsonl` / `xor.multi-step.jsonl`
-- Byte-equal external goldens for the bundled framework sidecars: `pytorch.softmax-ce.golden.jsonl`, `jax.softmax-ce.golden.jsonl`, `tensorflow.softmax-ce.golden.jsonl`, `pytorch.softmax-ce.multi-step.golden.jsonl` (v0.8+), `pytorch.softmax-ce.batched.golden.jsonl` + `pytorch.softmax-ce.multi-step-batched.golden.jsonl` (v0.9+)
-- The Mazur 2-2-2 anchor: `post_update_loss.total = 0.29102777369359933` (vs widely-cited downstream `0.291027924` — drift ~1.5e-7; see `fixtures/mazur.published.json` for the ledger)
-- Per-rule reconciliation within hybrid tolerance (`atol = 1e-12`, `rtol = 1e-9` for engine-authored; tighter where the math is exact)
-
-What's NOT contractual:
-
-- Cross-engine (Bun, Deno, browsers) — different `Math.exp` implementations
-- Cross-Node-major (24.x, 26.x, …) — V8 fdlibm port may be revised
-- Arbitrary V8 minor bumps — ECMA-262 §21.3 leaves `Math.exp` precision implementation-defined
-- Bit-stability of values that flow through `Math.exp` (sigmoid, tanh, softmax) across V8 versions
-
-A `Math.exp(-0.5)` canary runs on every CI cell as an early-warning siren for V8 fdlibm drift. A failure means "investigate V8 changelog," not "engine bug."
+NOT contractual: cross-engine (Bun, Deno, browsers); cross-Node-major (24.x+); arbitrary V8 minor bumps. A `Math.exp(-0.5)` canary fires on every CI cell as a V8 fdlibm drift siren.
 
 ## What's not in this version (yet)
 
-backprop-trace v0.7.0 is a **mid-v0 product**. The core engine, the reconciler, the canonical-emission contract, and the external-ingestion path are real and stable. But several things a v1.0 verifier needs are not yet in:
+backprop-trace v0.10.3 is mid-v0. The engine, reconciler, canonical-emission contract, external ingestion path, and PyTorch live helper are real and stable. v1.0 requires these to close:
 
-- **Heterogeneous multi-framework traces.** A multi-step bundle today must come from a single framework — you cannot ingest `[pytorch_step_0, jax_step_1, tensorflow_step_2]` in one stream. Framework switches mid-training are uncommon in practice; this may stay out of scope. *Roadmap target: not before v1.0, may stay out of scope.*
-- **Producer-identity binding on multi-step traces.** Rule 17 (`attestor.bundle_root_digest`) catches bundle-integrity failures — accidental splice, post-binding mutation, inconsistent bundle roots — but does NOT prove producer authenticity. An attacker who controls all receipt bytes and recomputes the bundle digest passes Rule 17 trivially. Producer-identity binding requires combining `bundle_root_digest` with Rule 16's `signed_subject_digest`, an external signature, or an out-of-band attestation. v0.8 ships the bundle-integrity layer; the signature layer is downstream operator work, not a built-in. *Roadmap target: documented today; built-in operator surface may follow.*
-- ~~**Optimizers beyond vanilla SGD.** No Adam, AdamW, momentum, or weight decay.~~ **MOSTLY CLOSED in v0.9.3** — Adam + AdamW shipped in v0.9.1; classical PyTorch-style SGD momentum shipped in v0.9.2; **Nesterov accelerated gradient + dampening shipped in v0.9.3** via `receipt.v0.7.0` + `framework-trace.v0.6.0` forced bump (`nesterov: const false` → `boolean`; `dampening: const 0` → `number ∈ [0, 1)`) + Rule 21 splits to 21a (buffer recurrence with dampening) / 21b (effective direction selection — derived, never stored) / 21c (parameter update). PyTorch's `nesterov=true && dampening>0` ValueError mirrored at both schema (allOf if/then) and engine boundary (`assertOptimizerConfig`). **Sutskever et al. 2013 ICML / Polyak 1964 / PyTorch `torch.optim.SGD` convention** — `lr` outside the buffer so LR schedules don't retroactively rescale momentum history (Rule 26 excludes `learning_rate` from constancy). **AdamW adds decoupled weight decay** (Loshchilov & Hutter 2017 arXiv:1711.05101 Alg 2 line 12 — applied directly to `weight_after`, explicitly NOT folded into the gradient like coupled L2). Adam + momentum rule trust framing (load-bearing): structural consistency checks NOT producer-authenticity (Fang et al. 2023 PoL spoofing class applies). **Remaining**: SGD coupled L2 weight decay (`v0.10` — Rule 7 third branch); AMSGrad / NAdam / RAdam / Lion / per-parameter-group hyperparameters / LR schedules / gradient clipping / mixed precision (`v0.10+`).
-- ~~**Nesterov accelerated gradient + dampening (SGD momentum variants).**~~ **CLOSED in v0.9.3.** Production vision training (timm, fast.ai) commonly uses Nesterov with momentum; v0.9.3 widens `nesterov` to boolean and `dampening` to `number ∈ [0, 1)` via `receipt.v0.7.0` + `framework-trace.v0.6.0`. PyTorch combo rejection (`nesterov=true && dampening>0`) enforced at both schema and engine. Rule 21 splits to 21a/21b/21c — 21a recurrence with dampening (`buffer_t = mu * buffer_{t-1} + (1 - tau) * gradient`), 21b derived `effective` direction (`gradient + mu * buffer_after` if `nesterov` else `buffer_after`; never stored), 21c parameter update (`lr * effective`). v0.9.2 classical-only fixtures remain byte-identical (no schema bump on the wire when `nesterov=false` + `dampening=0`).
-- **Per-sample gradients in batched receipts.** v0.9.0 ships reduced gradients only — the gradient the optimizer actually applied to each parameter is a single scalar (mean or sum across the batch). Per-sample gradients (the full `N × |params|` decomposition) are useful for influence audits and sample-poisoning detection but were deferred to keep the v0.9.0 slice small. *Roadmap target: v0.9.x / v0.10.*
-- **Heterogeneous batch sizes across steps.** A multi-step batched bundle today fixes the batch_size per stream (every step has the same number of samples). Variable-size batching (last-batch-in-epoch having fewer samples) is out of scope for v0.9.0. *Roadmap target: not before v1.0, may stay out of scope.*
-- ~~**Live framework helpers.** The sidecar is hand-authored today; no `pip install backprop-trace-pytorch` package, no `scripts/python-helpers/dump_pytorch_trace.py` ready-to-run extractor. The path from "I have a PyTorch step" to "I have a receipt" is too long.~~ **MOSTLY CLOSED for PyTorch in v0.10.1** — `scripts/extract/pytorch.py` is the single auditable PyTorch helper covering the full PyTorch optimizer matrix the verifier supports: **SGD + Adam + AdamW + sgd_momentum (classical + Nesterov + dampening)**, with the load-bearing `momentum_buffer` sign-flip at the extraction boundary (PyTorch ascent → backprop-trace descent; per PyTorch issue #1099). CPU-first; single-step + multi-step. Workflow: `bp examples pytorch --print > pytorch_trace_helper.py`, then `from pytorch_trace_helper import TraceDumper`. **Observer-only**: helper emits sidecars in `framework-trace.v0.7.0` format (with a FORENSIC `helper` block) — Rule 14 (engine-recompute differential) is the authority. Helper is REJECTED at boundary for AMP / GPU / SGD coupled-L2 / AMSGrad / NAdam / RAdam / Lion / LBFGS / multi-hidden-layer topologies. **No pip package** by design (repo-script-only proves the workflow before committing to a pip surface; flip-signal contract documented in [`docs/live-helpers.md`](./docs/live-helpers.md)). **Remaining**: JAX live helper (`v0.11` — adopter-pull triggered); TensorFlow live helper (`v0.12+`); Lightning/Accelerate integration (`v0.10.x`).
-- **Real-world fixture.** The hero is the Mazur 2-2-2 pedagogical example. A v1.0 verifier should have at least one recognizable architecture (small CNN forward+backward, small transformer block) as a built-in fixture. *Roadmap target: v0.11.*
-- **Adopter validation.** No external researcher case study, no course adopting this for pedagogy, no compliance engineer who used it for an audit bundle. *Roadmap target: before any v1.0 promotion.*
-- **GPU determinism.** Out of scope (and likely will remain so — cuDNN ConvolutionBackwardFilter atomics defeat bit-exactness across runs, [CMU SEI](https://www.sei.cmu.edu/blog/the-myth-of-machine-learning-reproducibility-and-randomness-for-acquisitions-and-testing-evaluation-verification-and-validation/)). The product position is: deterministic CPU corner.
+- **Heterogeneous multi-framework traces** — single-framework bundles only; mixed-framework streams not supported. *May stay out of scope.*
+- **Producer-identity binding on multi-step traces** — Rule 17 catches bundle-integrity failures, not producer authenticity. Combine with Rule 16 / Sigstore / out-of-band attestation. Operator surface, not a built-in.
+- **SGD coupled-L2 weight decay** — Rule 7 third branch; *v0.11.*
+- **AMSGrad / NAdam / RAdam / Lion / per-parameter groups / LR schedules / gradient clipping / mixed precision** — *v0.10+.*
+- **Per-sample gradients in batched receipts** — reduced gradients only today; per-sample decomposition useful for influence audits. *v0.10.x / v0.11.*
+- **Heterogeneous batch sizes across steps** — fixed batch_size per stream. *May stay out of scope.*
+- **JAX / TensorFlow live helpers** — hand-authored sidecars work; live helpers are *v0.11 (JAX, adopter-pull triggered) / v0.12+ (TF).*
+- **Real-world fixture** — Mazur 2-2-2 + softmax+CE + sgd_momentum-Mazur are the heroes; small CNN / transformer-block fixture is *v0.11.*
+- **Adopter validation** — no external researcher case study, no course adoption, no compliance bundle in the wild. *v0.12 before v1.0.*
+- **GPU determinism** — out of scope and likely permanent (cuDNN ConvolutionBackwardFilter atomics defeat bit-exactness per [CMU SEI](https://www.sei.cmu.edu/blog/the-myth-of-machine-learning-reproducibility-and-randomness-for-acquisitions-and-testing-evaluation-verification-and-validation/)). The product position is the deterministic CPU corner.
 
 If your workflow depends on any of these, this isn't the right version for you yet.
 
-## Authoring custom topologies
-
-Drive the engine from a JSON config — no TypeScript edits required:
+## Author a custom topology
 
 ```bash
 bp scaffold topology --topology xor --out my-net.input.json
@@ -273,23 +185,14 @@ bp generate from-config my-net.input.json --out my-net.golden.jsonl
 bp verify general my-net.golden.jsonl
 ```
 
-See [`docs/authoring.md`](./docs/authoring.md) for the walkthrough — input vs receipt schemas, the canonical-emission trust boundary.
+See [`docs/authoring.md`](./docs/authoring.md) — input vs receipt schemas, canonical-emission trust boundary.
 
 ## Where this fits
 
-- **Reproducibility-first paper authors** (NeurIPS/ICML/CoLLAs submitters; REFORMS-aware researchers — Kapoor et al., *Science Advances* 2024, [https://www.science.org/doi/10.1126/sciadv.adk3452](https://www.science.org/doi/10.1126/sciadv.adk3452)) — re-derivable per-step evidence the reviewer runs in 30s.
-- **ML pedagogy** (Karpathy zero-to-hero, university DL courses, ML systems interview prep) — a single named training step with every factor visible and a reconciler that *rejects* deliberately-broken fixtures.
-- **ML framework / compiler engineers** (PyTorch / JAX / MLIR / XLA contributors) — generate a known-good per-op trace for differential testing against new compiler output.
-- **ML compliance / audit engineers** (EU AI Act Article 10 implementers, [https://artificialintelligenceact.eu/annex/4/](https://artificialintelligenceact.eu/annex/4/); SLSA-for-ML consumers) — a per-step receipt format below model-signing, attached to a model card or audit bundle.
-
-## Reference class
-
-- **Proof-of-Learning lineage** — Jia et al. (IEEE S&P 2021, [arxiv.org/abs/2103.05633](https://arxiv.org/abs/2103.05633)) for the structural idea; Fang et al. (EuroS&P 2023) for the honest caveat that PoL is forgeable in practice. backprop-trace scopes down to the determinism-achievable corner: single-step CPU verification.
-- **REFORMS** — Kapoor et al. (*Science Advances* 2024, [https://www.science.org/doi/10.1126/sciadv.adk3452](https://www.science.org/doi/10.1126/sciadv.adk3452)) — 32-item ML reproducibility checklist; receipt-style per-step evidence maps onto items 24-30.
-- **Csmith + CompCert doctrine** — Yang et al. (PLDI 2011) and Leroy (CACM 2009) — adversarial corpora prove a verifier; the oracle must not consult the artifact it judges.
-- **Supply-chain attestation** — in-toto v1, SLSA Provenance v1.0, Sigstore model-transparency ([github.com/sigstore/model-transparency](https://github.com/sigstore/model-transparency)) — backprop-trace receipts can be wrapped as DSSE statement subjects.
-
-NOT zkML (no cryptographic succinctness). NOT opML (no fraud-proof game). NOT an ML metrics logger — backprop-trace writes decimal strings instead of binary floats; closer to Jest snapshots / Rust insta in spirit.
+- **Reproducibility-first paper authors** (NeurIPS/ICML/CoLLAs; [REFORMS](https://www.science.org/doi/10.1126/sciadv.adk3452)-aware) — re-derivable per-step evidence the reviewer runs in 30 seconds.
+- **ML pedagogy** (Karpathy zero-to-hero, university DL courses, interview prep) — a single named training step with every factor visible and a reconciler that *rejects* deliberately-broken fixtures.
+- **ML framework / compiler engineers** (PyTorch / JAX / MLIR / XLA contributors) — known-good per-op trace for differential testing.
+- **ML compliance / audit engineers** ([EU AI Act Article 10](https://artificialintelligenceact.eu/annex/4/); SLSA-for-ML) — per-step receipt below model-signing, attached to a model card or audit bundle.
 
 ## The law stack
 
@@ -301,23 +204,21 @@ From `docs/canonical-emission.md`:
 
 - [`docs/quickstart.md`](./docs/quickstart.md) — five-minute walk-through
 - [`docs/cli.md`](./docs/cli.md) — `bp` subcommand reference
-- [`docs/live-helpers.md`](./docs/live-helpers.md) — v0.10 live PyTorch helper: workflow, trust boundary, scope, adversarial fixture catalog
+- [`docs/live-helpers.md`](./docs/live-helpers.md) — v0.10 live PyTorch helper: workflow, trust boundary, adversarial catalog, no-pip rationale
 - [`docs/authoring.md`](./docs/authoring.md) — author a custom topology
-- [`docs/reconciliation.md`](./docs/reconciliation.md) — the 16 reconciler rules
+- [`docs/reconciliation.md`](./docs/reconciliation.md) — the 26 reconciler rules in full
 - [`docs/topology.md`](./docs/topology.md) — general-topology authoring
-- [`docs/multi-step.md`](./docs/multi-step.md) — multi-step training receipts (engine-authored)
+- [`docs/multi-step.md`](./docs/multi-step.md) — multi-step training receipts
 - [`docs/canonical-emission.md`](./docs/canonical-emission.md) — byte-level encoding contract
-- [`docs/computation-order.md`](./docs/computation-order.md) — IEEE 754 ordering; FMA prohibition; hybrid tolerance; determinism boundary
+- [`docs/computation-order.md`](./docs/computation-order.md) — IEEE 754 ordering; FMA prohibition; determinism boundary
 - [`docs/schema.md`](./docs/schema.md) — field-by-field schema walk-through
 - [`docs/attestation.md`](./docs/attestation.md) — in-toto v1 attestation seam
-- `fixtures/` — canonical goldens (Mazur, XOR, XOR per-neuron-bias, iris, softmax-CE, multi-step XOR), external sidecars + observer-mode goldens (PyTorch, JAX, TensorFlow), deliberately-broken bad-* receipts (one per reconciler rule)
-- `schemas/` — receipt v0.1.0 / v0.2.0 / v0.3.0 / v0.4.0 / v0.5.0 / v0.6.0 / v0.7.0, topology-input v0.4.0, framework-trace v0.1.0 / v0.2.0 / v0.3.0 / v0.4.0 / v0.5.0 / v0.6.0 / v0.7.0 (all closed, `x-order`-annotated, additive)
-- `scripts/extract/pytorch.py` — v0.10 live PyTorch helper (SGD + Adam). Observer-only; emits `framework-trace.v0.7.0` sidecars. See [`docs/live-helpers.md`](./docs/live-helpers.md).
-- `examples/pytorch/extract_step.py` — minimal Mazur 2-2-2 example wrapping the helper around a single training step.
-- [`CONTRIBUTING.md`](./CONTRIBUTING.md) — the law stack, anti-circularity ratchet, bad-receipts-precede-good doctrine
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md) — anti-circularity ratchet; bad-receipts-precede-good doctrine
 - [`SECURITY.md`](./SECURITY.md) — what counts as a vulnerability for a verifier
 - [`CHANGELOG.md`](./CHANGELOG.md) — version-by-version history
 
 ## License
 
-MIT — see `LICENSE`.
+MIT — see [LICENSE](./LICENSE).
+
+<sub>Built by <a href="https://mcp-tool-shop.github.io/">MCP Tool Shop</a></sub>

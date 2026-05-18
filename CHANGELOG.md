@@ -14,6 +14,199 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.10.3] - 2026-05-18
+
+The v0.10.3 cold-read compression + landing page + handbook wave —
+the "make the public-facing story legible" slice. **Not a v1.0.0
+promotion.** **Not a publishing step** — local v0.10.x stretch
+continues; no tag, no npm publish, no GitHub release, no translations.
+
+v0.10.0-v0.10.2 made the verifier surface strong and the distribution
+surface honest. v0.10.3 makes the cold reader's path into the project
+not require having been present for the build arc. Three layers:
+
+(a) **README compressed from 323 → 224 lines**; `package.json`
+description compressed from ~1500 chars → 198 chars. A cold reader
+can now answer in 60 seconds: what is this, what can I run now, what
+does it verify, what does it not prove, how do I use the PyTorch
+helper, why is it still mid-v0. Deep doctrine (Csmith/CompCert/Fang
+PoL framing) preserved but mostly relocated to `docs/live-helpers.md`
++ `docs/reconciliation.md` + the new Handbook security page.
+
+(b) **Landing page** scaffolded via `@mcptoolshop/site-theme init`
+at `site/`. `site-config.ts` hand-written for the v0.10 surface
+(hero with 3 preview cards including the live PyTorch helper, 6
+features sections, 5 code cards). Mid-v0 badge, no npm badge (would
+lie about distribution).
+
+(c) **Handbook** scaffolded via `@mcptoolshop/site-theme handbook
+--accent blue`. Six pages replace the three starter pages:
+`index.md` (0), `getting-started.md` (1), `usage.md` (2),
+`reference.md` (4), `architecture.md` (5), `security.md` (6).
+Starlight v0.36, pagefind search index built. Site renders 7 pages
+(landing + 6 handbook) clean.
+
+### Added
+
+- **`README.md` compressed** to 224 lines. New structure:
+  - 3-line status block (mid-v0 v0.10.3; verifier surface; no
+    publish locks)
+  - 30-second quickstart (existing, kept)
+  - "What this is" — 2 short paragraphs
+  - **NEW** "Live PyTorch helper (v0.10+)" section — copy-the-helper
+    workflow + trust-boundary one-liner + link to docs
+  - "What this isn't" — 3 bullets pointing at MLflow / PoL / SLSA
+  - "Threat model" — 1 paragraph + link to SECURITY.md
+  - CLI table (compressed from prose list)
+  - Library section (~15 lines, key exports + subpath imports)
+  - "The 26 rules" table (kept; this IS the product)
+  - "Determinism scope" — 6 lines + link
+  - "What's not in this version (yet)" — 10 honest bullets
+  - "Author a custom topology" — 6 lines + link
+  - "Where this fits" — 4 bullets (target audiences)
+  - "The law stack" — 1-quote
+  - Links section (curated)
+  - Footer: "Built by MCP Tool Shop" with link
+- **`site/` landing page** via `@mcptoolshop/site-theme init`
+  (default template). `site/src/site-config.ts` rewritten for the
+  v0.10 surface:
+  - Hero: badge "Mid-v0 · CPU-only · open source"; headline
+    "backprop-trace / verifies one training step."; description
+    quoting the Csmith doctrine; primary CTA = Quick start;
+    secondary CTA = Read the Handbook (per playbook lock)
+  - Hero previews: 3 cards (Verify / Reject / Live PyTorch)
+  - Features section: 6 cards covering 26-rule reconciler,
+    anti-circularity, live PyTorch helper, canonical JSONL,
+    sidecar ingestion, distribution integrity
+  - Usage section: 5 code cards (Install / good receipt / bad
+    receipt / live helper workflow / sha256 attestation seam)
+  - No `npmUrl` — package is not yet published (local v0.10.x
+    stretch); adding a broken npm badge would lie about
+    distribution
+- **`site/` handbook** via `@mcptoolshop/site-theme handbook
+  --accent blue`. Six pages replace the 3 starter pages:
+  - `index.md` (order 0): elevator pitch + where to start +
+    status block (mid-v0 v0.10.3; no publish until gaps close)
+  - `getting-started.md` (order 1): prereqs + install + the three
+    commands (accept good / reject bad / canonical hash) with
+    explanation of each
+  - `usage.md` (order 2): Path A (live PyTorch helper — full
+    workflow + scope matrix) + Path B (hand-authored sidecars
+    for any framework) + multi-step + batched + what to do when
+    Rule 14 fails
+  - `reference.md` (order 4): full CLI surface (every verb + flag
+    + exit code) + TypeScript library exports + subpath imports
+    + 26-rule table + closed-enum vocabulary
+  - `architecture.md` (order 5): 6-layer diagram (engine +
+    reconciler + schemas + importer + helper + distribution
+    integrity); trust boundary statement; helper-specific
+    discipline (detach+clone, param_groups walk, sign flip);
+    pack-smoke architecture
+  - `security.md` (order 6): what backprop-trace proves vs.
+    doesn't; the Csmith/CompCert ratchet in 3 places; Fang PoL
+    spoofing analog explanation; forensic helper block trust
+    model; coordinated disclosure pointer to SECURITY.md
+- **`.github/workflows/pages.yml`** — created by `site-theme init`;
+  deploys `site/dist/` to GitHub Pages on push to main
+- **`.gitignore`** extended with `site/dist/`, `site/node_modules/`,
+  `mcptoolshop-backprop-trace-*.tgz`
+- **GitHub repo metadata refreshed**:
+  - `description` bumped to the new 198-char `package.json` text
+  - `homepage` set to `https://mcp-tool-shop-org.github.io/backprop-trace/`
+  - 20 topics curated: kept (backpropagation, neural-network,
+    deterministic, reproducibility, typescript, cli,
+    canonical-emission, jsonl, mcptoolshop, trace-verifier,
+    reconciler, observer-mode-receipts, attestor); added (adam,
+    adamw, sgd-momentum, live-helper, pytorch, jax, tensorflow);
+    removed (mazur, cross-entropy, softmax, pytorch-import,
+    jax-import, tensorflow-import, external-trace-ingestion —
+    replaced with the shorter framework names + live-helper)
+- **Repo-knowledge DB entry refreshed** (`F:/AI/repo-knowledge` —
+  formerly `E:/AI/repo-knowledge`): 4 new notes added
+  - **thesis**: 26-rule verifier; CSC/CC anti-circularity; v0.10
+    PyTorch helper closure; mid-v0 distribution-not-yet
+  - **architecture**: 6-layer diagram in prose; trust boundary;
+    pack-smoke; landing+handbook
+  - **release_summary**: v0.10.3 = README compression + landing
+    page + handbook + metadata refresh; tests unchanged (502)
+  - **next_step**: v0.10.4 pip decision; v0.10.5/v0.11.0
+    publishing; v0.11 JAX helper + coupled-L2 + real-world
+    fixture; v0.12+ TF helper + adopter validation
+  - **convention**: 3 v0.10 doctrines (helper version lockstep,
+    bundled-fixture resolution, build-before-test)
+
+### Changed
+
+- **`package.json` version 0.10.2 → 0.10.3.**
+- **`package.json` description**: ~1500 chars → **198 chars**
+  (`Deterministic 26-rule verifier for neural-network training
+  steps. Re-derives gradients + optimizer state from named
+  factors; emits canonical JSONL. PyTorch helper + sidecar
+  import. Mid-v0; CPU-only.`). Cold reader can decide
+  go/no-go in <10 seconds from the npm registry entry.
+- **`README.md`** — full rewrite, 323 → 224 lines (-30%). Same
+  technical truth; deep doctrine relocated to `docs/` + Handbook.
+  All 16 relative links verified resolving.
+- **`README.md` badges**: kept CI, MIT license; added Landing Page
+  badge; **dropped npm badge** (package not yet published; broken
+  badge would lie). Re-enable on first registry publish.
+
+### Notes (forward compatibility)
+
+- **v0.10.4 (next)**: pip-vs-repo-script decision memo. Driven by
+  the flip-signal contract in `docs/live-helpers.md` (≥3
+  non-team-user pip requests AND non-trivial dependency need).
+- **v0.10.5 / v0.11.0**: only then revisit publishing. The first
+  npm publish + tag + GitHub release will need translations
+  refreshed first (per the canonical release-ordering doctrine in
+  global memory).
+- **v0.11**: SGD coupled-L2 weight decay (Rule 7 third branch);
+  JAX live helper (adopter-pull triggered); real-world (CNN /
+  transformer) fixture; multi-hidden-layer topology support;
+  Lightning / Accelerate callback integration.
+- **Translations are STALE** — the 6 translated README files
+  (`README.{ja,zh,es,fr,hi,it,pt-BR}.md`) reflect the v0.9.3 README
+  surface. They'll be regenerated as part of v0.10.5/v0.11.0's
+  publish step (which is when the canonical translation-ordering
+  doctrine fires). Until then, English README is authoritative.
+
+### Numbers
+
+- 502 tests pass (unchanged — no source-code changes beyond README +
+  site-config + handbook pages)
+- typecheck + build green
+- README: 323 → **224 lines** (-30%)
+- `package.json` description: ~1500 → **198 chars** (-87%)
+- Site build: 7 pages (1 landing + 6 handbook) + pagefind search
+  index, in 7.8s
+- 9 new files (site/astro.config.mjs + site/src/site-config.ts +
+  site/src/styles/{global.css,starlight-custom.css} +
+  site/src/pages/index.astro + site/src/content.config.ts +
+  site/src/content/docs/handbook/{index,getting-started,usage,
+  reference,architecture,security}.md + .github/workflows/pages.yml +
+  site/package.json + site/tsconfig.json)
+- Tarball size: unchanged (site/ not in npm `files[]` — landing
+  page deploys via GitHub Pages, not npm)
+
+### What v0.10.3 does NOT do
+
+- Does **not** promote to v1.0.0
+- Does **not** publish to npm (local v0.10.x stretch continues)
+- Does **not** tag or create a GitHub release
+- Does **not** regenerate translations (deferred to v0.10.5/v0.11.0
+  publish prep, per the canonical release-ordering doctrine)
+- Does **not** create a pip distribution
+- Does **not** make the pip-vs-repo-script decision (v0.10.4)
+- Does **not** add new helper / verifier features (purely
+  presentation + distribution-visibility)
+- Does **not** change schema family (receipt v0.7.0 + framework-trace
+  v0.7.0 remain latest)
+- Does **not** change CLI / library surface
+- Does **not** change pack-smoke or any test
+- Does **not** add code coverage (Phase 4's coverage step deferred —
+  narrow v0.10.3 scope was README + landing + handbook; coverage is
+  a separate slice)
+
 ## [0.10.2] - 2026-05-18
 
 The v0.10.2 distribution-integrity wave. **Not a v1.0.0 promotion.**
