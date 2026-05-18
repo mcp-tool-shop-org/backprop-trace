@@ -1,0 +1,13 @@
+{
+  "fixture_id": "pytorch-helper.bad-forward-out-mismatch",
+  "authoring_state": "deliberately_broken",
+  "verification_state": "engine_must_reject",
+  "intent": "live-helper bug simulation: Helper invoked model.forward() but cached the WRONG layer's output (e.g. mid-layer activation instead of final output). Rule 11 (softmax normalization — sum(probabilities) == 1) fires because the corrupted output breaks the simplex constraint.",
+  "expected_failures": [
+    {
+      "rule": 11,
+      "rule_name": "softmax normalization"
+    }
+  ],
+  "note": "Generated deterministically by scripts/build-pytorch-helper-fixtures.mjs. The fixture simulates a bad LIVE HELPER emitting a wrong-but-schema-valid sidecar; the real helper at scripts/extract/pytorch.py does not have this bug. Rule 14 (or the named rule) must reject before the verifier reads this meta.json — anti-circularity invariant."
+}

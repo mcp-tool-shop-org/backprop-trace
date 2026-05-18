@@ -59,6 +59,51 @@ import { emitGeneralReceipt } from "./emit.js"
 import { validateFrameworkTraceSidecar } from "./validate.js"
 
 /**
+ * v0.10 — FORENSIC live-helper attribution block. Mirrors the
+ * `framework-trace.v0.7.0` schema's `helper` def. Required when
+ * `source_framework.name` is a real framework (pytorch/jax/tensorflow)
+ * AND `source_framework.extractor.name !== "hand_authored"`. NEVER a
+ * credential — Rule 14 (engine-recompute differential) is the authority.
+ * Helper may compute and report its own source_hash; this is documented
+ * as observer-claimed-not-verifier-checked. Verifier may surface helper
+ * fields in Rule 14 failure messages for attribution but does NOT consult
+ * them for gate logic.
+ */
+export type HelperBlock = {
+  name: string
+  version: string
+  /**
+   * Closed enum makes the future flip-to-pip transition auditable from
+   * sidecar reads alone. v0.10 is "repo-script"; a pip-distributed helper
+   * would declare "pypi".
+   */
+  distribution: "repo-script" | "pypi" | "vendored"
+  /** SHA-256 of the helper source file bytes. Forensic only. */
+  source_hash: string
+  source_uri?: string
+  framework: {
+    name: "pytorch" | "jax" | "tensorflow"
+    version: string
+    commit?: string
+  }
+  runtime: {
+    python_version: string
+    torch_version?: string
+    deterministic_mode?: {
+      torch_use_deterministic_algorithms?: boolean
+      cudnn_deterministic?: boolean
+      cudnn_benchmark?: boolean
+      seed?: number
+    }
+  }
+  extraction: {
+    timestamp: string
+    duration_ms?: number
+    device: "cpu" | "cuda" | "mps" | "xla"
+  }
+}
+
+/**
  * Sidecar shape after framework-trace.v0.1.0 schema validation has
  * succeeded. The shape mirrors a v0.3.0 receipt body but is wrapped in
  * the sidecar envelope (`format` discriminator + `source_framework`).
@@ -72,7 +117,17 @@ export type FrameworkTraceSidecar = {
     | "framework-trace.v0.4.0"
     | "framework-trace.v0.5.0"
     | "framework-trace.v0.6.0"
+    | "framework-trace.v0.7.0"
   source_framework: SourceFramework
+  /**
+   * v0.10+ FORENSIC live-helper attribution. Present when the sidecar was
+   * produced by a live framework helper (e.g. scripts/extract/pytorch.py).
+   * NEVER a credential — Rule 14 (engine-recompute differential) is the
+   * authority on every external_imported receipt regardless of what this
+   * block claims. Importer passes the block through to the receipt for
+   * post-hoc attribution; it does NOT consult it for gate logic.
+   */
+  helper?: HelperBlock
   topology: Topology
   learning_rate: number
   /** v0.2.0+ multi-step fields (optional). */
@@ -761,12 +816,13 @@ export function buildObserverReceiptStreamFromSidecar(
       validation.schemaVersion !== "0.3.0" &&
       validation.schemaVersion !== "0.4.0" &&
       validation.schemaVersion !== "0.5.0" &&
-      validation.schemaVersion !== "0.6.0"
+      validation.schemaVersion !== "0.6.0" &&
+      validation.schemaVersion !== "0.7.0"
     ) {
       throw new Error(
         `${callerLabel}: sidecar line ${i + 1} declares format='framework-trace.v${validation.schemaVersion}' but multi-step ` +
           `ingestion requires 'framework-trace.v0.2.0', 'framework-trace.v0.3.0', ` +
-          `'framework-trace.v0.4.0', 'framework-trace.v0.5.0', or 'framework-trace.v0.6.0'. ` +
+          `'framework-trace.v0.4.0', 'framework-trace.v0.5.0', 'framework-trace.v0.6.0', or 'framework-trace.v0.7.0'. ` +
           `Use the single-step subcommand for v0.1.0 sidecars.`,
       )
     }

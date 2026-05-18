@@ -1,0 +1,677 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mcp-tool-shop-org/backprop-trace/schemas/framework-trace.v0.7.0.json",
+  "title": "backprop-trace framework-trace sidecar schema v0.7.0",
+  "description": "v0.10 live PyTorch helper observer-mode ingestion — input sidecar format. FORCED bump over framework-trace.v0.6.0 because v0.6.0's `additionalProperties: false` rejects the new top-level `helper` object that live-extractor sidecars MUST carry. v0.6.0 hand-authored sidecars continue to validate against v0.6.0 schema byte-identical; v0.10 live-helper-emitted sidecars declare format: 'framework-trace.v0.7.0'. The `helper` block is forensic (post-hoc attribution when Rule 14 disagrees) — NEVER a credential. Rule 14 (engine-recompute differential) remains mandatory and authoritative on every external_imported receipt regardless of helper claims. Csmith/CompCert + Fang et al. 2023 PoL spoofing class: the oracle never consults the artifact it judges; the helper is observer-not-verifier.",
+  "type": "object",
+  "x-purpose": "Input contract for `bp import {pytorch,jax,tensorflow}` and multi-step. v0.10 adds the `helper` block — required when source_framework.name !== 'hand_derived'. The block is FORENSIC ONLY (post-hoc attribution); it does NOT influence Rule 14's verdict and contains no vocabulary for predicting verification outcome.",
+  "x-order": [
+    "format",
+    "source_framework",
+    "helper",
+    "trace_id",
+    "step_index",
+    "topology",
+    "learning_rate",
+    "optimizer",
+    "numeric_policy",
+    "bias_policy",
+    "batch",
+    "inputs",
+    "targets",
+    "parameters_before",
+    "per_sample",
+    "forward",
+    "loss",
+    "backward",
+    "updates",
+    "parameters_after",
+    "post_update_forward",
+    "post_update_loss"
+  ],
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "source_framework",
+    "topology",
+    "learning_rate",
+    "inputs",
+    "targets",
+    "parameters_before",
+    "forward",
+    "loss",
+    "backward",
+    "updates",
+    "parameters_after"
+  ],
+  "allOf": [
+    {
+      "x-purpose": "Co-presence guard: trace_id and step_index.",
+      "anyOf": [
+        { "not": { "required": ["trace_id"] }, "not": { "required": ["step_index"] } },
+        { "required": ["trace_id", "step_index"] }
+      ]
+    },
+    {
+      "x-purpose": "v0.4.0 carried forward: Adam/AdamW require beta1/beta2/epsilon/t.",
+      "type": "object",
+      "if": {
+        "type": "object",
+        "required": ["optimizer"],
+        "properties": {
+          "optimizer": {
+            "type": "object",
+            "required": ["name"],
+            "properties": { "name": { "enum": ["adam", "adamw"] } }
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "optimizer": {
+            "type": "object",
+            "required": ["name", "learning_rate", "beta1", "beta2", "epsilon", "t"]
+          }
+        }
+      }
+    },
+    {
+      "x-purpose": "v0.4.0 carried forward: AdamW requires weight_decay.",
+      "type": "object",
+      "if": {
+        "type": "object",
+        "required": ["optimizer"],
+        "properties": {
+          "optimizer": {
+            "type": "object",
+            "required": ["name"],
+            "properties": { "name": { "const": "adamw" } }
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "optimizer": {
+            "type": "object",
+            "required": ["name", "learning_rate", "beta1", "beta2", "epsilon", "t", "weight_decay"]
+          }
+        }
+      }
+    },
+    {
+      "x-purpose": "v0.5.0 carried forward: sgd_momentum requires momentum.",
+      "type": "object",
+      "if": {
+        "type": "object",
+        "required": ["optimizer"],
+        "properties": {
+          "optimizer": {
+            "type": "object",
+            "required": ["name"],
+            "properties": { "name": { "const": "sgd_momentum" } }
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "optimizer": {
+            "type": "object",
+            "required": ["name", "learning_rate", "momentum"]
+          }
+        }
+      }
+    },
+    {
+      "x-purpose": "v0.5.0 carried forward: sgd_momentum forbids weight_decay (SGD coupled L2 deferred to v0.10).",
+      "type": "object",
+      "if": {
+        "type": "object",
+        "required": ["optimizer"],
+        "properties": {
+          "optimizer": {
+            "type": "object",
+            "required": ["name"],
+            "properties": { "name": { "const": "sgd_momentum" } }
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "optimizer": {
+            "type": "object",
+            "not": { "required": ["weight_decay"] }
+          }
+        }
+      }
+    },
+    {
+      "x-purpose": "v0.6.0 carried forward: nesterov=true requires dampening absent or 0 (PyTorch torch.optim.SGD.__init__ ValueError mirror). The if-clause MUST require nesterov to be PRESENT — otherwise JSON-Schema's properties-only check fires vacuously on absent fields and the then-clause runs incorrectly on classical-and-dampened receipts.",
+      "type": "object",
+      "if": {
+        "type": "object",
+        "required": ["optimizer"],
+        "properties": {
+          "optimizer": {
+            "type": "object",
+            "required": ["name", "nesterov"],
+            "properties": {
+              "name": { "const": "sgd_momentum" },
+              "nesterov": { "const": true }
+            }
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "optimizer": {
+            "type": "object",
+            "anyOf": [
+              { "not": { "required": ["dampening"] } },
+              { "properties": { "dampening": { "const": 0 } } }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "x-purpose": "v0.10 NEW: `helper` is REQUIRED when source_framework.name !== 'hand_derived'. Live-helper-emitted sidecars (e.g. PyTorch live helper) MUST carry forensic helper attribution; hand-authored sidecars MAY omit it. The if-clause MUST require source_framework + source_framework.name to be PRESENT — otherwise the properties-only check fires vacuously (same trap fixed in v0.6.0 nesterov/dampening clause).",
+      "type": "object",
+      "if": {
+        "type": "object",
+        "required": ["source_framework"],
+        "properties": {
+          "source_framework": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "enum": ["pytorch", "jax", "tensorflow"] }
+            }
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "anyOf": [
+          { "not": { "required": ["source_framework"] } },
+          { "required": ["helper"] },
+          {
+            "x-purpose": "Back-compat escape: a sidecar whose source_framework.extractor.name is the hand-author marker is still permitted without the live-helper helper block (e.g. existing v0.6.0 fixtures carried forward and re-declared as v0.7.0 manually).",
+            "properties": {
+              "source_framework": {
+                "type": "object",
+                "required": ["extractor"],
+                "properties": {
+                  "extractor": {
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": { "name": { "const": "hand_authored" } }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "format": {
+      "const": "framework-trace.v0.7.0",
+      "description": "Format discriminator. MUST be 'framework-trace.v0.7.0'. v0.1-v0.6 sidecars use their respective format consts and validate against their own schemas unchanged."
+    },
+    "source_framework": {
+      "type": "object",
+      "x-order": ["name", "version", "information_uri", "extractor"],
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "enum": ["pytorch", "jax", "tensorflow", "hand_derived"] },
+        "version": { "type": "string", "minLength": 1 },
+        "information_uri": { "type": "string", "minLength": 1 },
+        "extractor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "helper": {
+      "description": "FORENSIC live-helper attribution block. Required when source_framework.name in {pytorch, jax, tensorflow} AND source_framework.extractor.name !== 'hand_authored'. NEVER a credential — Rule 14 (engine-recompute differential) is the authority. The helper claims provenance only; the verifier checks math. If `source_hash` is wrong / spoofed / missing, Rule 14 still fires unconditionally and rejects on numerical disagreement. Fields here exist for post-hoc attribution when Rule 14 disagrees, not for bypass logic.",
+      "type": "object",
+      "x-order": ["name", "version", "distribution", "source_hash", "source_uri", "framework", "runtime", "extraction"],
+      "additionalProperties": false,
+      "required": ["name", "version", "distribution", "source_hash", "framework", "runtime", "extraction"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Helper identifier. Convention: '<scope>/<tool>-<framework>-helper' or path-like 'scripts/extract/<framework>.py'."
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Helper version. SemVer recommended. v0.10 repo-script era uses '0.10.0-repo-script+<sha7>' style build-metadata suffix to signal non-distributed source."
+        },
+        "distribution": {
+          "enum": ["repo-script", "pypi", "vendored"],
+          "description": "Closed enum makes the future flip-to-pip transition auditable from sidecar reads alone. v0.10 is 'repo-script'; a pip-distributed helper would declare 'pypi'."
+        },
+        "source_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "SHA-256 of the helper's source file bytes. FORENSIC ONLY — not a credential. The helper may compute and report its own hash (docs MUST state this is observer-claimed, not verifier-checked). Verifier may surface the hash in Rule 14 failure messages for attribution but does NOT consult it for gate logic."
+        },
+        "source_uri": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional pointer to the helper source (file:// path, https://github.com/.../blob/<sha>/scripts/extract/pytorch.py, etc.). Informational."
+        },
+        "framework": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version"],
+          "x-order": ["name", "version", "commit"],
+          "properties": {
+            "name": { "enum": ["pytorch", "jax", "tensorflow"] },
+            "version": { "type": "string", "minLength": 1, "description": "Framework version string (e.g. '2.5.1' for PyTorch)." },
+            "commit": { "type": "string", "pattern": "^[0-9a-f]{7,40}$", "description": "Optional framework git commit, when the user is running a non-released build." }
+          }
+        },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["python_version"],
+          "x-order": ["python_version", "torch_version", "deterministic_mode"],
+          "properties": {
+            "python_version": {
+              "type": "string",
+              "pattern": "^\\d+\\.\\d+\\.\\d+",
+              "description": "CPython / runtime version, e.g. '3.12.5'."
+            },
+            "torch_version": {
+              "type": "string",
+              "minLength": 1,
+              "description": "PyTorch version (mirror of framework.version when framework.name === 'pytorch'). Present-and-mirrored is the convention; absent is permitted."
+            },
+            "deterministic_mode": {
+              "type": "object",
+              "additionalProperties": false,
+              "x-order": ["torch_use_deterministic_algorithms", "cudnn_deterministic", "cudnn_benchmark", "seed"],
+              "properties": {
+                "torch_use_deterministic_algorithms": { "type": "boolean" },
+                "cudnn_deterministic": { "type": "boolean" },
+                "cudnn_benchmark": { "type": "boolean" },
+                "seed": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        },
+        "extraction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["timestamp", "device"],
+          "x-order": ["timestamp", "duration_ms", "device"],
+          "properties": {
+            "timestamp": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+              "description": "UTC ISO-8601 extraction wall-clock (e.g. '2026-05-18T12:00:00Z'). Forensic only; verifier does NOT consult it for gate logic."
+            },
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Optional: wall-clock duration of the extraction snapshot, in milliseconds. Forensic."
+            },
+            "device": {
+              "enum": ["cpu", "cuda", "mps", "xla"],
+              "description": "Compute device where extraction ran. v0.10 helper is CPU-first; reporting 'cuda'/'mps'/'xla' is permitted but Rule 14 may surface tolerance disagreements beyond hybrid bounds for non-CPU devices."
+            }
+          }
+        }
+      }
+    },
+    "trace_id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "step_index": { "type": "integer", "minimum": 0 },
+    "topology": { "$ref": "#/$defs/Topology" },
+    "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
+    "optimizer": {
+      "description": "v0.7.0 carries v0.6.0's optimizer shape forward unchanged. nesterov boolean and dampening number in [0, 1); nesterov=true requires dampening=0 (PyTorch ValueError mirror).",
+      "type": "object",
+      "x-order": ["name", "learning_rate", "beta1", "beta2", "epsilon", "weight_decay", "t", "momentum", "nesterov", "dampening"],
+      "additionalProperties": false,
+      "required": ["name", "learning_rate"],
+      "properties": {
+        "name": { "enum": ["sgd", "adam", "adamw", "sgd_momentum"] },
+        "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
+        "beta1": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 },
+        "beta2": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 },
+        "epsilon": { "type": "number", "exclusiveMinimum": 0 },
+        "weight_decay": { "type": "number", "minimum": 0 },
+        "t": { "type": "integer", "minimum": 1 },
+        "momentum": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 },
+        "nesterov": { "type": "boolean" },
+        "dampening": { "type": "number", "minimum": 0, "exclusiveMaximum": 1 }
+      }
+    },
+    "numeric_policy": { "$ref": "#/$defs/NumericPolicy" },
+    "bias_policy": { "$ref": "#/$defs/BiasPolicy" },
+    "batch": {
+      "type": "object",
+      "x-order": ["size", "sample_order", "reduction"],
+      "additionalProperties": false,
+      "required": ["size", "sample_order", "reduction"],
+      "properties": {
+        "size": { "type": "integer", "minimum": 1 },
+        "sample_order": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" }
+        },
+        "reduction": { "enum": ["mean", "sum", "none"] }
+      }
+    },
+    "inputs": { "$ref": "#/$defs/UnitNumberMap" },
+    "targets": { "$ref": "#/$defs/UnitNumberMap" },
+    "parameters_before": { "$ref": "#/$defs/ParameterMap" },
+    "per_sample": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["inputs", "targets", "forward", "loss"],
+        "properties": {
+          "inputs": { "$ref": "#/$defs/UnitNumberMap" },
+          "targets": { "$ref": "#/$defs/UnitNumberMap" },
+          "forward": { "$ref": "#/$defs/ForwardMap" },
+          "loss": { "$ref": "#/$defs/Loss" }
+        }
+      }
+    },
+    "forward": { "$ref": "#/$defs/ForwardMap" },
+    "loss": { "$ref": "#/$defs/Loss" },
+    "backward": { "$ref": "#/$defs/Backward" },
+    "updates": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Update" }
+    },
+    "parameters_after": { "$ref": "#/$defs/ParameterMap" },
+    "post_update_forward": { "$ref": "#/$defs/PostUpdateForward" },
+    "post_update_loss": { "$ref": "#/$defs/PostUpdateLoss" }
+  },
+  "$defs": {
+    "UnitOrder": {
+      "type": "object", "additionalProperties": false, "required": ["input", "hidden", "output"],
+      "properties": {
+        "input":  { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } },
+        "hidden": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } },
+        "output": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } }
+      }
+    },
+    "ParameterOrder": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" }
+    },
+    "NumericPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number_encoding", "precision_significant_digits", "rounding", "tolerance"],
+      "properties": {
+        "number_encoding": { "const": "decimal" },
+        "precision_significant_digits": { "type": "integer", "minimum": 1 },
+        "rounding": { "const": "round_half_to_even" },
+        "tolerance": {
+          "oneOf": [
+            {
+              "type": "object", "required": ["atol", "rtol"], "additionalProperties": false,
+              "properties": { "atol": { "type": "number", "minimum": 0 }, "rtol": { "type": "number", "minimum": 0 } }
+            },
+            { "type": "number", "minimum": 0 }
+          ]
+        },
+        "computation_order": { "const": "schema_defined" },
+        "byte_output": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "format": { "const": "jsonl" },
+            "json_key_order": { "const": "schema_defined" },
+            "trailing_zero_policy": { "const": "pad_to_significant_digits" },
+            "indent": { "const": "none" }
+          }
+        }
+      }
+    },
+    "BiasPolicy": {
+      "type": "object", "additionalProperties": false, "required": ["mode", "updated_in_step"],
+      "properties": {
+        "mode": { "enum": ["constant", "sgd"] },
+        "reason": { "type": "string" },
+        "updated_in_step": { "type": "boolean" },
+        "reconciliation": { "type": "string" }
+      }
+    },
+    "Topology": {
+      "type": "object", "additionalProperties": false,
+      "required": ["layers", "input_size", "hidden_size", "output_size", "unit_order", "parameter_order", "parameters", "activation_hidden", "activation_output", "loss", "bias_sharing"],
+      "properties": {
+        "layers": { "type": "array", "items": { "type": "string" } },
+        "input_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "hidden_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "output_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "unit_order": { "$ref": "#/$defs/UnitOrder" },
+        "parameter_order": { "$ref": "#/$defs/ParameterOrder" },
+        "parameters": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["id", "role"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "role": { "enum": ["input_to_hidden_weight", "hidden_to_output_weight", "hidden_bias", "output_bias"] },
+              "from_unit": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "to_unit":   { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "applies_to_units": { "type": "array", "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } }
+            }
+          }
+        },
+        "activation_hidden": { "enum": ["sigmoid", "identity", "relu"] },
+        "activation_output": { "enum": ["sigmoid", "identity", "relu", "softmax"] },
+        "loss": { "enum": ["half_squared_error", "cross_entropy_softmax"] },
+        "bias_sharing": { "enum": ["per_layer", "per_neuron"] }
+      }
+    },
+    "UnitNumberMap": { "type": "object", "additionalProperties": { "type": "number" } },
+    "ParameterMap":  { "type": "object", "additionalProperties": { "type": "number" } },
+    "ForwardMap":    { "type": "object", "additionalProperties": { "$ref": "#/$defs/ForwardUnit" } },
+    "ForwardUnit": {
+      "type": "object", "additionalProperties": false, "required": ["net", "out"],
+      "properties": { "net": { "type": "number" }, "out": { "type": "number" } }
+    },
+    "Loss": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["per_output", "total"],
+      "x-order": ["per_output", "per_sample", "reduction", "total"],
+      "properties": {
+        "per_output": { "type": "object", "additionalProperties": { "type": "number" } },
+        "per_sample": { "type": "object", "additionalProperties": { "type": "number" } },
+        "reduction": { "enum": ["mean", "sum", "none"] },
+        "total": { "type": "number" }
+      }
+    },
+    "Backward": {
+      "type": "object", "additionalProperties": false, "required": ["output_error_signals", "hidden_error_signals"],
+      "properties": {
+        "output_error_signals": { "type": "object", "additionalProperties": { "$ref": "#/$defs/OutputErrorSignal" } },
+        "hidden_error_signals": { "type": "object", "additionalProperties": { "$ref": "#/$defs/HiddenErrorSignal" } }
+      }
+    },
+    "OutputErrorSignal": {
+      "type": "object", "additionalProperties": false, "required": ["factors", "product_order", "signal_value"],
+      "properties": {
+        "factors": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/NamedFactor" } },
+        "product_order": { "const": "left_to_right" },
+        "signal_value": { "type": "number" },
+        "dual_form": { "$ref": "#/$defs/DualForm" }
+      }
+    },
+    "DualForm": {
+      "type": "object", "additionalProperties": false,
+      "required": ["jacobian_terms", "product_order", "summation_order", "summed_value"],
+      "properties": {
+        "jacobian_terms": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/JacobianTerm" } },
+        "product_order": { "const": "left_to_right" },
+        "summation_order": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "summed_value": { "type": "number" }
+      }
+    },
+    "JacobianTerm": {
+      "type": "object", "additionalProperties": false, "required": ["target_unit", "factors", "term_value"],
+      "properties": {
+        "target_unit": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+        "factors": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/NamedFactor" } },
+        "term_value": { "type": "number" }
+      }
+    },
+    "HiddenErrorSignal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["downstream_contributions", "summation_order", "backpropagated_sum", "activation_derivative", "product_order", "signal_value"],
+      "properties": {
+        "downstream_contributions": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/DownstreamContribution" } },
+        "summation_order": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "backpropagated_sum": { "type": "number" },
+        "activation_derivative": { "type": "number" },
+        "product_order": { "const": "left_to_right" },
+        "signal_value": { "type": "number" }
+      }
+    },
+    "DownstreamContribution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["from", "downstream_signal", "via_weight", "weight_value", "value"],
+      "properties": {
+        "from": { "type": "string" },
+        "downstream_signal": { "type": "number" },
+        "via_weight": { "type": "string" },
+        "weight_value": { "type": "number" },
+        "value": { "type": "number" }
+      }
+    },
+    "NamedFactor": {
+      "type": "object", "additionalProperties": false, "required": ["name", "value"],
+      "properties": { "name": { "type": "string" }, "from": { "type": "string" }, "value": { "type": "number" } }
+    },
+    "AdamState": {
+      "type": "object", "additionalProperties": false, "required": ["m", "v"],
+      "properties": { "m": { "type": "number" }, "v": { "type": "number", "minimum": 0 } }
+    },
+    "MomentumState": {
+      "type": "object", "additionalProperties": false, "required": ["buffer"],
+      "properties": { "buffer": { "type": "number" } }
+    },
+    "OptimizerState": {
+      "oneOf": [
+        { "$ref": "#/$defs/AdamState" },
+        { "$ref": "#/$defs/MomentumState" }
+      ]
+    },
+    "Update": {
+      "type": "object", "additionalProperties": false,
+      "required": ["parameter_id", "kind", "weight_before", "optimizer", "gradient", "update", "weight_after"],
+      "properties": {
+        "parameter_id": { "type": "string" },
+        "kind": { "enum": ["weight", "bias"] },
+        "layer_edge": { "enum": ["input_to_hidden", "hidden_to_output", "bias_to_layer"] },
+        "parameter_role": { "type": "string" },
+        "from_unit": { "type": "string" },
+        "to_unit": { "type": "string" },
+        "weight_before": { "type": "number" },
+        "optimizer": {
+          "type": "object", "additionalProperties": false,
+          "required": ["name", "learning_rate", "factors", "product_order"],
+          "properties": {
+            "name": { "enum": ["sgd", "adam", "adamw", "sgd_momentum"] },
+            "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
+            "factors": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/NamedFactor" } },
+            "product_order": { "const": "left_to_right" },
+            "state_before": { "$ref": "#/$defs/OptimizerState" },
+            "state_after": { "$ref": "#/$defs/OptimizerState" }
+          }
+        },
+        "gradient": { "type": "number" },
+        "update": { "type": "number" },
+        "weight_after": { "type": "number" }
+      },
+      "allOf": [
+        {
+          "x-purpose": "v0.4.0 carried forward: per-update state required for Adam/AdamW.",
+          "type": "object",
+          "if": {
+            "type": "object",
+            "required": ["optimizer"],
+            "properties": {
+              "optimizer": {
+                "type": "object",
+                "required": ["name"],
+                "properties": { "name": { "enum": ["adam", "adamw"] } }
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "optimizer": {
+                "type": "object",
+                "required": ["name", "learning_rate", "factors", "product_order", "state_before", "state_after"]
+              }
+            }
+          }
+        },
+        {
+          "x-purpose": "v0.5.0 carried forward: per-update state required for sgd_momentum.",
+          "type": "object",
+          "if": {
+            "type": "object",
+            "required": ["optimizer"],
+            "properties": {
+              "optimizer": {
+                "type": "object",
+                "required": ["name"],
+                "properties": { "name": { "const": "sgd_momentum" } }
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "optimizer": {
+                "type": "object",
+                "required": ["name", "learning_rate", "factors", "product_order", "state_before", "state_after"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "PostUpdateForward": {
+      "type": "object", "required": ["status"],
+      "additionalProperties": { "$ref": "#/$defs/ForwardUnit" },
+      "properties": { "status": { "enum": ["pending_engine_first_run", "filled"] } }
+    },
+    "PostUpdateLoss": {
+      "type": "object", "additionalProperties": false, "required": ["status"],
+      "properties": {
+        "status": { "enum": ["pending_engine_first_run", "filled"] },
+        "per_output": { "type": "object", "additionalProperties": { "type": "number" } },
+        "total": { "type": "number" }
+      }
+    }
+  }
+}

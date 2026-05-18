@@ -1,0 +1,13 @@
+{
+  "fixture_id": "pytorch-helper.bad-loss-stale",
+  "authoring_state": "deliberately_broken",
+  "verification_state": "engine_must_reject",
+  "intent": "live-helper bug simulation: Helper captured loss tensor BEFORE loss.backward() (typo or copy-paste error common in early extractor work); the stored loss.total is from a previous step or a different forward pass.",
+  "expected_failures": [
+    {
+      "rule": 12,
+      "rule_name": "loss formula consistency"
+    }
+  ],
+  "note": "Generated deterministically by scripts/build-pytorch-helper-fixtures.mjs. The fixture simulates a bad LIVE HELPER emitting a wrong-but-schema-valid sidecar; the real helper at scripts/extract/pytorch.py does not have this bug. Rule 14 (or the named rule) must reject before the verifier reads this meta.json — anti-circularity invariant."
+}

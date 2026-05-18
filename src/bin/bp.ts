@@ -105,8 +105,9 @@
  * surfaces a clear runtime error pointing at any missing export.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
-import { extname } from "node:path";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { extname, dirname, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import {
   reconcileReceipt,
@@ -630,6 +631,11 @@ function usageText(): string {
     "                                    Write a starter GeneralInput JSON for editing",
     "    bp validate-input <file>        Schema-validate a topology+input config",
     "",
+    "  Live framework helpers (v0.10+; OBSERVER ONLY — Rule 14 is the authority):",
+    "    bp examples pytorch [--print]   Print path of (or cat) the bundled PyTorch helper",
+    "                                    `bp examples pytorch --print > pytorch_trace_helper.py`",
+    "                                    then `from pytorch_trace_helper import TraceDumper`",
+    "",
     "  Meta:",
     "    bp --version                    Print version",
     "    bp --help                       Print this message",
@@ -932,6 +938,115 @@ function generateFromConfigUsageText(): string {
   ].join("\n");
 }
 
+/**
+ * Resolve the absolute path of the bundled live PyTorch helper file. The
+ * helper lives at `<pkg root>/scripts/extract/pytorch.py` at install time —
+ * for npm-published installs it ships via `files[]: ["scripts/**"]` in
+ * package.json. For local repo execution, it lives at the same relative
+ * path from this module's `dist/` directory.
+ *
+ * Returns null when the file is not found on disk (e.g. somebody manually
+ * trimmed scripts/ from their install). The caller surfaces that as a
+ * Tier-1 user error rather than crashing.
+ */
+function resolvePytorchHelperPath(): string | null {
+  // __dirname for ESM: derive from import.meta.url
+  const here = dirname(fileURLToPath(import.meta.url));
+  // dist/bin/bp.js → up two levels gets package root, then scripts/extract/pytorch.py
+  const fromDist = resolvePath(here, "..", "..", "scripts", "extract", "pytorch.py");
+  if (existsSync(fromDist)) return fromDist;
+  // Fallback: maybe we're running from src/bin/bp.ts via tsx
+  const fromSrc = resolvePath(here, "..", "..", "scripts", "extract", "pytorch.py");
+  if (existsSync(fromSrc)) return fromSrc;
+  return null;
+}
+
+function examplesUsageText(): string {
+  return [
+    "Usage: bp examples <framework> [--print]",
+    "",
+    "  Print the absolute path of (or cat the contents of) a bundled",
+    "  framework helper. v0.10 ships only the PyTorch helper:",
+    "",
+    "    bp examples pytorch              Print the absolute path of",
+    "                                     scripts/extract/pytorch.py.",
+    "    bp examples pytorch --print      Cat the helper to stdout (pipe",
+    "                                     into a local file: `bp examples",
+    "                                     pytorch --print > pytorch_trace",
+    "                                     _helper.py`).",
+    "",
+    "  TRUST BOUNDARY: the helper is an observer that extracts a",
+    "  framework-trace.v0.7.0 sidecar. It is NEVER a verifier. Rule 14",
+    "  (engine-recompute differential) in `bp import pytorch` is the",
+    "  authority on every helper-emitted sidecar. See docs/live-helpers.md.",
+    "",
+    "  Exit codes:",
+    "    0  Success.",
+    "    2  Usage or I/O error (helper file missing).",
+    "    3  Invalid CLI argument.",
+    "",
+  ].join("\n");
+}
+
+function examplesPytorchUsageText(): string {
+  return [
+    "Usage: bp examples pytorch [--print]",
+    "",
+    "  Default (no flag): print the absolute filesystem path of the bundled",
+    "  PyTorch helper. The user can then `cat`, `cp`, or `less` it.",
+    "",
+    "    --print              Cat the helper's bytes to stdout. Useful for",
+    "                         pipe-into-file:",
+    "                             bp examples pytorch --print > pytorch_trace_helper.py",
+    "                         Then in the user's training code:",
+    "                             from pytorch_trace_helper import TraceDumper",
+    "",
+    "  v0.10 ships PyTorch SGD + Adam only. AdamW + sgd_momentum live-helper",
+    "  branches deferred to v0.10.1. See docs/live-helpers.md for the v0.10",
+    "  scope + trust boundary statement.",
+    "",
+    "  Exit codes:",
+    "    0  Success.",
+    "    2  Usage or I/O error (helper file missing from package).",
+    "    3  Invalid CLI argument.",
+    "",
+  ].join("\n");
+}
+
+function runExamplesPytorch(printFlag: string | undefined): never {
+  const helperPath = resolvePytorchHelperPath();
+  if (helperPath === null) {
+    exitWithUsageError(
+      "bp examples pytorch: helper file scripts/extract/pytorch.py not found in this package. " +
+        "The helper SHOULD ship with the npm package via package.json files[] — " +
+        "if you're running from a local checkout, ensure scripts/extract/pytorch.py exists; " +
+        "if from a pnpm/npm install, try reinstalling @mcptoolshop/backprop-trace.",
+      "HELPER_FILE_MISSING",
+      2,
+    );
+  }
+  if (printFlag === undefined) {
+    // Print the path only.
+    if (jsonMode) {
+      process.stdout.write(JSON.stringify({ ok: true, helper_path: helperPath }) + "\n");
+    } else {
+      process.stdout.write(helperPath + "\n");
+    }
+    process.exit(0);
+  }
+  if (printFlag === "--print") {
+    const bytes = readFileSync(helperPath, "utf-8");
+    process.stdout.write(bytes);
+    process.exit(0);
+  }
+  exitWithUsageError(
+    `bp examples pytorch: unrecognized flag ${JSON.stringify(printFlag)}. Use --print or no flag. ` +
+      `Run 'bp examples pytorch --help' for usage.`,
+    "INVALID_FLAG",
+    3,
+  );
+}
+
 function scaffoldTopologyUsageText(): string {
   return [
     "Usage: bp scaffold topology --topology mazur|xor|iris [--out <file>] [--json]",
@@ -1216,6 +1331,7 @@ function suggestSubcommand(unknown: string): string | null {
     { verb: "generate", example: "bp generate mazur | xor | iris | from-config <file>" },
     { verb: "import", example: "bp import pytorch <sidecar.jsonl>" },
     { verb: "scaffold", example: "bp scaffold topology --topology mazur|xor|iris" },
+    { verb: "examples", example: "bp examples pytorch [--print]" },
     { verb: "validate-input", example: "bp validate-input <file>" },
     { verb: "validate", example: "bp validate <file>" },
   ];
@@ -3527,6 +3643,41 @@ if (argv[0] === "import") {
       `Run 'bp import --help' for the current import surface.`,
     "UNKNOWN_FRAMEWORK",
     2,
+  );
+}
+
+// -----------------------------------------------------------------------------
+// bp examples pytorch [--print] (v0.10)
+//
+// v0.10 ships a single auditable Python helper file at
+// scripts/extract/pytorch.py. `bp examples pytorch` prints the absolute path
+// of the bundled helper; `bp examples pytorch --print` cats it to stdout
+// (so the user can pipe it into a local file: `bp examples pytorch --print
+// > pytorch_trace_helper.py`).
+//
+// The verb deliberately does NOT execute Python, does NOT vendor the helper
+// into a pip distribution, and does NOT grant the helper any verification
+// authority. The helper is observer-only; Rule 14 (engine-recompute
+// differential) remains the authority on every helper-emitted sidecar.
+// See docs/live-helpers.md for the trust-boundary statement.
+// -----------------------------------------------------------------------------
+
+if (argv[0] === "examples") {
+  if (argv[1] === "--help" || argv[1] === "-h" || argv[1] === undefined) {
+    process.stdout.write(examplesUsageText());
+    process.exit(argv[1] === undefined ? 2 : 0);
+  }
+  if (argv[1] === "pytorch") {
+    if (argv[2] === "--help" || argv[2] === "-h") {
+      process.stdout.write(examplesPytorchUsageText());
+      process.exit(0);
+    }
+    runExamplesPytorch(argv[2]);
+  }
+  const examplesSubnoun = argv[1];
+  exitWithUsageError(
+    `unknown subcommand 'examples ${examplesSubnoun}'. v0.10 ships only 'examples pytorch'. ` +
+      `Run 'bp examples --help' for usage.`,
   );
 }
 

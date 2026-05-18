@@ -1,0 +1,13 @@
+{
+  "fixture_id": "pytorch-helper.bad-detach-not-applied",
+  "authoring_state": "deliberately_broken",
+  "verification_state": "engine_must_reject",
+  "intent": "live-helper bug simulation: Helper captured param.data as a view (not .detach().clone()); subsequent optimizer.step() mutated underlying storage; weights_before snapshot now reflects post-step values. Rule 6 (weight progression) fires because weight_before + update no longer equals weight_after.",
+  "expected_failures": [
+    {
+      "rule": 6,
+      "rule_name": "weight progression"
+    }
+  ],
+  "note": "Generated deterministically by scripts/build-pytorch-helper-fixtures.mjs. The fixture simulates a bad LIVE HELPER emitting a wrong-but-schema-valid sidecar; the real helper at scripts/extract/pytorch.py does not have this bug. Rule 14 (or the named rule) must reject before the verifier reads this meta.json — anti-circularity invariant."
+}

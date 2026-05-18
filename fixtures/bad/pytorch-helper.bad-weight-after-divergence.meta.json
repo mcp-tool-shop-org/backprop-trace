@@ -1,0 +1,13 @@
+{
+  "fixture_id": "pytorch-helper.bad-weight-after-divergence",
+  "authoring_state": "deliberately_broken",
+  "verification_state": "engine_must_reject",
+  "intent": "live-helper bug simulation: Helper captured parameters_after BEFORE optimizer.step() returned (race / threading bug); weights_after match weights_before for one parameter that shouldn't have updated.",
+  "expected_failures": [
+    {
+      "rule": 6,
+      "rule_name": "weight progression"
+    }
+  ],
+  "note": "Generated deterministically by scripts/build-pytorch-helper-fixtures.mjs. The fixture simulates a bad LIVE HELPER emitting a wrong-but-schema-valid sidecar; the real helper at scripts/extract/pytorch.py does not have this bug. Rule 14 (or the named rule) must reject before the verifier reads this meta.json — anti-circularity invariant."
+}

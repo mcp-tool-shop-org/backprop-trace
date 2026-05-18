@@ -263,8 +263,21 @@ export function getInputSchema(
  *     if/then clause + engine boundary. v0.5.0 classical sgd_momentum
  *     sidecars stay byte-equal; sidecars with nesterov=true OR
  *     dampening>0 declare format: "framework-trace.v0.6.0".
+ *   - "0.7.0" — v0.10 live PyTorch helper additive (FORCED bump:
+ *     v0.6.0's `additionalProperties: false` at the root rejects the
+ *     new top-level `helper` block that live-extractor sidecars MUST
+ *     carry). v0.7.0 adds the `helper` block with FORENSIC-ONLY
+ *     attribution fields (name, version, distribution, source_hash,
+ *     framework, runtime, extraction) — required when source_framework.
+ *     name in {pytorch, jax, tensorflow} AND extractor.name !==
+ *     'hand_authored'. The block is NEVER a credential — Rule 14
+ *     (engine-recompute differential) remains mandatory and
+ *     authoritative on every external_imported receipt regardless of
+ *     helper claims. v0.6.0 hand-authored sidecars stay byte-equal;
+ *     v0.10 live-helper-emitted sidecars declare format:
+ *     "framework-trace.v0.7.0".
  */
-export const FRAMEWORK_TRACE_SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0"] as const;
+export const FRAMEWORK_TRACE_SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0"] as const;
 
 /**
  * Union of currently-shipped framework-trace sidecar schema versions.

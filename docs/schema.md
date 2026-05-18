@@ -51,6 +51,75 @@ This matches the v0.8 precedent and CONTRIBUTING.md's "additive evolution
 is allowed within the same schema_version if existing receipts remain
 valid" policy.
 
+### v0.10 FORCED bump to framework-trace.v0.7.0 (live-helper `helper` block)
+
+**v0.10 forces a framework-trace bump to `v0.7.0`.** v0.6.0's root-level
+`additionalProperties: false` rejects the new top-level `helper` object
+that live-extractor sidecars MUST carry. Adding a required top-level
+block is a schema-breaking change for v0.6.0-pinned validators — same
+doctrine as v0.9.1/v0.9.2/v0.9.3's optimizer-enum-widening forced bumps.
+
+**Receipt schemas are NOT bumped in v0.10.** The helper block lives on
+the SIDECAR only; receipts produced via `bp import pytorch` continue
+to declare `schema_version: "0.4.0"` (or "0.5.0"/"0.6.0"/"0.7.0" per
+optimizer), byte-identical to v0.9.x receipts. The helper never
+touches the receipt path — operators reading the original sidecar
+bytes get the forensic helper attribution; the receipt does not
+re-encode it.
+
+The v0.10 slice adds (framework-trace.v0.7.0 only):
+
+- New top-level `helper` object with `additionalProperties: false` and
+  these REQUIRED fields:
+  - `name` (string) — e.g. `"backprop-trace-pytorch-helper"`.
+  - `version` (string) — SemVer. v0.10 uses
+    `"0.10.0-repo-script+<sha7>"` style.
+  - `distribution` (closed enum: `"repo-script" | "pypi" | "vendored"`).
+    Makes any future flip-to-pip auditable from sidecar reads alone.
+  - `source_hash` (string, `^sha256:[0-9a-f]{64}$`). **FORENSIC ONLY**
+    — Rule 14 is the authority. The helper may compute and report
+    its own hash; this is documented as observer-claimed-not-verifier-
+    checked. The schema does NOT validate the hash against actual
+    file contents (which would re-introduce the trust-boundary
+    violation we're avoiding).
+  - `framework` (object: `name` enum `pytorch|jax|tensorflow`, `version`,
+    optional `commit`).
+  - `runtime` (object: `python_version`, optional `torch_version`,
+    optional `deterministic_mode`).
+  - `extraction` (object: `timestamp` (ISO-8601 pattern), optional
+    `duration_ms`, `device` enum `cpu|cuda|mps|xla`).
+- New `allOf` conditional clause: when `source_framework.name in
+  {pytorch, jax, tensorflow}`, `helper` is REQUIRED **unless**
+  `source_framework.extractor.name === "hand_authored"` (back-compat
+  escape so existing v0.6.0 fixtures can re-declare as v0.7.0 without
+  forcing a helper block). The `if`-clause requires `source_framework`
+  + `source_framework.name` to be PRESENT — same vacuous-properties
+  trap fix earned in v0.9.3.
+
+**Trust boundary (load-bearing).** The `helper` block is forensic, not
+credential. Rule 14 (engine-recompute differential) fires
+unconditionally on every receipt with `authoring_state ===
+"external_imported"` regardless of what the helper claims. A spoofed
+/ wrong / missing `source_hash` does NOT bypass Rule 14. The block
+exists for post-hoc attribution when Rule 14 disagrees, not for
+bypass logic. See `docs/live-helpers.md` for the trust-boundary
+statement, the Forbidden-in-the-helper list, and the Csmith/CompCert
++ Fang et al. 2023 PoL spoofing doctrine that motivates the
+observer-not-verifier discipline.
+
+**No receipt schema bump.** v0.10 does NOT bump the receipt schema
+family. Receipt v0.7.0 (Nesterov + dampening, earned v0.9.3) remains
+the latest. The helper's forensic record terminates at the sidecar;
+the importer surfaces helper attribution in Rule 14 failure messages
+when it disagrees. A future slice may add a receipt-side mirror
+block (e.g. `attestor.upstream_helper`) but that's out of v0.10 scope.
+
+**Schema cross-references**: `package.json` `exports` adds
+`./schema/framework-trace-0.7.0`. v0.1-v0.6 sidecars continue to
+validate against their own schemas unchanged. The importer dispatcher
+in `src/import-observer.ts` accepts all seven framework-trace
+versions on the multi-step path.
+
 ### v0.9.3 FORCED bump to receipt.v0.7.0 + framework-trace.v0.6.0 (Nesterov + dampening)
 
 **v0.9.3 forces the bump to `receipt.v0.7.0` + `framework-trace.v0.6.0`.**

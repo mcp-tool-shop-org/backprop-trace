@@ -512,7 +512,8 @@ export function validateFrameworkTraceSidecar(
   let version: FrameworkTraceSchemaVersion = opts?.version ?? "0.1.0";
   if (opts?.version === undefined && typeof input === "object" && input !== null) {
     const format = (input as Record<string, unknown>).format;
-    if (format === "framework-trace.v0.6.0") version = "0.6.0";
+    if (format === "framework-trace.v0.7.0") version = "0.7.0";
+    else if (format === "framework-trace.v0.6.0") version = "0.6.0";
     else if (format === "framework-trace.v0.5.0") version = "0.5.0";
     else if (format === "framework-trace.v0.4.0") version = "0.4.0";
     else if (format === "framework-trace.v0.3.0") version = "0.3.0";

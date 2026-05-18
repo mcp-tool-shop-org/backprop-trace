@@ -14,6 +14,264 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.10.0] - 2026-05-18
+
+The v0.10 first-live-helper wave. **Not a v1.0.0 promotion** —
+backprop-trace remains mid-v0 (no JAX/TF live helpers; no AdamW or
+sgd_momentum live helper yet; no AMP / GPU; no batched live extraction;
+no real-world fixture; no adopter validation). What v0.10 actually
+does: **closes the "live framework helpers" gap named in v0.9.x's
+SHIP_GATE** for the minimum-viable cell — PyTorch × {SGD, Adam}
+single- and multi-step on CPU. After v0.10, the next v0.10.x slice
+extends the helper's optimizer matrix; v0.11 considers JAX (adopter-
+pull triggered).
+
+**Trust boundary (load-bearing)**: the helper is an OBSERVER. It is
+NEVER a verifier and never an authority. Every helper-emitted sidecar
+is structurally indistinguishable from a hand-authored or adversarial
+sidecar at Rule 14's input. Rule 14 (engine-recompute differential
+against the sidecar's named factors) MUST fire unconditionally on
+`authoring_state === "external_imported"` regardless of how trusted
+the helper appears, what framework version it ran against, or whether
+the helper reports success. The helper's `source_hash` and version
+metadata are FORENSIC — post-hoc attribution when Rule 14 disagrees,
+NOT bypass credentials. Csmith / CompCert + Fang et al. 2023 PoL
+spoofing doctrine grounding documented in `docs/live-helpers.md`.
+
+**No pip package by design**. Repo-script-only proves the workflow
+before committing to a pip surface. The flip-signal contract: ≥3
+independent non-team users ask "how do I pip install this?" AND the
+helper needs a non-trivial dependency beyond `torch + stdlib`. Until
+both fire, the single auditable file pattern is the right answer.
+
+### Added
+
+- **`framework-trace.v0.7.0` schema** (NEW file). FORCED bump over
+  framework-trace.v0.6.0: v0.6.0's root-level `additionalProperties:
+  false` rejects the new top-level `helper` object that live-extractor
+  sidecars MUST carry. v0.6.0 hand-authored sidecars continue to
+  validate against v0.6.0 schema byte-identical; v0.10 live-helper-
+  emitted sidecars declare `format: "framework-trace.v0.7.0"`.
+  - New REQUIRED top-level `helper` object with `additionalProperties:
+    false`. Required keys: `name`, `version`, `distribution` (closed
+    enum `"repo-script" | "pypi" | "vendored"`), `source_hash`
+    (`^sha256:[0-9a-f]{64}$`), `framework`, `runtime`, `extraction`.
+  - Conditional `required: ["helper"]` via `allOf if/then` when
+    `source_framework.name` ∈ {pytorch, jax, tensorflow} AND
+    `source_framework.extractor.name !== "hand_authored"`. Same
+    vacuous-properties trap fix as v0.9.3 — the if-clause requires
+    `source_framework + source_framework.name` to be PRESENT.
+  - Back-compat escape: hand-authored sidecars (declaring
+    `extractor.name = "hand_authored"`) may omit the helper block
+    and still declare v0.7.0 format — supports fixture re-declaration
+    without forcing a hand-authored helper block.
+- **`scripts/extract/pytorch.py`** (NEW file). Single auditable
+  Python file (~700 lines, MIT-headered, no pip dependencies beyond
+  `torch + stdlib`). Public API: `TraceDumper(model, optimizer,
+  loss_fn, out=..., trace_id=..., topology_loss=...)` context manager
+  with `with dumper.step(inputs=..., targets=...): ...` per-step body.
+  - Supports `torch.optim.SGD` (momentum=0) + `torch.optim.Adam` on
+    CPU. AdamW + sgd_momentum REJECTED at boundary with clear
+    "deferred to v0.10.1" message + sign-flip pin reference for
+    sgd_momentum.
+  - AMP / `torch.cuda.amp.autocast` REJECTED at boundary (PyTorch
+    issue #75224 — fp16/fp32 master confusion).
+  - CUDA / MPS / XLA REJECTED at boundary (CPU-first v0.10; v0.11+).
+  - Walks `optimizer.param_groups` → `params` in declared order
+    (PyTorch issue #1489 — `optimizer.state` keyed by `id()`, not
+    name; iterating state directly silently corrupts).
+  - `.detach().clone()` snapshot discipline throughout (Adam Paszke
+    forum + Elana Simon 2025 — `.detach()` alone shares storage;
+    subsequent `optimizer.step()` mutates the snapshot in place).
+  - Self-hashes via `hashlib.sha256(Path(__file__).read_bytes())`.
+    Documented as FORENSIC — Rule 14 is the authority.
+  - Single-hidden-layer feed-forward topologies only (Mazur-shaped).
+    CNN / transformer / multi-hidden-layer topologies deferred to v0.11.
+  - Emits `framework-trace.v0.7.0` sidecar JSONL to stdout (default)
+    or `--out <file>`. Multi-step via shared `trace_id` across steps.
+- **`examples/pytorch/extract_step.py`** (NEW file). Minimal Mazur
+  2-2-2 SGD single-step example showing the locked workflow:
+  copy the helper via `bp examples pytorch --print > pytorch_trace_
+  helper.py`, then `from pytorch_trace_helper import TraceDumper`.
+  In-repo path uses sys.path injection so the example can smoke-run
+  from the repo root without requiring the user to copy anything.
+- **`bp examples pytorch` CLI verb** (NEW). Default prints the
+  absolute filesystem path of `scripts/extract/pytorch.py`;
+  `--print` cats the helper's bytes to stdout (pipe into a local
+  file: `bp examples pytorch --print > pytorch_trace_helper.py`).
+  - `bp examples pytorch --help` prints usage including the trust-
+    boundary statement.
+  - `bp examples --help` lists the v0.10 subnouns (only `pytorch`).
+  - `bp --help` top-level usage gains a "Live framework helpers"
+    section pointing at the new verb.
+- **`docs/live-helpers.md`** (NEW file). The full operator + auditor
+  reference for the v0.10 helper: trust-boundary statement (verbatim
+  with citations: Csmith PLDI 2011 + CompCert CACM 2009 + Fang et al.
+  EuroS&P 2023 + SLSA Provenance v1.0 + in-toto v1 + Sigstore model-
+  transparency), v0.10 scope matrix, workflow walkthrough, forensic
+  helper block field reference, forbidden-in-the-helper list,
+  adversarial fixture catalog, no-pip-package rationale + flip-signal
+  contract, v0.10.1 outlook, source bibliography.
+- **`scripts/build-pytorch-helper-fixtures.mjs`** (NEW file). Per
+  Csmith/CompCert discipline: deterministic JS mutation script that
+  derives the good helper-emitted golden sidecar from
+  `pytorch.softmax-ce.sidecar.jsonl` AND derives 7 bad-helper
+  fixtures via targeted byte-level mutations. CI re-runs the script
+  and `git diff --exit-code` confirms byte-identical regeneration.
+  No RNG; no wall-clock; helper.extraction.timestamp pinned to
+  `"2026-05-18T12:00:00Z"` for byte stability.
+- **Good helper-emitted golden fixture**:
+  - `fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl`
+    — v0.7.0 sidecar derived from the existing softmax-ce sidecar
+    with format bumped + helper block added. Imports cleanly with
+    `verification_state: engine_recompute_matched_within_tolerance`;
+    reconciles all 26 rules pass.
+- **7 bad-helper adversarial fixtures** under `fixtures/bad/`:
+  - `pytorch-helper.bad-grad-captured-after-zero-grad` → Rule 4
+    (helper read `param.grad` AFTER `optimizer.zero_grad()`)
+  - `pytorch-helper.bad-detach-not-applied` → Rule 6 (`param.data`
+    view captured; `optimizer.step()` mutated the snapshot)
+  - `pytorch-helper.bad-param-ordering-swapped` → Rule 4 (helper
+    iterated `state_dict()` order vs `param_groups` order)
+  - `pytorch-helper.bad-loss-stale` → Rule 12 (loss tensor captured
+    before `loss.backward()`)
+  - `pytorch-helper.bad-forward-out-mismatch` → Rule 11 (cached
+    wrong layer's output; softmax simplex broken)
+  - `pytorch-helper.bad-weight-after-divergence` → Rule 6
+    (`parameters_after` captured before `optimizer.step()` returned)
+  - `pytorch-helper.bad-hidden-signal-misrouted` → Rule 8 (used
+    `out` instead of `out*(1-out)` for sigmoid `activation_derivative`)
+- **Tests**:
+  - `test/reconcile.bad-pytorch-helper.test.ts` — 7 anti-circular
+    tests (one per bad fixture). For each: import via
+    `importPytorchSidecar()`, reconcile, assert expected rule fires
+    BEFORE reading `meta.json`; then strip `fixture_status` +
+    `attestor` and re-reconcile to PROVE the rule still fires
+    without metadata.
+  - `test/import-pytorch-helper.test.ts` — 7 tests covering schema
+    validation of v0.7.0 helper-emitted sidecars (good + spoofed
+    source_hash + missing helper + hand_authored escape), import
+    + Rule 14 passage, full reconciliation, and
+    `validateFrameworkTraceSidecarOrThrow` parity.
+  - `test/bp.examples-pytorch.cli.test.ts` — 14 tests covering CLI
+    verb behavior, helper file presence, trust-boundary statement
+    presence in the helper docstring, momentum_buffer sign-flip
+    pin presence, helper version matches package.json,
+    byte-identity between `bp examples pytorch --print` output and
+    the on-disk file, help texts, error exit codes.
+- **`bp examples pytorch` subcommand recognition** in CLI fuzzy-
+  suggester (`suggestSubcommand`) so typos like `bp exampls pytorch`
+  point at the right verb.
+- **`package.json` `files[]` extended** with `scripts/extract/**` +
+  `examples/pytorch/**` so the helper + example ship in the npm
+  tarball (verified via `npm pack --dry-run`).
+
+### Changed
+
+- **`package.json` version 0.9.3 → 0.10.0.** Description preserved
+  framing (no rewrite — v0.10 is additive over v0.9.x's surface,
+  just adds the helper path).
+- **`src/schema-loader.ts`** — `FRAMEWORK_TRACE_SCHEMA_VERSIONS`
+  appended `"0.7.0"`. Docstring extended with v0.10 helper-block
+  rationale.
+- **`src/validate.ts`** — `validateFrameworkTraceSidecar` dispatcher
+  recognizes `format: "framework-trace.v0.7.0"` and routes to the
+  v0.7.0 validator.
+- **`src/import-observer.ts`** — `FrameworkTraceSidecar` type union
+  extended with `"framework-trace.v0.7.0"`. New `HelperBlock` type
+  exported for downstream consumers. Multi-step validator accepts
+  v0.7.0.
+- **`src/bin/bp.ts`** — added `bp examples pytorch [--print]` verb +
+  `resolvePytorchHelperPath()` helper. Top-level usage text gains
+  "Live framework helpers" section. `suggestSubcommand()` learns
+  the `examples` verb.
+- **`docs/schema.md`** — new "v0.10 FORCED bump to framework-trace.
+  v0.7.0 (live-helper `helper` block)" section above the v0.9.3
+  Nesterov section. Explains the forced-bump rationale, the helper
+  block fields, the trust-boundary statement, and the explicit
+  "no receipt schema bump" framing.
+- **`README.md`** — Status line updated to v0.10.0; description
+  framing extended with the live-helper paragraph; CLI usage gains
+  `bp examples pytorch` line; "Live framework helpers" deferral
+  item upgraded to MOSTLY CLOSED in v0.10; schemas list +
+  fixtures list extended.
+- **`SHIP_GATE.md`** — "Live framework helpers" gap upgraded to
+  MOSTLY CLOSED in v0.10 with explicit AdamW/sgd_momentum/JAX/TF
+  deferral roadmap.
+
+### Notes (forward compatibility)
+
+- **v0.10.1**: extends the helper's optimizer matrix with PyTorch
+  AdamW (decoupled-decay extraction; same engine path as v0.9.1
+  AdamW) and PyTorch sgd_momentum (momentum_buffer sign-flip at
+  the extraction boundary; the pin lives in
+  `scripts/extract/pytorch.py` docstring + the v0.7.0 MomentumState
+  schema description). Helper currently REJECTS both at boundary
+  with clear "deferred to v0.10.1" messages.
+- **v0.10.x**: Lightning / Accelerate callback integration (vanilla
+  `torch.nn.Module` is first per MLflow's documented caveat —
+  Lightning is a separate axis).
+- **v0.11**: JAX live helper — triggered ONLY when (a) PyTorch
+  helper has shipped one bugfix release AND (b) ≥1 external adopter
+  filed an issue or PR using the PyTorch helper. If no adopter in
+  ~90 days, hold. JAX hand-authored sidecars continue working
+  unchanged.
+- **v0.12+**: TensorFlow live helper — gated on JAX clean shipment.
+  HuggingFace `transformers` v5 retreat to PyTorch-only (2025) is
+  a real warning sign for multi-framework breadth.
+- **Pip distribution flip signal**: ≥3 independent non-team users
+  ask "how do I `pip install` this?" within one release cycle AND
+  the helper needs a dependency the user can't reasonably copy-paste
+  (beyond `torch` + stdlib). Until both fire, repo-script is the
+  right answer.
+- **Real-world fixture**: deferred to v0.11. Mazur 2-2-2 + softmax+CE
+  + sgd_momentum-Mazur remain the heroes. CNN / transformer-block
+  fixture requires multi-hidden-layer topology support (also v0.11+).
+- **Adopter validation**: deferred to v0.12 (before v1.0 promotion).
+
+### Numbers
+
+- 486 tests pass (was 458; +28 from new helper-related test suites)
+- typecheck + build green
+- 5 src files modified (schema-loader, validate, import-observer,
+  bin/bp, package.json)
+- 1 new schema file (`schemas/framework-trace.v0.7.0.json`)
+- 1 new Python helper file (`scripts/extract/pytorch.py`, ~700 lines)
+- 1 new Python example file (`examples/pytorch/extract_step.py`)
+- 1 new docs file (`docs/live-helpers.md`)
+- 1 new fixture-generation script (`scripts/build-pytorch-helper-fixtures.mjs`)
+- 1 new good golden fixture (`pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl`)
+- 7 new bad-helper fixtures (with sibling meta files = 14 files)
+- 3 new test files (`reconcile.bad-pytorch-helper.test.ts`,
+  `import-pytorch-helper.test.ts`, `bp.examples-pytorch.cli.test.ts`)
+- v0.1.0 through v0.9.3 fixtures remain byte-identical (no receipt
+  schema bump; helper block lives on sidecars only)
+
+### What v0.10 does NOT do
+
+- Does **not** promote to v1.0.0
+- Does **not** create a pip distribution (repo-script-only by design)
+- Does **not** ship PyTorch AdamW live extraction (v0.10.1)
+- Does **not** ship PyTorch sgd_momentum live extraction — sign-flip
+  pin documented but extraction REJECTED at boundary (v0.10.1)
+- Does **not** ship JAX live helper (v0.11 — adopter-pull triggered)
+- Does **not** ship TensorFlow live helper (v0.12+ — gated on JAX)
+- Does **not** ship Lightning / Accelerate callback integration (v0.10.x)
+- Does **not** ship AMP / `torch.cuda.amp.autocast` extraction —
+  REJECTED at boundary (PyTorch issue #75224 master-confusion)
+- Does **not** ship CUDA / MPS / XLA extraction (v0.11+)
+- Does **not** ship batched live extraction (hand-authored batched
+  sidecars continue working)
+- Does **not** add a real-world fixture (CNN / transformer; v0.11+)
+- Does **not** add adopter validation (deferred to v0.12)
+- Does **not** bump the receipt schema family (helper block lives
+  on sidecars only; receipt v0.7.0 remains latest)
+- Does **not** change SGD/Adam/AdamW/sgd_momentum byte-output
+  (v0.1-v0.9.3 fixtures byte-equal under the v0.10 engine)
+- Does **not** tag, publish to npm, or create a GitHub release
+- Does **not** regenerate translations (status line + helper section
+  only; no operator-language change warranting translation cycle)
+
 ## [0.9.3] - 2026-05-18
 
 The v0.9.3 Nesterov + dampening wave. **Not a v1.0.0 promotion** —
