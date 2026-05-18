@@ -1,0 +1,18 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "momentum.bad-engine-recompute-disagrees-momentum.meta",
+  "describes": "fixtures/bad/momentum.bad-engine-recompute-disagrees-momentum.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.sgd-momentum.golden.jsonl. v0.9.2 classical PyTorch-style SGD momentum adversarial plate — each fixture surfaces a distinct attack class with a deterministic mutation. v0.9.2 ships CLASSICAL ONLY — Nesterov + dampening RESERVED for v0.9.3, SGD coupled L2 deferred to v0.10.",
+  "mutation": {
+    "kind": "perturb_weight_after_internal_arithmetic_stays_consistent",
+    "field_path": "updates[0].weight_after",
+    "parameter_id": "w_x1_h1",
+    "original_weight_after": 0.149995614,
+    "mutated_weight_after": 0.150995614,
+    "perturbation": 0.001,
+    "explanation": "Per-update arithmetic (buffer recurrence, update formula) is internally consistent — Rules 20, 21 all pass. Only Rule 14's engine recompute catches the divergence. Load-bearing fixture: classical PyTorch-style SGD momentum's structural consistency (Rule 21) is NECESSARY but NOT SUFFICIENT for producer authenticity; engine recompute (Rule 14) is the second line of defense and the Fang et al. 2023 PoL spoofing class (arXiv:2208.03567) maps directly here (parallel to v0.9.1's adam.bad-engine-recompute-disagrees-adam fixture)."
+  },
+  "reconciliation_check_targeted_first": "Rule 14: Engine recompute differential — momentum-internal arithmetic consistent but weight_after stored value diverges from engine recomputation.",
+  "purpose": "v0.9.2 momentum anti-circularity fixture (kind: 'engine-recompute-disagrees-momentum'). Pressure-tests that the named rule fires BEFORE the reconciler consults fixture_status metadata.",
+  "v0_9_2_trust_framing": "Rule 21 (classical PyTorch-style SGD momentum) is a STRUCTURAL CONSISTENCY check, NOT a producer-authenticity check. An attacker who controls every byte of the sidecar and recomputes a consistent (g, buffer, update) triple passes Rule 21 trivially — analogous to Rule 17's bundle-integrity caveat, Rules 22-24's Adam caveat, and the Fang et al. 2023 EuroS&P spoofing class against Proof-of-Learning (arXiv:2208.03567)."
+}

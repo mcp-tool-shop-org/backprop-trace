@@ -157,14 +157,13 @@ const RULE_LABELS: Record<number, string> = {
   17: "trace-bundle binding (attestor.bundle_root_digest mismatch / heterogeneous bundle binding / post-binding mutation; INTEGRITY check only, not producer-authenticity)",
   18: "batch reduction consistency (loss.total != reduction(loss.per_sample.values()) per batch.reduction; catches mean-vs-sum confusion)",
   19: "sample-set coherence (per-sample maps' key set != batch.sample_order set; missing/duplicate/extra sample IDs in any ordered projection used for reduction/emission/canonical digest)",
-  20: "optimizer-state shape consistency (Adam/AdamW: state_before/state_after presence + finiteness, optimizer_config.{name, beta1, beta2, epsilon, t, weight_decay} presence + bounds; STRUCTURAL consistency check NOT producer-authenticity — Fang et al. 2023 EuroS&P spoofing class applies)",
-  // 21 reserved for v0.9.2 momentum SGD buffer recurrence — no `rule: 21`
-  // failure is emitted in v0.9.1; doctrine test does not expect a fixture.
+  20: "optimizer-state shape consistency (Adam/AdamW: state_before/state_after {m, v} + optimizer_config.{name, beta1, beta2, epsilon, t, weight_decay}; sgd_momentum: state_before/state_after {buffer} + optimizer_config.{name, momentum}; STRUCTURAL consistency check NOT producer-authenticity — Fang et al. 2023 EuroS&P spoofing class applies)",
+  21: "classical PyTorch-style SGD momentum buffer recurrence + parameter update (Sutskever et al. 2013 ICML / PyTorch torch.optim.SGD; 21a: buffer_after == momentum * buffer_before + gradient; 21b: update == learning_rate * buffer_after; descent direction; v0.9.2 ships CLASSICAL PyTorch-style ONLY — Nesterov + dampening RESERVED for v0.9.3, SGD coupled L2 weight decay deferred to v0.10; STRUCTURAL CHECK NOT producer-authenticity)",
   22: "Adam moment recurrences (Kingma & Ba 2014 arXiv:1412.6980 Algorithm 1 lines 9-10: m_after == beta1*m_before + (1-beta1)*gradient; v_after == beta2*v_before + (1-beta2)*gradient²; STRUCTURAL CHECK — does not verify gradient came from real data)",
   23: "Adam bias correction + t consistency (optimizer_config.t == step_index + 1 when both present; bias-correction divisors (1 - beta^t) non-degenerate; setup for Rule 24's m_hat/v_hat derivation chain)",
   24: "Adam/AdamW parameter update (Kingma & Ba 2014 Algorithm 1 line 13: update == lr * m_hat / (sqrt(v_hat) + epsilon); pinned epsilon OUTSIDE sqrt, PyTorch convention; AdamW's decoupled weight decay applies at Rule 7's AdamW branch; STRUCTURAL CHECK)",
-  25: "optimizer-state chain (multi-step: Adam/AdamW state_before[step+1].{m,v} == state_after[step].{m,v} + optimizer_config.t monotonic +1; analog of Rule 9 for parameter chain)",
-  26: "optimizer-config constancy (multi-step: optimizer_config.{name, beta1, beta2, epsilon, weight_decay} IDENTICAL across all receipts in a bundle; learning_rate EXCLUDED for LR schedules; t EXCLUDED — Rule 25 handles it)",
+  25: "optimizer-state chain (multi-step: Adam/AdamW state_before[step+1].{m,v} == state_after[step].{m,v} + optimizer_config.t monotonic +1; sgd_momentum state_before[step+1].buffer == state_after[step].buffer; analog of Rule 9 for parameter chain)",
+  26: "optimizer-config constancy (multi-step: per-optimizer key list — Adam/AdamW: {beta1, beta2, epsilon, weight_decay}; sgd_momentum: {momentum, nesterov, dampening} — IDENTICAL across all receipts in a bundle; name ALWAYS checked; learning_rate EXCLUDED for LR schedules; t EXCLUDED — Rule 25 handles it for Adam)",
 };
 
 // =============================================================================

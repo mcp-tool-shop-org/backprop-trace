@@ -14,6 +14,259 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.9.2] - 2026-05-19
+
+The v0.9.2 classical PyTorch-style SGD momentum wave. **Not a v1.0.0
+promotion** — backprop-trace remains mid-v0 (no Nesterov / dampening
+yet — reserved for v0.9.3; no SGD coupled L2 weight decay — deferred
+to v0.10; no live framework helpers; no real-world fixture; no adopter
+validation). What v0.9.2 actually does: closes the "momentum SGD"
+sub-gap named in v0.9.1's SHIP_GATE — classical PyTorch-style SGD
+momentum receipts now validate end-to-end (engine + reconciler +
+observer-mode ingestion + multi-step buffer chain + bundle binding).
+
+**Doctrine guardrail**: Rule 21 is framed as "**classical PyTorch-style
+SGD momentum recurrence**" — NOT "momentum correctness" in the abstract.
+Future Nesterov / dampening / weight-decay variants are NOT bugs in
+v0.9.2; they are explicitly deferred variants that the v0.9.2 reconciler
+does not recognize. A receipt whose `update` matches a non-classical
+form (e.g., Nesterov lookahead) fires Rule 21 in v0.9.2 — that's a
+"stored update matches a momentum variant the v0.9.2 reconciler does
+not recognize" failure, not a "Nesterov is broken" failure.
+
+### Added
+
+- **`receipt.v0.6.0` schema** (NEW file). FORCED bump over `receipt.v0.5.0`:
+  the closed `Update.optimizer.name: ["sgd", "adam", "adamw"]` enum +
+  closed `AdamState` shape ({m, v} with `additionalProperties: false`)
+  prevented in-place evolution. v0.6.0 widens `optimizer.name` to
+  `["sgd", "adam", "adamw", "sgd_momentum"]`, adds new `MomentumState =
+  { buffer: number }` def (`additionalProperties: false`, `required:
+  ["buffer"]`), widens `Update.optimizer.state_before` / `state_after` to
+  `OptimizerState = oneOf(AdamState, MomentumState)` (reconciler Rule 20
+  enforces shape-matches-name; schema is permissive), adds optional
+  `OptimizerConfig.momentum` (conditionally REQUIRED when name ===
+  "sgd_momentum"), adds RESERVED `nesterov: const false` + `dampening:
+  const 0` (v0.9.3 widens), rejects `weight_decay` on sgd_momentum
+  (deferred to v0.10). SGD-only receipts continue to declare
+  `schema_version: "0.4.0"`; Adam/AdamW continue at "0.5.0";
+  sgd_momentum declares "0.6.0".
+- **`framework-trace.v0.5.0` schema** (NEW file). FORCED bump for the
+  same reasons. Parallel sidecar shape: `optimizer.name` enum widened,
+  `optimizer.momentum` field added, `nesterov: const false` +
+  `dampening: const 0` reserved, `weight_decay` rejected for
+  sgd_momentum. v0.4.0 / v0.3.0 / v0.2.0 / v0.1.0 sidecars continue
+  to validate against their own schemas unchanged. Importer dispatcher
+  accepts all five versions on the multi-step path.
+- **`runGeneralStep` sgd_momentum dispatch** in `src/general-engine.ts`.
+  New types: `MomentumState`, `OptimizerStateAny` (union of `AdamState
+  | MomentumState`). Extended `Optimizer` with widened `name` enum and
+  union-typed `state_before`/`state_after`. Extended `OptimizerConfig`
+  with optional `momentum`, `nesterov: false` (reserved), `dampening: 0`
+  (reserved). When `optimizer_config.name === "sgd_momentum"`, the
+  engine computes the classical PyTorch-style recurrence: `buffer_after
+  = mu * buffer_before + gradient`, `update = lr * buffer_after`
+  (descent direction), `weight_after = weight_before + update` (no
+  AdamW-style decoupled-decay branch — sgd_momentum + weight_decay
+  rejected at boundary). Engine identity stays `"backprop-trace-engine@
+  0.6.0"` (additive optimizer dispatch; existing SGD/Adam/AdamW math
+  unchanged; v0.1-v0.9.1 receipts byte-equal).
+- **`assertOptimizerConfig` sgd_momentum branch** with loud rejection of:
+  - `nesterov === true` (deferred to v0.9.3 — clear "Nesterov
+    accelerated gradient lookahead form" message citing Sutskever et al.
+    2013 ICML §2)
+  - `dampening !== 0` (deferred to v0.9.3 — clear "PyTorch's
+    torch.optim.SGD(dampening=tau) recurrence" message)
+  - `weight_decay !== undefined` (deferred to v0.10 — clear
+    "PyTorch's torch.optim.SGD(weight_decay=lambda) applies COUPLED L2"
+    message contrasting with AdamW's decoupled)
+  - Adam fields (beta1/beta2/epsilon/t) present on sgd_momentum
+    (cross-validation: belong to Adam family)
+  - `momentum` missing (REQUIRED for sgd_momentum)
+  - `momentum` not in (0, 1) (Sutskever 2013 / PyTorch default 0.9)
+- **`runBatchedGeneralStep` sgd_momentum guard** — batched sgd_momentum
+  rejected with clear "deferred" message (parallel to v0.9.1's batched
+  Adam rejection); single-sample sgd_momentum works via the unbatched
+  path.
+- **Rule 21** (`src/reconcile.ts`):
+  `checkRule21SgdMomentumRecurrence`. Sub-checks **21a** (`buffer_after
+  == momentum * buffer_before + gradient`; Sutskever et al. 2013 ICML /
+  PyTorch `torch.optim.SGD` reference; Polyak 1964 heavy-ball foundation;
+  `lr` OUTSIDE the buffer so LR schedules don't retroactively rescale
+  history) AND **21b** (`update == learning_rate * buffer_after`;
+  descent direction; sign already in `gradient`). GATED on
+  `optimizer.name === "sgd_momentum"`. Failure messages explicitly
+  cite "classical PyTorch-style" + Sutskever/Polyak/PyTorch references
+  + STRUCTURAL CHECK + Fang et al. 2023 PoL spoofing caveat.
+- **Rule 20 generalization** — extends in place with sgd_momentum
+  branches. Adds `isSgdMomentumUpdate` + `isOptimizerWithStateUpdate`
+  helpers. Hyperparameter-presence checks dispatch on optimizer family
+  (Adam: beta1/beta2/epsilon/t/weight_decay-for-adamw; sgd_momentum:
+  momentum + reserved nesterov/dampening + rejected weight_decay).
+  State-shape checks dispatch on optimizer.name: Adam/AdamW gets
+  AdamState ({m, v}); sgd_momentum gets MomentumState ({buffer}).
+  Cross-shape mismatch (e.g., AdamState shape on sgd_momentum optimizer)
+  fires loudly.
+- **Rule 25 generalization** — multi-step optimizer-state chain now
+  branches on optimizer.name. Adam/AdamW path preserves byte-identical
+  v0.9.1 behavior (m + v continuity + t monotonicity). sgd_momentum
+  path checks buffer continuity (no t — momentum has no timestep
+  field). Bad fixture: `momentum-multi-step.bad-stale-buffer`.
+- **Rule 26 generalization** — per-optimizer constancy key list dispatch
+  on `optimizer_config.name`. Adam/AdamW: `{beta1, beta2, epsilon,
+  weight_decay}`. sgd_momentum: `{momentum, nesterov, dampening}`.
+  `name` always checked. `learning_rate` excluded (LR schedules
+  legitimate); `t` excluded (Rule 25 handles for Adam; momentum has no
+  t).
+- **Rule 14 sgd_momentum-aware** — when receipt declares
+  `optimizer_config.name === "sgd_momentum"`, Rule 14 re-runs
+  `runGeneralStep` with the same momentum hyperparameter +
+  per-update state_before; engine emits state_after; differential
+  compares engine state_after.buffer against stored. Bad fixture:
+  `momentum.bad-engine-recompute-disagrees-momentum` (Fang et al.
+  2023 PoL spoofing analog).
+- **Rule 5 confirmed gated off for sgd_momentum** (predicate `name
+  !== "sgd"` already excludes it; Rule 21b takes over the update
+  formula check).
+- **No Rule 7 branch needed** for classical sgd_momentum — `weight_after
+  = weight_before + update` (same as plain SGD/Adam). AdamW remains the
+  only optimizer with a Rule 7 branch (decoupled-decay).
+- **Classical SGD momentum good fixtures** in `fixtures/external/`:
+  - `pytorch.sgd-momentum.{sidecar,golden}.jsonl` — single-step (Mazur
+    2-2-2 topology, mu=0.9, zero-init buffer)
+  - `pytorch.sgd-momentum.multi-step.{sidecar,golden}.jsonl` — 3-step
+    exercising Rules 25 buffer chain + 26 config constancy + bundle binding
+- **Momentum adversarial fixture plate** (6 bad fixtures) in `fixtures/bad/`:
+  - `momentum.bad-coefficient-omitted.jsonl` → Rule 20 (`momentum`
+    missing from optimizer_config; schema-bypass)
+  - `momentum.bad-coefficient-swapped.jsonl` → Rule 21 (mu mutated
+    0.9 → 0.99; source receipt is step_index=1 from multi-step golden
+    so buffer_before is non-zero — at step 0 with buffer_before=0, mu
+    has no effect on the recurrence)
+  - `momentum.bad-formula-mismatch.jsonl` → Rule 21 (update mutated to
+    Nesterov-like form; scope-agnostic phrasing — fixture survives the
+    v0.9.3 Nesterov landing without rename)
+  - `momentum-multi-step.bad-stale-buffer.jsonl` → Rule 25 (multi-step
+    chain break, value-mutation flavor)
+  - `momentum-multi-step.bad-buffer-drop.jsonl` → Rule 20 (multi-step
+    chain break, structural drop flavor; schema-bypass)
+  - `momentum.bad-engine-recompute-disagrees-momentum.jsonl` → Rule 14
+    (load-bearing per Fang et al. 2023 PoL spoofing class; parallel to
+    v0.9.1's adam.bad-engine-recompute-disagrees-adam fixture)
+- **`schemas/receipt.v0.6.0.json` + `schemas/framework-trace.v0.5.0.json`
+  subpath exports** in `package.json` exports map
+  (`./schema/receipt-0.6.0`, `./schema/framework-trace-0.5.0`).
+- **`bp` CLI** rule labels updated for Rule 21 with classical
+  PyTorch-style framing + Sutskever 2013 / PyTorch torch.optim.SGD
+  citation + STRUCTURAL CHECK / Fang 2023 PoL spoofing caveat
+  (`src/bin/bp.ts` RULE_LABELS).
+- **Tests**: `test/import-pytorch-momentum.test.ts` (engine unit tests
+  for classical recurrence + parameter update + nesterov/dampening/
+  weight_decay rejection at engine boundary + single-step + multi-step
+  ingestion + sgd_momentum golden reconciliation + determinism
+  round-trip) and `test/reconcile.bad-momentum.test.ts` (anti-circularity
+  tests for each momentum bad fixture). 435 → 453 tests (+18, all
+  passing).
+- **Doctrine ratchet**: `FILENAME_KIND_TO_RULE` extended with 12
+  momentum fixture entries (6 prefixed + 6 unprefixed for back-compat).
+  `extractImplementedRules()` now expects Rules `[1..26]` (Rule 21
+  ACTIVATED; was reserved in v0.9.1).
+
+### Changed
+
+- **`package.json` version 0.9.1 → 0.9.2.** Description rewritten:
+  "26-rule reconciler" (was "25-rule"); mentions classical PyTorch-style
+  SGD momentum with Sutskever 2013 reference; preserves Mid-v0 status
+  flag (CPU-only, SGD/Adam/AdamW/sgd_momentum only; Nesterov +
+  dampening + SGD coupled L2 explicitly deferred with target versions).
+- **`docs/reconciliation.md`** — Quick-reference rule table updated:
+  Rule 21 ACTIVATED ("classical PyTorch-style SGD momentum buffer
+  recurrence + parameter update"); Rules 20, 25, 26 generalized
+  descriptions. New "Classical PyTorch-style SGD momentum (v0.9.2)"
+  section with explicit doctrine guardrail (Rule 21 is precisely scoped
+  to CLASSICAL ONLY; future variants are deferred, not bugs);
+  Sutskever 2013 / PyTorch / Polyak 1964 citations; sign convention
+  + lr-outside-buffer rationale. Adam-rule trust-framing extended to
+  include Rule 21.
+- **`docs/schema.md`** — Added "v0.9.2 FORCED bump to receipt.v0.6.0 +
+  framework-trace.v0.5.0 (classical PyTorch-style SGD momentum)"
+  section documenting the closed-enum + new state-shape rationale.
+- **`SHIP_GATE.md`** — "Optimizers beyond vanilla SGD" gap marked
+  MOSTLY CLOSED in v0.9.2 (Adam/AdamW v0.9.1 + classical sgd_momentum
+  v0.9.2). New "Nesterov accelerated gradient + dampening" row added
+  with v0.9.3 target + schema-slot-reservation note.
+- **`README.md`** — Status line, 30-second quickstart, 26-rule table
+  (was 25), Trust-framing caveat extended to Rule 21, What's-not-in-
+  this-version Adam/momentum entries updated, new Nesterov-deferred
+  entry.
+- **Schema-loader docstrings** (`src/schema-loader.ts`) —
+  `SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0",
+  "0.6.0"]`; `FRAMEWORK_TRACE_SCHEMA_VERSIONS = ["0.1.0", "0.2.0",
+  "0.3.0", "0.4.0", "0.5.0"]`. Docstrings updated.
+- **Validator dispatcher** (`src/validate.ts`) —
+  `validateFrameworkTraceSidecar` recognizes
+  `format: "framework-trace.v0.5.0"` and routes to the new validator.
+
+### Notes (forward compatibility)
+
+- **Nesterov accelerated gradient** is v0.9.3. Schema reserves
+  `nesterov: { const: false }` so v0.9.3 just widens the const to
+  `boolean`. Engine + Rule 21 + fixtures will gain a Nesterov branch
+  (lookahead form `update = -lr * (mu * buf_after + gradient)`).
+- **Dampening** is v0.9.3. Schema reserves `dampening: { const: 0 }`
+  so v0.9.3 widens to `number` in `[0, 1)`. Recurrence becomes
+  `buffer_t = mu * buffer_{t-1} + (1 - tau) * gradient`.
+- **SGD coupled L2 weight decay** is v0.10. Rules 6/7 grow a third
+  branch (sgd_momentum + weight_decay applies `grad ← grad + lambda *
+  theta` BEFORE the buffer update — coupled L2 form, distinct from
+  AdamW's decoupled). Touches Rule 4's factor narrative; needs its
+  own slice.
+- **AMSGrad / NAdam / RAdam / Lion** are v0.10+. AMSGrad's `max(v_t,
+  v_{t-1})` projection doesn't fit Rule 4's `product(factors)`
+  vocabulary; needs new rule design pass.
+- **Batched sgd_momentum** is v0.9.x / v0.10 (same per-sample-runs-then-
+  reduce gap that blocks batched Adam). Single-sample (batch.size=1)
+  sgd_momentum works today via the unbatched path.
+
+### Numbers
+
+- 453 tests pass (was 435; +18 from new momentum test suites)
+- typecheck + build green
+- 9 src files modified (schema-loader, validate, general-engine, emit,
+  reconcile, import-observer, bin/bp, package.json; schema-loader.test.ts
+  + reconcile.doctrine.test.ts + import-pytorch-adam.test.ts updated)
+- 2 new schema files (`schemas/receipt.v0.6.0.json` +
+  `schemas/framework-trace.v0.5.0.json`)
+- 2 new fixture files in `fixtures/external/` (sgd-momentum single-step
+  + multi-step pairs = 4 actual files)
+- 6 new fixture files in `fixtures/bad/` (momentum adversarial plate;
+  with sibling meta files = 12 files)
+- 2 new test files (`test/import-pytorch-momentum.test.ts` +
+  `test/reconcile.bad-momentum.test.ts`)
+- 2 new fixture-generation scripts
+  (`scripts/generate-pytorch-momentum-fixtures.ts` +
+  `scripts/generate-momentum-bad-fixtures.ts`)
+- v0.1.0 through v0.9.2 fixtures remain byte-identical (SGD/Adam/AdamW
+  goldens unchanged; sgd_momentum establishes a new lineage starting
+  at v0.6.0 schema_version)
+
+### What v0.9.2 does NOT do
+
+- Does **not** promote to v1.0.0
+- Does **not** ship Nesterov accelerated gradient (v0.9.3)
+- Does **not** ship dampening (v0.9.3)
+- Does **not** ship SGD coupled L2 weight decay (v0.10)
+- Does **not** ship AMSGrad / NAdam / RAdam / Lion (v0.10+)
+- Does **not** ship batched sgd_momentum (deferred)
+- Does **not** ship live Python helpers (still hand-authored sidecars)
+- Does **not** add new CLI verbs (sgd_momentum dispatch is sidecar-
+  driven; same pattern as v0.9 batched + v0.9.1 Adam)
+- Does **not** add a real-world fixture (Mazur 2-2-2 + softmax+CE remain
+  the heroes; CNN / transformer-block deferred to v0.11)
+- Does **not** add adopter validation (deferred to v0.12)
+- Does **not** change SGD/Adam/AdamW byte-output (v0.1-v0.9.1 fixtures
+  byte-equal under the v0.9.2 engine)
+
 ## [0.9.1] - 2026-05-18
 
 The v0.9.1 Adam + AdamW wave. **Not a v1.0.0 promotion** — backprop-trace

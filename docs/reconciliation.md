@@ -16,7 +16,7 @@ to have done actually add up?**
 If the answer is "no," the reconciler refuses to certify the receipt and
 the verifier fails closed.
 
-## Quick reference: the 25 rules (+ Rule 0.8 structural sub-check; Rule 21 reserved for v0.9.2 momentum)
+## Quick reference: the 26 rules (+ Rule 0.8 structural sub-check)
 
 | # | Rule | Status |
 |---|------|--------|
@@ -40,13 +40,13 @@ the verifier fails closed.
 | 17 | Trace-bundle binding: when any receipt in a multi-record reconcile declares `attestor.bundle_root_digest`, ALL receipts in the bundle MUST declare the same digest, AND that digest MUST equal the recomputed sha256 of the canonical-byte concatenation of every receipt with `bundle_root_digest` stripped. **GATED** on `bundle_root_digest` presence; fires only from `reconcileMultiStep`. **INTEGRITY ONLY**, not producer-authenticity — an attacker who controls all receipt bytes AND recomputes the digest passes Rule 17 trivially. Combine with Rule 16 (`signed_subject_digest`) or an external signature for producer-identity binding. | **implemented (v0.8)** |
 | 18 | Batch reduction consistency: when `receipt.batch` is present AND `loss.reduction` in {`mean`, `sum`}, assert `loss.total == reduction(loss.per_sample.values(), batch.reduction)`. Catches the canonical mean-vs-sum confusion attack structurally — a producer claiming `reduction: "mean"` but emitting `loss.total = sum(per_sample)` (off by a factor of N). **GATED** on `batch` presence + non-`none` reduction + `per_sample` presence. | **implemented (v0.9)** |
 | 19 | Sample-set coherence: when `batch.sample_order` is present, every ordered per-sample projection used for reduction / emission / canonical digest construction MUST be derived by iterating exactly that order. Concretely: per-sample maps (`loss.per_sample`, top-level `per_sample`) MUST have key sets EQUAL to `batch.sample_order`'s set. Missing IDs (gap), extra IDs (substitution), or duplicate `sample_order` entries fail. **GATED** on `batch.sample_order` presence. Schema-level `uniqueItems` on `batch.sample_order` is the first line of defense; Rule 19 is the reconciler-side defense-in-depth check. | **implemented (v0.9)** |
-| 20 | Optimizer-state shape consistency: when any update declares `optimizer.name` in `{adam, adamw}`, the top-level `optimizer_config` block MUST be present with all required hyperparameters (`name`, `learning_rate`, `beta1`, `beta2`, `epsilon`, `t`; plus `weight_decay` for `adamw`), and every Adam-family update MUST carry per-parameter `state_before` and `state_after` with finite numeric `m` and non-negative finite `v`. **GATED** on Adam/AdamW updates. STRUCTURAL CONSISTENCY check, NOT producer-authenticity. | **implemented (v0.9.1)** |
-| 21 | **RESERVED for v0.9.2 momentum SGD buffer recurrence** (`buffer_t == mu * buffer_{t-1} + gradient`). No `rule: 21` failure is emitted in v0.9.1 and the doctrine ratchet does not require a paired fixture for it. Stable numbering across v0.9.1 → v0.9.2 so momentum slots in without renumbering Rules 22-26. | **reserved (v0.9.2)** |
+| 20 | Optimizer-state shape consistency: when any update declares `optimizer.name` in `{adam, adamw, sgd_momentum}`, the top-level `optimizer_config` block MUST be present with all required hyperparameters (Adam/AdamW: `name`, `learning_rate`, `beta1`, `beta2`, `epsilon`, `t`; plus `weight_decay` for `adamw`; sgd_momentum: `name`, `learning_rate`, `momentum`), and every stateful-optimizer update MUST carry per-parameter `state_before` and `state_after` with the shape that matches the optimizer name (Adam/AdamW: `{m, v}` with finite `m` and non-negative finite `v`; sgd_momentum: `{buffer}` with finite `buffer`). Reserved v0.9.3 fields `nesterov: const false` and `dampening: const 0` enforced for sgd_momentum; `weight_decay` rejected for sgd_momentum (SGD coupled L2 deferred to v0.10). **GATED** on Adam/AdamW/sgd_momentum updates. STRUCTURAL CONSISTENCY check, NOT producer-authenticity. | **implemented (v0.9.1; sgd_momentum branch v0.9.2)** |
+| 21 | Classical PyTorch-style SGD momentum buffer recurrence + parameter update: **21a** `buffer_after == momentum * buffer_before + gradient` (Sutskever et al. 2013 ICML / PyTorch `torch.optim.SGD` reference; Polyak 1964 heavy-ball foundation; `lr` lives OUTSIDE the buffer per Sutskever 2013 §2 — LR schedules don't retroactively rescale momentum history) AND **21b** `update == learning_rate * buffer_after` (descent direction; sign already in `gradient`). **GATED** on `optimizer.name === "sgd_momentum"`. **v0.9.2 ships CLASSICAL PyTorch-style ONLY** — Nesterov accelerated gradient + dampening RESERVED for v0.9.3 (when shipped, Rule 21 widens to branch on `optimizer_config.{nesterov, dampening}`); SGD coupled L2 weight decay deferred to v0.10 (Rule 7 third branch). STRUCTURAL CHECK, NOT producer-authenticity — Fang et al. 2023 EuroS&P PoL spoofing class applies (arXiv:2208.03567). | **implemented (v0.9.2)** |
 | 22 | Adam moment recurrences (Kingma & Ba 2014 arXiv:1412.6980 Algorithm 1 lines 9-10): **22a** `m_after == beta1 * m_before + (1 - beta1) * gradient` AND **22b** `v_after == beta2 * v_before + (1 - beta2) * gradient²`. **GATED** on Adam/AdamW updates. Catches beta-swap, m/v swap, wrong-recurrence-coefficient porting bugs. STRUCTURAL CHECK — does not verify the gradient came from real data. | **implemented (v0.9.1)** |
 | 23 | Adam bias correction + t consistency: `optimizer_config.t == step_index + 1` when both present (Kingma & Ba 2014 indexes the Adam timestep starting at 1; PyTorch's `state["step"]` matches after the first `.step()` call). Setup for Rule 24's m_hat / v_hat derivation chain. **GATED** on Adam/AdamW updates. | **implemented (v0.9.1)** |
 | 24 | Adam/AdamW parameter update (Kingma & Ba 2014 Algorithm 1 line 13): `update == lr * m_hat / (sqrt(v_hat) + epsilon)` where `m_hat = m_after / (1 - beta1^t)` and `v_hat = v_after / (1 - beta2^t)`. Pinned `epsilon` placement: **OUTSIDE** the sqrt (PyTorch convention) — `sqrt(v_hat) + epsilon`, NOT `sqrt(v_hat + epsilon)` (a famous TF-vs-Keras-vs-PyTorch porting bug; captured by `fixtures/bad/adam.bad-epsilon-inside-sqrt.jsonl`). For AdamW: same Adam update formula here; decoupled weight decay applies at Rule 7's AdamW branch on `parameters_after`. **GATED** on Adam/AdamW updates. STRUCTURAL CHECK. | **implemented (v0.9.1)** |
-| 25 | Multi-step optimizer-state chain: when receipts in a bundle declare Adam/AdamW, `receipts[k+1].updates[u].optimizer.state_before == receipts[k].updates[u].optimizer.state_after` per parameter for both `m` and `v`, AND `receipts[k+1].optimizer_config.t == receipts[k].optimizer_config.t + 1`. Analog of Rule 9 (parameter chain) for optimizer state. **GATED** on Adam/AdamW + multi-step. Fires from `reconcileMultiStep` only. | **implemented (v0.9.1)** |
-| 26 | Multi-step optimizer-config constancy: `optimizer_config.{name, beta1, beta2, epsilon, weight_decay}` MUST be IDENTICAL across all receipts in a bundle. `learning_rate` is **EXCLUDED** — LR schedules across steps (warmup, cosine decay) are legitimate. `t` is **EXCLUDED** — covered by Rule 25's monotonicity check. Analog of Rule 10 (trace identity) for optimizer config. **GATED** on Adam/AdamW + multi-step. Fires from `reconcileMultiStep` only. | **implemented (v0.9.1)** |
+| 25 | Multi-step optimizer-state chain: when receipts in a bundle declare a stateful optimizer, per-parameter `state_before` at step k+1 MUST equal `state_after` at step k. Adam/AdamW: `m, v` continuity + `optimizer_config.t` monotonic +1. sgd_momentum: `buffer` continuity (no `t` field for momentum). Analog of Rule 9 (parameter chain) for optimizer state. **GATED** on Adam/AdamW/sgd_momentum + multi-step. Fires from `reconcileMultiStep` only. | **implemented (v0.9.1; sgd_momentum branch v0.9.2)** |
+| 26 | Multi-step optimizer-config constancy: per-optimizer constancy key list dispatched on `optimizer_config.name`. Adam/AdamW: `{beta1, beta2, epsilon, weight_decay}` IDENTICAL across bundle. sgd_momentum: `{momentum, nesterov, dampening}` IDENTICAL across bundle. `name` is ALWAYS checked. `learning_rate` is **EXCLUDED** — LR schedules across steps (warmup, cosine decay) are legitimate. `t` is **EXCLUDED** — covered by Rule 25's monotonicity check for Adam; sgd_momentum has no `t` field. Analog of Rule 10 (trace identity) for optimizer config. **GATED** on stateful optimizer + multi-step. Fires from `reconcileMultiStep` only. | **implemented (v0.9.1; sgd_momentum branch v0.9.2)** |
 
 Rules 1-8 ship in v0.2.0. Rules 9 + 10 ship in v0.3.0 and fire from the
 multi-record verify path (`bp verify multi <file.jsonl>` /
@@ -66,14 +66,70 @@ correction + t consistency), Rule 24 (Adam/AdamW parameter update), Rule 25
 (multi-step optimizer-state chain), Rule 26 (multi-step optimizer-config
 constancy). Rule 5 gates OFF for non-SGD updates. Rules 6 + 7 gain an AdamW
 branch for the decoupled weight-decay term on `weight_after` / `parameters_after`.
-Rule 21 is RESERVED for v0.9.2's momentum SGD addition. Each shipped rule
+**v0.9.2** lands the classical PyTorch-style SGD momentum wave: Rule 21
+(buffer recurrence 21a + parameter update 21b) with `sgd_momentum` as a new
+optimizer name. Rules 20, 25, 26 generalize in place to dispatch on optimizer
+name and handle the `MomentumState = { buffer }` shape alongside Adam's
+`AdamState = { m, v }`. v0.9.2 ships **CLASSICAL ONLY** — Nesterov +
+dampening RESERVED for v0.9.3; SGD coupled L2 weight decay deferred to v0.10. Each shipped rule
 landed with a deliberately-broken bad-* fixture per the anti-circularity
 doctrine — bad receipts precede good receipts (Csmith / CompCert lineage;
 see "Academic lineage" below and `CONTRIBUTING.md`).
 
+### Classical PyTorch-style SGD momentum (v0.9.2)
+
+**Rule 21 is precisely scoped** to **classical PyTorch-style SGD momentum**
+— NOT "momentum correctness" in the abstract. This framing is load-bearing:
+future variants (Nesterov accelerated gradient v0.9.3, dampening v0.9.3,
+SGD coupled L2 v0.10) are NOT bugs in v0.9.2; they are **explicitly
+deferred variants** that the v0.9.2 reconciler does not recognize. A
+receipt whose `update` matches the Nesterov look-ahead form
+(`-lr * (mu * buf_after + gradient)`) while declaring `optimizer.name ===
+"sgd_momentum"` fires Rule 21b in v0.9.2 — that's a "stored update matches
+a momentum variant the v0.9.2 reconciler does not recognize" failure, not
+a "Nesterov is broken" failure. When v0.9.3 lands Nesterov, Rule 21 widens
+to branch on `optimizer_config.nesterov`; existing v0.9.2 fixtures stay
+byte-equal.
+
+The recurrence (Sutskever et al. 2013 ICML
+"On the importance of initialization and momentum in deep learning",
+[paper](https://www.cs.toronto.edu/~hinton/absps/momentum.pdf);
+Polyak 1964 heavy-ball foundation; PyTorch
+[`torch.optim.SGD`](https://github.com/pytorch/pytorch/blob/main/torch/optim/sgd.py)
+production reference):
+
+```
+buffer_t = mu * buffer_{t-1} + gradient          (Rule 21a)
+update   = lr * buffer_t                         (Rule 21b; descent direction)
+weight_after = weight_before + update            (Rule 6; same as plain SGD)
+```
+
+**`lr` lives OUTSIDE the buffer.** Sutskever 2013 §2 documents this
+reformulation explicitly: with `lr` inside the buffer, an LR schedule
+retroactively rescales the entire history of accumulated gradients on
+the step the LR changes — a discontinuous jump in the effective update
+the user did not author. With `lr` outside, an LR change applies only
+to the current step. Rule 26 excludes `learning_rate` from optimizer-
+config constancy specifically so LR schedules (warmup, cosine decay)
+stay legitimate.
+
+**State name = `buffer`** (matches PyTorch's `state["momentum_buffer"]`
+one-token form; distinct from the hyperparameter `momentum` to avoid
+name collision). Framework importers normalize: PyTorch `momentum_buffer`
+→ `buffer`; optax `trace` → `buffer`; TF Keras `momentum/<param>` →
+`buffer`. The canonical reference is PyTorch's implementation, not the
+original Polyak 1964 paper (Polyak names no variable for the state).
+
+**Optimizer name = `sgd_momentum`** (reads as "SGD with momentum"
+matching PyTorch's `torch.optim.SGD(momentum=...)` class shape). Plain
+SGD continues to use `name === "sgd"` (no momentum buffer); Rule 5's
+gate (`name === "sgd"`) cleanly excludes `sgd_momentum`. Future Nesterov
+will be a `nesterov: true` flag on `sgd_momentum` (NOT a sibling
+`sgd_nesterov`), keeping the optimizer name space tight.
+
 ### Adam-rule trust framing (load-bearing)
 
-Rules 20, 22, 23, 24, 25, 26 are **STRUCTURAL CONSISTENCY checks, NOT
+Rules 20, 21, 22, 23, 24, 25, 26 are **STRUCTURAL CONSISTENCY checks, NOT
 producer-authenticity checks.** Together with Rule 14 (engine-recompute
 differential), they verify that the recorded `(g, m, v, t, update,
 weight_after)` tuple is internally consistent with the published Adam /

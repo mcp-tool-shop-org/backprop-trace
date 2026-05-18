@@ -114,6 +114,45 @@ export type HiddenErrorSignal = {
 export type AdamState = { m: number; v: number }
 
 /**
+ * v0.9.2 — per-parameter classical PyTorch-style SGD momentum state.
+ *
+ * Single scalar `buffer` tracking the accumulated velocity (PyTorch's
+ * `state['momentum_buffer']` one-token form). Distinct from Adam's
+ * (m, v) pair. Buffer is signed (tracks gradient sign in descent
+ * direction; can be negative when accumulated descent gradient
+ * overshoots a basin).
+ *
+ * Framework importers normalize from framework-native names:
+ *   - PyTorch torch.optim.SGD state_dict(): momentum_buffer → buffer
+ *   - optax.sgd / optax.trace TraceState: trace → buffer
+ *   - TF Keras SGD: momentum/<param> → buffer
+ *
+ * Recurrence (classical, PyTorch convention with lr OUTSIDE buffer per
+ * Sutskever et al. 2013 ICML): buffer_t = mu * buffer_{t-1} + gradient.
+ * Update (descent-direction sign convention): update = lr * buffer_t.
+ * Initial buffer at t=1: buffer_0 = 0 (PyTorch lazy-initializes on first
+ * .step()).
+ *
+ * v0.9.2 supports CLASSICAL PyTorch-style only. Nesterov accelerated
+ * gradient (Sutskever 2013 §2 lookahead form) is reserved for v0.9.3.
+ * Dampening (PyTorch's torch.optim.SGD(dampening=tau) recurrence
+ * buffer_t = mu * buffer_{t-1} + (1-tau) * gradient) reserved for v0.9.3.
+ * SGD coupled L2 weight decay deferred to v0.10.
+ */
+export type MomentumState = { buffer: number }
+
+/**
+ * v0.9.2 — discriminated per-parameter optimizer state.
+ *
+ * Adam/AdamW updates carry AdamState ({m, v}); sgd_momentum updates
+ * carry MomentumState ({buffer}). Receipt schemas validate either
+ * shape; reconciler Rule 20 enforces that the actual shape matches
+ * optimizer.name. The Optimizer type below uses this union; callers
+ * narrow on optimizer.name before accessing shape-specific fields.
+ */
+export type OptimizerStateAny = AdamState | MomentumState
+
+/**
  * v0.9.1 — per-update optimizer block.
  *
  * Widened over the v0.4 SGD-only shape: `name` is now a union, and
@@ -125,14 +164,20 @@ export type AdamState = { m: number; v: number }
  * the emitter omits them and existing fixtures round-trip unchanged.
  */
 export type Optimizer = {
-  name: "sgd" | "adam" | "adamw"
+  name: "sgd" | "adam" | "adamw" | "sgd_momentum"
   learning_rate: number
   factors: NamedFactor[]
   product_order: "left_to_right"
-  /** v0.9.1 — required when name in {adam, adamw}; MUST be omitted for sgd. */
-  state_before?: AdamState
-  /** v0.9.1 — required when name in {adam, adamw}; MUST be omitted for sgd. */
-  state_after?: AdamState
+  /**
+   * v0.9.1 — required when name in {adam, adamw} (AdamState shape).
+   * v0.9.2 — required when name === "sgd_momentum" (MomentumState shape).
+   * MUST be omitted for plain sgd.
+   * Discriminated by optimizer.name; Rule 20 enforces the right shape
+   * matches the name at reconcile time.
+   */
+  state_before?: OptimizerStateAny
+  /** v0.9.1+ — see state_before. */
+  state_after?: OptimizerStateAny
 }
 
 /**
@@ -156,13 +201,43 @@ export type Optimizer = {
  * MUST stay constant).
  */
 export type OptimizerConfig = {
-  name: "sgd" | "adam" | "adamw"
+  name: "sgd" | "adam" | "adamw" | "sgd_momentum"
   learning_rate: number
+  /** Adam/AdamW first-moment decay. */
   beta1?: number
+  /** Adam/AdamW second-moment decay. */
   beta2?: number
+  /** Adam/AdamW numerical-stability epsilon. */
   epsilon?: number
+  /** AdamW decoupled weight decay; v0.9.2 forbids on sgd_momentum (deferred to v0.10). */
   weight_decay?: number
+  /** Adam/AdamW timestep (1-indexed per Kingma & Ba 2014 Alg 1). */
   t?: number
+  /**
+   * v0.9.2 — classical PyTorch-style SGD momentum coefficient (mu).
+   * Required when name === "sgd_momentum". In (0, 1). Typically 0.9 in
+   * production (Sutskever et al. 2013 / Wilson et al. 2017 / timm).
+   */
+  momentum?: number
+  /**
+   * v0.9.2 — RESERVED for v0.9.3 Nesterov accelerated gradient
+   * (Sutskever et al. 2013 §2 lookahead form). In v0.9.2, MUST be
+   * literally false when present (schema-enforced via const). When
+   * absent, treated as false (classical momentum). The engine rejects
+   * any sidecar that bypasses schema with nesterov: true via a clear
+   * "deferred to v0.9.3" message.
+   */
+  nesterov?: false
+  /**
+   * v0.9.2 — RESERVED for v0.9.3 dampening (PyTorch's
+   * torch.optim.SGD(dampening=tau) recurrence
+   * buffer_t = mu * buffer_{t-1} + (1-tau) * gradient). In v0.9.2,
+   * MUST be literally 0 when present (schema-enforced via const).
+   * When absent, treated as 0. The engine rejects any sidecar that
+   * bypasses schema with dampening !== 0 via a clear
+   * "deferred to v0.9.3" message.
+   */
+  dampening?: 0
 }
 
 /**
@@ -279,15 +354,17 @@ export type GeneralInput = {
    */
   readonly optimizer_config?: OptimizerConfig
   /**
-   * v0.9.1 — OPTIONAL per-parameter Adam state at step entry. REQUIRED
-   * when optimizer_config.name in {adam, adamw}. Keyed by parameter_id;
-   * MUST cover every WEIGHT parameter (biases skip Adam in v0.9.1 —
-   * documented constraint, bias_policy still drives bias updates and
-   * biases use SGD-style updates with their own gradient even when
-   * weights use Adam). Engine derives state_after deterministically
-   * from (state_before, gradient, beta1, beta2).
+   * v0.9.1+ — OPTIONAL per-parameter optimizer state at step entry.
+   * REQUIRED when optimizer_config.name in {adam, adamw, sgd_momentum}.
+   * Shape discriminated by optimizer_config.name:
+   *   - adam/adamw: AdamState ({m, v}) per parameter
+   *   - sgd_momentum: MomentumState ({buffer}) per parameter
+   * Keyed by parameter_id; MUST cover every parameter that will get an
+   * Update entry emitted (weights always; biases only when
+   * bias_policy.mode === "sgd"). Engine derives state_after
+   * deterministically from (state_before, gradient, hyperparameters).
    */
-  readonly optimizer_state_before?: Readonly<Record<string, AdamState>>
+  readonly optimizer_state_before?: Readonly<Record<string, OptimizerStateAny>>
 }
 
 export type GeneralMetadata = {
@@ -447,7 +524,7 @@ export type GeneralReceipt = {
   // based on optimizer_config.name (adam/adamw → 0.5.0) + topology.loss
   // + (source_framework presence) inside runGeneralStep so legacy
   // callers don't need to pass it explicitly.
-  schema_version: "0.2.0" | "0.3.0" | "0.4.0" | "0.5.0"
+  schema_version: "0.2.0" | "0.3.0" | "0.4.0" | "0.5.0" | "0.6.0"
   fixture: string
   // step is integer ≥1 per receipt.v0.4.0 schema. Engine-authored single-step
   // receipts hardcode step:1. v0.8 multi-step observer-mode receipts set
@@ -623,8 +700,8 @@ function assertOptimizerConfig(input: GeneralInput): void {
     if (input.optimizer_state_before !== undefined) {
       throw new Error(
         `runGeneralStep: optimizer_state_before is set but optimizer_config is undefined. ` +
-          `Hint: set optimizer_config.name to "adam" or "adamw" to use the per-parameter ` +
-          `state, or unset optimizer_state_before to use the SGD path.`,
+          `Hint: set optimizer_config.name to "adam", "adamw", or "sgd_momentum" to use the ` +
+          `per-parameter state, or unset optimizer_state_before to use the SGD path.`,
       )
     }
     return
@@ -636,7 +713,7 @@ function assertOptimizerConfig(input: GeneralInput): void {
     if (input.optimizer_state_before !== undefined) {
       throw new Error(
         `runGeneralStep: optimizer_state_before is set but optimizer_config.name === "sgd". ` +
-          `SGD has no per-parameter state; unset optimizer_state_before or switch to adam/adamw.`,
+          `SGD has no per-parameter state; unset optimizer_state_before or switch to adam/adamw/sgd_momentum.`,
       )
     }
     if (oc.learning_rate !== input.learning_rate) {
@@ -647,13 +724,13 @@ function assertOptimizerConfig(input: GeneralInput): void {
     }
     return
   }
-  // adam / adamw
-  if (oc.name !== "adam" && oc.name !== "adamw") {
+  if (oc.name !== "adam" && oc.name !== "adamw" && oc.name !== "sgd_momentum") {
     throw new Error(
-      `runGeneralStep: optimizer_config.name must be 'sgd', 'adam', or 'adamw' (got '${String(oc.name)}'). ` +
-        `Hint: v0.9.1 supports SGD, Adam, and AdamW. Momentum SGD is v0.9.2; ` +
-        `Nesterov / AMSGrad / per-parameter-groups / LR schedules / gradient ` +
-        `clipping / mixed precision are deferred.`,
+      `runGeneralStep: optimizer_config.name must be 'sgd', 'adam', 'adamw', or 'sgd_momentum' ` +
+        `(got '${String(oc.name)}'). Hint: v0.9.2 supports SGD, Adam, AdamW, and classical ` +
+        `PyTorch-style SGD momentum. Nesterov accelerated gradient is v0.9.3; AMSGrad / NAdam / ` +
+        `RAdam / Lion / per-parameter-groups / LR schedules / gradient clipping / mixed precision ` +
+        `are deferred to v0.10+.`,
     )
   }
   if (oc.learning_rate !== input.learning_rate) {
@@ -662,6 +739,99 @@ function assertOptimizerConfig(input: GeneralInput): void {
         `!= input.learning_rate (${input.learning_rate}). Both must agree.`,
     )
   }
+  // -----------------------------------------------------------------------
+  // v0.9.2 — classical PyTorch-style SGD momentum branch
+  // -----------------------------------------------------------------------
+  if (oc.name === "sgd_momentum") {
+    // Required hyperparameter: momentum coefficient mu in (0, 1).
+    if (oc.momentum === undefined) {
+      throw new Error(
+        `runGeneralStep: optimizer_config.momentum is required when name === 'sgd_momentum' (got undefined). ` +
+          `Hint: classical PyTorch-style SGD momentum recurrence is ` +
+          `buffer_t = mu * buffer_{t-1} + gradient; mu is the momentum coefficient ` +
+          `(typically 0.9; Sutskever et al. 2013 ICML / Wilson et al. 2017 arXiv:1705.08292).`,
+      )
+    }
+    if (!Number.isFinite(oc.momentum) || !(oc.momentum > 0) || !(oc.momentum < 1)) {
+      throw new Error(
+        `runGeneralStep: optimizer_config.momentum must be a finite number in (0, 1) (got ${oc.momentum}).`,
+      )
+    }
+    // Reserved-for-v0.9.3 fields: nesterov MUST be absent or literally false;
+    // dampening MUST be absent or literally 0. Loud rejection — avoids silent
+    // misverification of Nesterov/dampened PyTorch traces against the
+    // classical-only v0.9.2 verifier.
+    if (oc.nesterov !== undefined && oc.nesterov !== false) {
+      throw new Error(
+        `runGeneralStep: optimizer_config.nesterov === true is NOT supported in v0.9.2 (got ${String(oc.nesterov)}). ` +
+          `Nesterov accelerated gradient (Sutskever et al. 2013 ICML lookahead form) is RESERVED for v0.9.3. ` +
+          `v0.9.2 ships classical PyTorch-style SGD momentum ONLY; the schema enforces nesterov: const false. ` +
+          `Hint: defer to v0.9.3 for Nesterov support, OR set nesterov: false (or omit) for classical momentum.`,
+      )
+    }
+    if (oc.dampening !== undefined && oc.dampening !== 0) {
+      throw new Error(
+        `runGeneralStep: optimizer_config.dampening !== 0 is NOT supported in v0.9.2 (got ${String(oc.dampening)}). ` +
+          `PyTorch's torch.optim.SGD(dampening=tau) recurrence buffer_t = mu * buffer_{t-1} + (1-tau) * gradient ` +
+          `is RESERVED for v0.9.3. v0.9.2 ships dampening=0 ONLY (recurrence buffer_t = mu * buffer_{t-1} + gradient); ` +
+          `the schema enforces dampening: const 0. Hint: defer to v0.9.3 for dampening support, OR set ` +
+          `dampening: 0 (or omit) for classical momentum.`,
+      )
+    }
+    // SGD coupled L2 weight decay deferred to v0.10 — needs Rules 6/7 third
+    // branch distinct from AdamW's decoupled. Loud rejection at the engine
+    // boundary; schema also rejects at the if/then level.
+    if (oc.weight_decay !== undefined) {
+      throw new Error(
+        `runGeneralStep: optimizer_config.weight_decay is NOT supported with name === 'sgd_momentum' in v0.9.2 ` +
+          `(got ${String(oc.weight_decay)}). PyTorch's torch.optim.SGD(weight_decay=lambda) applies COUPLED L2 ` +
+          `(g_t ← g_t + lambda * theta_t before the buffer update) — distinct from AdamW's DECOUPLED weight decay ` +
+          `(Rules 6/7 AdamW branch). v0.9.2 defers SGD coupled L2 to v0.10 because it requires a third Rules 6/7 ` +
+          `branch + touches Rule 4's factor narrative. Hint: defer to v0.10 for SGD coupled L2 support, OR ` +
+          `omit weight_decay for plain sgd_momentum.`,
+      )
+    }
+    // Adam fields MUST be absent on sgd_momentum (cross-validation).
+    for (const k of ["beta1", "beta2", "epsilon", "t"] as const) {
+      if (oc[k] !== undefined) {
+        throw new Error(
+          `runGeneralStep: optimizer_config.${k} is an Adam-family field and MUST be absent when ` +
+            `name === 'sgd_momentum' (got ${String(oc[k])}).`,
+        )
+      }
+    }
+    // state_before required; MomentumState shape ({buffer}) per param.
+    if (input.optimizer_state_before === undefined) {
+      throw new Error(
+        `runGeneralStep: optimizer_state_before is required when optimizer_config.name === 'sgd_momentum' ` +
+          `(got undefined). Hint: provide { buffer } per parameter id that will get an Update entry. ` +
+          `At step 1 (t=1 equivalent), classical PyTorch initializes buffer_0 = 0 on the first .step() call.`,
+      )
+    }
+    for (const pid of input.topology.parameter_order) {
+      const param = input.topology.parameters.find((p) => p.id === pid)!
+      const isBias = param.role === "hidden_bias" || param.role === "output_bias"
+      if (isBias && input.bias_policy.mode === "constant") continue
+      const st = input.optimizer_state_before[pid]
+      if (st === undefined) {
+        throw new Error(
+          `runGeneralStep: optimizer_state_before missing entry for parameter '${pid}' ` +
+            `(name === 'sgd_momentum'; MomentumState shape required).`,
+        )
+      }
+      const stAny = st as Partial<MomentumState> & Partial<AdamState>
+      if (typeof stAny.buffer !== "number" || !Number.isFinite(stAny.buffer)) {
+        throw new Error(
+          `runGeneralStep: optimizer_state_before['${pid}'].buffer must be a finite number (got ${String(stAny.buffer)}). ` +
+            `sgd_momentum state shape is MomentumState ({buffer}); Adam-shape ({m, v}) is rejected here.`,
+        )
+      }
+    }
+    return
+  }
+  // -----------------------------------------------------------------------
+  // adam / adamw (v0.9.1, unchanged)
+  // -----------------------------------------------------------------------
   for (const k of ["beta1", "beta2", "epsilon", "t"] as const) {
     const v = oc[k]
     if (v === undefined) {
@@ -734,14 +904,15 @@ function assertOptimizerConfig(input: GeneralInput): void {
           `Hint: every parameter that will receive an Update entry must have { m, v } in optimizer_state_before.`,
       )
     }
-    if (!Number.isFinite(st.m)) {
+    const stAny = st as Partial<AdamState>
+    if (typeof stAny.m !== "number" || !Number.isFinite(stAny.m)) {
       throw new Error(
-        `runGeneralStep: optimizer_state_before['${pid}'].m is not finite (got ${String(st.m)}).`,
+        `runGeneralStep: optimizer_state_before['${pid}'].m is not finite (got ${String(stAny.m)}).`,
       )
     }
-    if (!Number.isFinite(st.v) || st.v < 0) {
+    if (typeof stAny.v !== "number" || !Number.isFinite(stAny.v) || stAny.v < 0) {
       throw new Error(
-        `runGeneralStep: optimizer_state_before['${pid}'].v must be a non-negative finite number (got ${String(st.v)}).`,
+        `runGeneralStep: optimizer_state_before['${pid}'].v must be a non-negative finite number (got ${String(stAny.v)}).`,
       )
     }
   }
@@ -893,11 +1064,20 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
   // takes the Adam path: weight_after derives from m_hat / sqrt(v_hat) instead
   // of lr * gradient; per-update emit carries state_before / state_after;
   // top-level receipt carries optimizer_config block; schema_version is "0.5.0".
+  // v0.9.2 — sgd_momentum dispatch. When optimizer_config.name === "sgd_momentum",
+  // takes the classical PyTorch-style momentum path: buffer_t = mu * buffer_{t-1}
+  // + gradient (Sutskever et al. 2013 / PyTorch torch.optim.SGD); update = lr *
+  // buffer_t (descent direction); per-update emit carries state_before/after as
+  // MomentumState ({buffer}); top-level receipt carries optimizer_config; schema_
+  // version is "0.6.0". NO Nesterov (reserved v0.9.3); NO dampening (reserved
+  // v0.9.3); NO SGD coupled L2 weight decay (deferred v0.10).
   // SGD path (default / explicit name === "sgd") stays byte-equal to v0.1-v0.9.0.
   const oc = input.optimizer_config
   const isAdam = oc?.name === "adam"
   const isAdamW = oc?.name === "adamw"
   const isAdamFamily = isAdam || isAdamW
+  const isSgdMomentum = oc?.name === "sgd_momentum"
+  const isOptimizerWithState = isAdamFamily || isSgdMomentum
   /**
    * Compute (update, weight_after, optimizer) for one parameter. Dispatches
    * on optimizer_config.name. Shared by weight-update branches and the
@@ -921,7 +1101,7 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
     gradient: number,
     factors: NamedFactor[],
   ): { update: number; wAfter: number; optimizer: Optimizer } => {
-    if (!isAdamFamily) {
+    if (!isOptimizerWithState) {
       const update = lr * gradient
       return {
         update,
@@ -931,6 +1111,61 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
           learning_rate: lr,
           factors,
           product_order: "left_to_right",
+        },
+      }
+    }
+    // ---------------------------------------------------------------------
+    // v0.9.2 — classical PyTorch-style SGD momentum branch.
+    // Recurrence (Sutskever et al. 2013 ICML / PyTorch torch.optim.SGD):
+    //   buffer_t = mu * buffer_{t-1} + gradient  (dampening hardcoded 0)
+    //   update   = lr * buffer_t                 (descent direction; sign
+    //                                             already in `gradient`)
+    //   weight_after = weight_before + update    (no AdamW-style decoupled
+    //                                             decay branch — sgd_momentum
+    //                                             with weight_decay is deferred
+    //                                             to v0.10; rejected at boundary)
+    // Rule 21 verifies both 21a (buffer recurrence) and 21b (update formula).
+    // ---------------------------------------------------------------------
+    if (isSgdMomentum) {
+      const cfg = oc!
+      const stateBefore = input.optimizer_state_before![pid]
+      if (stateBefore === undefined) {
+        throw new Error(
+          `runGeneralStep: optimizer_state_before missing entry for parameter '${pid}'.`,
+        )
+      }
+      const mu = cfg.momentum!
+      // MomentumState shape ({buffer}); narrow via property check.
+      const stMom = stateBefore as Partial<MomentumState> & Partial<AdamState>
+      const bufferBefore = stMom.buffer
+      if (typeof bufferBefore !== "number") {
+        throw new Error(
+          `runGeneralStep: optimizer_state_before['${pid}'].buffer must be a number for sgd_momentum ` +
+            `(got ${String(bufferBefore)}). Hint: sgd_momentum state is MomentumState ({buffer}), ` +
+            `not AdamState ({m, v}).`,
+        )
+      }
+      // Rule 21a: classical PyTorch-style recurrence.
+      const bufferAfter = mu * bufferBefore + gradient
+      // Rule 21b: classical update formula (lr OUTSIDE buffer; sign in gradient).
+      const update = lr * bufferAfter
+      const wAfter = wBefore + update
+      return {
+        update,
+        wAfter,
+        optimizer: {
+          name: "sgd_momentum",
+          learning_rate: lr,
+          // Factors stay SGD-shape [signal, upstream] (or [signal] for bias).
+          // Rule 4 (gradient == product(factors)) continues to hold —
+          // gradient is still the descent-direction gradient at this step;
+          // momentum dynamics live in buffer_before/buffer_after, NOT in
+          // the factor decomposition. Keeps factor reading consistent
+          // across SGD / Adam / AdamW / sgd_momentum.
+          factors,
+          product_order: "left_to_right",
+          state_before: { buffer: bufferBefore },
+          state_after: { buffer: bufferAfter },
         },
       }
     }
@@ -948,8 +1183,15 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
     const beta2 = cfg.beta2!
     const epsilon = cfg.epsilon!
     const t_step = cfg.t!
-    const mBefore = stateBefore.m
-    const vBefore = stateBefore.v
+    const stAdam = stateBefore as Partial<AdamState> & Partial<MomentumState>
+    if (typeof stAdam.m !== "number" || typeof stAdam.v !== "number") {
+      throw new Error(
+        `runGeneralStep: optimizer_state_before['${pid}'] must be AdamState ({m, v}) for ${cfg.name} ` +
+          `(got ${JSON.stringify(stateBefore)}).`,
+      )
+    }
+    const mBefore = stAdam.m
+    const vBefore = stAdam.v
     // Adam moment recurrences (Kingma & Ba 2014 arXiv:1412.6980 Alg 1
     // lines 9-10). Pinned product order: (1 - beta1) * gradient is the
     // RHS factor multiplied second (left-to-right scan); engine convention.
@@ -979,7 +1221,7 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
       update,
       wAfter,
       optimizer: {
-        name: cfg.name,
+        name: cfg.name as "adam" | "adamw",
         learning_rate: lr,
         // Factors stay SGD-shape [signal, upstream] (or [signal] for bias).
         // Rule 4 (gradient == product(factors)) continues to hold on
@@ -1534,16 +1776,18 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
   // future half_squared_error receipts) continue to emit "0.2.0" so the
   // shipped fixtures stay byte-identical.
   // v0.9.1: "0.5.0" for Adam/AdamW receipts (FORCED bump — see receipt.v0.5.0
-  // docstring). Takes precedence over softmax+CE selection because v0.5.0 is
-  // additive over v0.4.0 which is additive over v0.3.0 (so v0.5.0 receipts
-  // can carry softmax+CE topology + Adam optimizer simultaneously; the
-  // version reflects the SCHEMA carrying the most fields, not the
-  // optimizer-vs-loss combination).
-  const schemaVersionForReceipt: "0.2.0" | "0.3.0" | "0.5.0" = isAdamFamily
-    ? "0.5.0"
-    : t.loss === "cross_entropy_softmax" || t.activation_output === "softmax"
-      ? "0.3.0"
-      : "0.2.0"
+  // docstring). v0.9.2: "0.6.0" for sgd_momentum receipts (FORCED bump — see
+  // receipt.v0.6.0 docstring). Adam/AdamW + softmax+CE + sgd_momentum all
+  // compose additively at the schema layer; the version reflects the
+  // optimizer-with-state shape that's present on the receipt, with v0.6.0
+  // > v0.5.0 > v0.3.0 > v0.2.0 in fields-carried order.
+  const schemaVersionForReceipt: "0.2.0" | "0.3.0" | "0.5.0" | "0.6.0" = isSgdMomentum
+    ? "0.6.0"
+    : isAdamFamily
+      ? "0.5.0"
+      : t.loss === "cross_entropy_softmax" || t.activation_output === "softmax"
+        ? "0.3.0"
+        : "0.2.0"
   const receipt: GeneralReceipt = {
     schema_version: schemaVersionForReceipt,
     fixture: input.fixture ?? "general-engine-first-run",
@@ -1583,6 +1827,8 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
   // SGD byte-equality with v0.1-v0.9.0; engine SGD receipts continue to omit
   // this block even when an explicit optimizer_config.name === "sgd" was
   // passed in via the input).
+  // v0.9.2 — same emission for sgd_momentum (momentum hyperparameter; no
+  // nesterov/dampening/weight_decay in v0.9.2 — reserved fields not emitted).
   if (isAdamFamily) {
     const cfg = oc!
     const ocOut: OptimizerConfig = {
@@ -1594,6 +1840,18 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
       t: cfg.t,
     }
     if (cfg.name === "adamw") ocOut.weight_decay = cfg.weight_decay
+    receipt.optimizer_config = ocOut
+  } else if (isSgdMomentum) {
+    const cfg = oc!
+    const ocOut: OptimizerConfig = {
+      name: "sgd_momentum",
+      learning_rate: cfg.learning_rate,
+      momentum: cfg.momentum,
+    }
+    // v0.9.2 — reserved fields (nesterov, dampening) are NOT emitted to keep
+    // receipt bytes minimal and forward-compatible with v0.9.3 (when the
+    // const-false / const-0 restrictions widen, the emitter can opt into
+    // these fields without changing existing v0.9.2 receipts).
     receipt.optimizer_config = ocOut
   }
   if (input.trace_id !== undefined) receipt.trace_id = input.trace_id
@@ -1673,12 +1931,12 @@ export function runBatchedGeneralStep(input: BatchedGeneralInput): GeneralReceip
     input.optimizer_config.name !== "sgd"
   ) {
     throw new Error(
-      `runBatchedGeneralStep: batched Adam/AdamW is NOT supported in v0.9.1 ` +
+      `runBatchedGeneralStep: batched Adam/AdamW/sgd_momentum is NOT supported in v0.9.2 ` +
         `(got optimizer_config.name='${input.optimizer_config.name}'). ` +
-        `Hint: v0.9.1 supports single-step + multi-step Adam/AdamW only. ` +
-        `Batched Adam is deferred (needs reduced-gradient → single-Adam-step ` +
+        `Hint: v0.9.2 supports single-step + multi-step Adam/AdamW/sgd_momentum only. ` +
+        `Batched non-SGD is deferred (needs reduced-gradient → single-optimizer-step ` +
         `dispatch, distinct from runBatchedGeneralStep's per-sample subreceipt ` +
-        `pattern). Use a batch size of 1 + Adam, or use plain SGD for batched runs.`,
+        `pattern). Use a batch size of 1 + Adam/momentum, or use plain SGD for batched runs.`,
     )
   }
   // 1. Validate batch invariants (will be re-checked by Rule 19 at reconcile time,

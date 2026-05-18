@@ -18,7 +18,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
-import { runGeneralStep, type GeneralInput } from "../src/general-engine.js"
+import { runGeneralStep, type GeneralInput, type AdamState } from "../src/general-engine.js"
 import { importPytorchSidecar, importPytorchSidecarStream } from "../src/import-pytorch.js"
 import { reconcileReceipt, reconcileMultiStep } from "../src/reconcile.js"
 import { parseReceiptJsonl } from "../src/parse.js"
@@ -118,15 +118,19 @@ test("runGeneralStep with optimizer_config.name === 'adam' produces v0.5.0 recei
   assert.equal(receipt.optimizer_config!.beta2, 0.999)
   assert.equal(receipt.optimizer_config!.epsilon, 1e-8)
   assert.equal(receipt.optimizer_config!.t, 1)
-  // Per-update state_before / state_after on every WEIGHT update
+  // Per-update state_before / state_after on every WEIGHT update.
+  // v0.9.2: state is OptimizerStateAny (union of AdamState | MomentumState);
+  // narrow to AdamState here since optimizer.name === "adam".
   for (const u of receipt.updates) {
     if (u.parameter_id.startsWith("b_")) continue
     assert.ok(u.optimizer.state_before, `state_before present on ${u.parameter_id}`)
     assert.ok(u.optimizer.state_after, `state_after present on ${u.parameter_id}`)
-    assert.equal(u.optimizer.state_before!.m, 0, "m_before = 0 at t=1")
-    assert.equal(u.optimizer.state_before!.v, 0, "v_before = 0 at t=1")
+    const sb = u.optimizer.state_before as AdamState
+    const sa = u.optimizer.state_after as AdamState
+    assert.equal(sb.m, 0, "m_before = 0 at t=1")
+    assert.equal(sb.v, 0, "v_before = 0 at t=1")
     // v_after should be non-negative (squared gradient)
-    assert.ok(u.optimizer.state_after!.v >= 0, "v_after non-negative")
+    assert.ok(sa.v >= 0, "v_after non-negative")
   }
 })
 
@@ -146,10 +150,12 @@ test("Adam moment recurrence: m_after == beta1 * m_before + (1 - beta1) * gradie
   for (const u of r.updates) {
     if (u.parameter_id.startsWith("b_")) continue
     const beta1 = 0.9
-    const expectedM = beta1 * u.optimizer.state_before!.m + (1 - beta1) * u.gradient
+    const sb = u.optimizer.state_before as AdamState
+    const sa = u.optimizer.state_after as AdamState
+    const expectedM = beta1 * sb.m + (1 - beta1) * u.gradient
     assert.ok(
-      Math.abs(u.optimizer.state_after!.m - expectedM) < 1e-12,
-      `m_after on ${u.parameter_id}: ${u.optimizer.state_after!.m} matches expected ${expectedM}`,
+      Math.abs(sa.m - expectedM) < 1e-12,
+      `m_after on ${u.parameter_id}: ${sa.m} matches expected ${expectedM}`,
     )
   }
 })
@@ -170,8 +176,9 @@ test("Adam parameter update: update == lr * m_hat / (sqrt(v_hat) + epsilon), eps
   for (const u of r.updates) {
     if (u.parameter_id.startsWith("b_")) continue
     const beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8, t = 1, lr = 0.01
-    const mHat = u.optimizer.state_after!.m / (1 - Math.pow(beta1, t))
-    const vHat = u.optimizer.state_after!.v / (1 - Math.pow(beta2, t))
+    const sa = u.optimizer.state_after as AdamState
+    const mHat = sa.m / (1 - Math.pow(beta1, t))
+    const vHat = sa.v / (1 - Math.pow(beta2, t))
     const expectedUpdate = (lr * mHat) / (Math.sqrt(vHat) + epsilon)
     assert.ok(
       Math.abs(u.update - expectedUpdate) < 1e-12,

@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "momentum-multi-step.bad-buffer-drop.meta",
+  "describes": "fixtures/bad/momentum-multi-step.bad-buffer-drop.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.sgd-momentum.multi-step.golden.jsonl. v0.9.2 classical PyTorch-style SGD momentum multi-step adversarial plate.",
+  "mutation": {
+    "kind": "drop_state_before_buffer_field_structurally",
+    "field_path": "receipts[1].updates[0].optimizer.state_before.buffer",
+    "parameter_id": "w_x1_h1",
+    "original_buffer": -0.000438567734,
+    "explanation": "Structural drop (distinct from #4's value mutation): the buffer field is REMOVED from state_before entirely. MomentumState is closed-shape ({buffer} required); Rule 20's state-shape consistency check catches the missing field. Parallel to Adam's bad-amsgrad-confusion (which drops state_before structurally)."
+  },
+  "reconciliation_check_targeted_first": "Rule 20: Optimizer-state shape consistency — receipts[1].updates[0].optimizer.state_before missing required 'buffer' field for sgd_momentum.",
+  "purpose": "v0.9.2 momentum multi-step anti-circularity fixture (kind: 'buffer-drop'). Pressure-tests that the named multi-step rule fires BEFORE the reconciler consults fixture_status metadata.",
+  "v0_9_2_trust_framing": "Rule 25 (multi-step optimizer-state chain — momentum buffer chain) is a STRUCTURAL consistency check. Producer-authenticity caveat per Rule 17 / Fang et al. 2023 applies."
+}

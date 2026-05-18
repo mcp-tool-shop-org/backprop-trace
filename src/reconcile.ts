@@ -79,6 +79,8 @@ import {
   type BatchedGeneralInput,
   type GeneralReceipt,
   type AdamState,
+  type MomentumState,
+  type OptimizerStateAny,
 } from "./general-engine.js"
 import type { Topology } from "./topology.js"
 import { emitGeneralReceipt } from "./emit.js"
@@ -892,6 +894,14 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
   // order sample IDs fail. Silently skips for unbatched receipts.
   checkRule19SampleSetCoherence(r, failures)
 
+  // --- Rule 21 (v0.9.2): classical PyTorch-style SGD momentum recurrence -+
+  // sub-checks 21a (buffer_after == momentum * buffer_before + gradient) +
+  // 21b (update == learning_rate * buffer_after; descent direction). Gated
+  // on optimizer.name === "sgd_momentum"; silently skips for SGD/Adam/AdamW.
+  // v0.9.2 ships classical PyTorch-style ONLY — Nesterov + dampening
+  // reserved for v0.9.3.
+  checkRule21SgdMomentumRecurrence(r, tolerance, failures)
+
   // --- Rule 20 (v0.9.1): optimizer-state shape consistency ----------------
   // Gated on update.optimizer.name in {adam, adamw}: asserts optimizer.state_
   // before + state_after presence + finiteness, top-level optimizer_config
@@ -901,17 +911,12 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
   // adam.bad-amsgrad-confusion fixture).
   checkRule20OptimizerStateShape(r, failures)
 
-  // --- Rule 21 (v0.9.2 RESERVED): momentum buffer recurrence --------------
-  // Rule 21 is RESERVED for v0.9.2's momentum SGD addition (buffer_t =
-  // mu * buffer_{t-1} + gradient). No check function emits Rule 21 in
-  // v0.9.1; the doctrine test does NOT expect a paired fixture for it.
-  // (The comment intentionally uses "Rule 21" rather than the lowercase
-  // failure-record literal because the doctrine test extracts implemented
-  // rules by scanning for the lowercase pattern; using the capitalized
-  // form here avoids a false-positive entry in the implemented-rules
-  // set without changing the comment's meaning.) Stable numbering across
-  // v0.9.1 → v0.9.2 so when momentum lands, Rule 21 slots in without
-  // renumbering Rules 22-26 downstream.
+  // --- Rule 21 (v0.9.2): classical PyTorch-style SGD momentum recurrence --
+  // Rule 21 lands in v0.9.2; the check fires from checkRule21SgdMomentumRecurrence
+  // above. Sub-checks 21a (buffer_after == momentum * buffer_before + gradient,
+  // classical PyTorch-style — no dampening, no Nesterov in v0.9.2) and 21b
+  // (update == learning_rate * buffer_after, descent direction). Stable
+  // numbering preserved from v0.9.1's reservation; Rules 22-26 unchanged.
 
   // --- Rule 22 (v0.9.1): Adam moment recurrences (22a, 22b) ---------------
   // 22a: m_after == beta1 * m_before + (1 - beta1) * gradient
@@ -2960,17 +2965,18 @@ function checkRule14EngineRecomputeDifferential(
         numeric_policy: r.numeric_policy as unknown as GeneralInput["numeric_policy"],
         bias_policy: r.bias_policy as unknown as GeneralInput["bias_policy"],
       }
-      // v0.9.1 — Adam/AdamW dispatch. When receipt declares optimizer_config
-      // with name in {adam, adamw}, re-run engine with the same optimizer
-      // hyperparameters + per-update state_before. Engine emits state_after;
-      // Rule 14 differential compares engine state_after against stored.
+      // v0.9.1 — Adam/AdamW dispatch. v0.9.2 — sgd_momentum dispatch.
+      // When receipt declares optimizer_config with name in {adam, adamw,
+      // sgd_momentum}, re-run engine with the same optimizer hyperparameters
+      // + per-update state_before. Engine emits state_after; Rule 14
+      // differential compares engine state_after against stored.
       const oc = readOptimizerConfig(r)
       if (oc && (oc.name === "adam" || oc.name === "adamw")) {
         const stateBefore: Record<string, AdamState> = {}
         for (const u of r.updates) {
           const optAny = (u as { optimizer?: { state_before?: AdamState } }).optimizer
           const sb = optAny?.state_before
-          if (sb !== undefined) {
+          if (sb !== undefined && typeof sb.m === "number" && typeof sb.v === "number") {
             stateBefore[u.parameter_id] = { m: sb.m, v: sb.v }
           }
         }
@@ -2990,6 +2996,25 @@ function checkRule14EngineRecomputeDifferential(
           optimizer_state_before: stateBefore,
         }
         engineReceipt = runGeneralStep(adamInput)
+      } else if (oc && oc.name === "sgd_momentum") {
+        const stateBefore: Record<string, MomentumState> = {}
+        for (const u of r.updates) {
+          const optAny = (u as { optimizer?: { state_before?: MomentumState } }).optimizer
+          const sb = optAny?.state_before
+          if (sb !== undefined && typeof sb.buffer === "number") {
+            stateBefore[u.parameter_id] = { buffer: sb.buffer }
+          }
+        }
+        const momentumInput: GeneralInput = {
+          ...baseInput,
+          optimizer_config: {
+            name: "sgd_momentum",
+            learning_rate: oc.learning_rate ?? r.learning_rate,
+            ...(oc.momentum !== undefined ? { momentum: oc.momentum } : {}),
+          },
+          optimizer_state_before: stateBefore,
+        }
+        engineReceipt = runGeneralStep(momentumInput)
       } else {
         engineReceipt = runGeneralStep(baseInput)
       }
@@ -3124,22 +3149,36 @@ function checkRule14EngineRecomputeDifferential(
       eUpdate.weight_after,
       rUpdate.weight_after,
     )
-    // v0.9.1 — Adam/AdamW state_after differential. When engine emits Adam
-    // state, compare against receipt's stored values. Catches Adam-state-
-    // forge attacks where moments are claimed but recomputation differs.
-    const eOpt = (eUpdate as { optimizer?: { state_after?: AdamState } }).optimizer
-    const rOpt = (rUpdate as { optimizer?: { state_after?: AdamState } }).optimizer
-    if (eOpt?.state_after && rOpt?.state_after) {
-      compareScalar(
-        `updates[${eUpdate.parameter_id}].optimizer.state_after.m`,
-        eOpt.state_after.m,
-        rOpt.state_after.m,
-      )
-      compareScalar(
-        `updates[${eUpdate.parameter_id}].optimizer.state_after.v`,
-        eOpt.state_after.v,
-        rOpt.state_after.v,
-      )
+    // v0.9.1 — Adam/AdamW state_after differential. v0.9.2 — sgd_momentum
+    // state_after differential. When engine emits optimizer state, compare
+    // against receipt's stored values. Catches state-forge attacks where
+    // moments / buffer are claimed but recomputation differs.
+    const eOpt = (eUpdate as { optimizer?: { name?: unknown; state_after?: unknown } }).optimizer
+    const rOpt = (rUpdate as { optimizer?: { name?: unknown; state_after?: unknown } }).optimizer
+    if (eOpt?.state_after && rOpt?.state_after && eOpt.name === rOpt.name) {
+      const eName = eOpt.name as string
+      if (eName === "adam" || eName === "adamw") {
+        const ea = eOpt.state_after as AdamState
+        const ra = rOpt.state_after as AdamState
+        compareScalar(
+          `updates[${eUpdate.parameter_id}].optimizer.state_after.m`,
+          ea.m,
+          ra.m,
+        )
+        compareScalar(
+          `updates[${eUpdate.parameter_id}].optimizer.state_after.v`,
+          ea.v,
+          ra.v,
+        )
+      } else if (eName === "sgd_momentum") {
+        const ea = eOpt.state_after as MomentumState
+        const ra = rOpt.state_after as MomentumState
+        compareScalar(
+          `updates[${eUpdate.parameter_id}].optimizer.state_after.buffer`,
+          ea.buffer,
+          ra.buffer,
+        )
+      }
     }
   }
 
@@ -3695,7 +3734,18 @@ function checkRule17BundleBinding(
  */
 function readOptimizerConfig(
   r: Receipt,
-): { name: string; learning_rate?: number; beta1?: number; beta2?: number; epsilon?: number; weight_decay?: number; t?: number } | undefined {
+): {
+  name: string
+  learning_rate?: number
+  beta1?: number
+  beta2?: number
+  epsilon?: number
+  weight_decay?: number
+  t?: number
+  momentum?: number
+  nesterov?: unknown
+  dampening?: unknown
+} | undefined {
   const oc = (r as { optimizer_config?: unknown }).optimizer_config
   if (oc === null || oc === undefined || typeof oc !== "object") return undefined
   const ocAny = oc as Record<string, unknown>
@@ -3709,6 +3759,9 @@ function readOptimizerConfig(
     ...(typeof ocAny.epsilon === "number" ? { epsilon: ocAny.epsilon } : {}),
     ...(typeof ocAny.weight_decay === "number" ? { weight_decay: ocAny.weight_decay } : {}),
     ...(typeof ocAny.t === "number" ? { t: ocAny.t } : {}),
+    ...(typeof ocAny.momentum === "number" ? { momentum: ocAny.momentum } : {}),
+    ...(ocAny.nesterov !== undefined ? { nesterov: ocAny.nesterov } : {}),
+    ...(ocAny.dampening !== undefined ? { dampening: ocAny.dampening } : {}),
   }
 }
 
@@ -3718,6 +3771,24 @@ function readOptimizerConfig(
 function isAdamFamilyUpdate(u: Receipt["updates"][number]): boolean {
   const name = (u as { optimizer?: { name?: unknown } }).optimizer?.name
   return name === "adam" || name === "adamw"
+}
+
+/**
+ * v0.9.2 — true iff the update's optimizer.name is "sgd_momentum"
+ * (classical PyTorch-style SGD momentum; Nesterov reserved for v0.9.3).
+ */
+function isSgdMomentumUpdate(u: Receipt["updates"][number]): boolean {
+  const name = (u as { optimizer?: { name?: unknown } }).optimizer?.name
+  return name === "sgd_momentum"
+}
+
+/**
+ * v0.9.2 — true iff the update's optimizer.name names any optimizer
+ * that carries per-parameter state ({adam, adamw, sgd_momentum}).
+ * Used by Rule 20 (state-shape consistency) to gate state-presence checks.
+ */
+function isOptimizerWithStateUpdate(u: Receipt["updates"][number]): boolean {
+  return isAdamFamilyUpdate(u) || isSgdMomentumUpdate(u)
 }
 
 /**
@@ -3744,8 +3815,12 @@ function checkRule20OptimizerStateShape(
   failures: ReconciliationFailure[],
 ): void {
   const adamUpdates = r.updates.filter(isAdamFamilyUpdate)
-  if (adamUpdates.length === 0) return // GATED — no Adam updates, silent skip
+  const momentumUpdates = r.updates.filter(isSgdMomentumUpdate)
+  if (adamUpdates.length === 0 && momentumUpdates.length === 0) return // GATED — no stateful optimizer updates, silent skip
   const oc = readOptimizerConfig(r)
+  const declaredOptimizerName = adamUpdates.length > 0
+    ? (adamUpdates[0]! as { optimizer: { name: string } }).optimizer.name
+    : (momentumUpdates[0]! as { optimizer: { name: string } }).optimizer.name
   if (!oc) {
     failures.push({
       rule: 20,
@@ -3755,16 +3830,16 @@ function checkRule20OptimizerStateShape(
       delta: 0,
       tolerance: 0,
       message:
-        `Rule 20 (optimizer-state shape consistency): updates declare Adam/AdamW (e.g. ` +
-        `updates[0].optimizer.name='${(adamUpdates[0]! as { optimizer: { name: string } }).optimizer.name}') ` +
-        `but top-level optimizer_config block is missing. Adam/AdamW receipts MUST carry ` +
-        `optimizer_config with name, learning_rate, beta1, beta2, epsilon, t (and weight_decay ` +
-        `for adamw). NOTE: Rule 20 is a STRUCTURAL CONSISTENCY check, NOT a producer-authenticity ` +
-        `check — an attacker can populate optimizer_config consistently and pass this rule.`,
+        `Rule 20 (optimizer-state shape consistency): updates declare ${declaredOptimizerName} (e.g. ` +
+        `updates[0].optimizer.name='${declaredOptimizerName}') but top-level optimizer_config block is ` +
+        `missing. Adam/AdamW/sgd_momentum receipts MUST carry optimizer_config with name + learning_rate ` +
+        `+ optimizer-specific hyperparameters (Adam/AdamW: beta1/beta2/epsilon/t + weight_decay for adamw; ` +
+        `sgd_momentum: momentum). NOTE: Rule 20 is a STRUCTURAL CONSISTENCY check, NOT a producer-` +
+        `authenticity check — an attacker can populate optimizer_config consistently and pass this rule.`,
     })
     return
   }
-  if (oc.name !== "adam" && oc.name !== "adamw") {
+  if (oc.name !== "adam" && oc.name !== "adamw" && oc.name !== "sgd_momentum") {
     failures.push({
       rule: 20,
       field_path: "optimizer_config.name",
@@ -3773,9 +3848,9 @@ function checkRule20OptimizerStateShape(
       delta: 0,
       tolerance: 0,
       message:
-        `Rule 20 (optimizer-state shape consistency): updates declare Adam/AdamW but ` +
-        `optimizer_config.name='${oc.name}' (expected 'adam' or 'adamw'). Per-update and ` +
-        `top-level optimizer name MUST agree.`,
+        `Rule 20 (optimizer-state shape consistency): updates declare a stateful optimizer but ` +
+        `optimizer_config.name='${oc.name}' (expected 'adam', 'adamw', or 'sgd_momentum'). Per-update ` +
+        `and top-level optimizer name MUST agree.`,
     })
     return
   }
@@ -3794,72 +3869,127 @@ function checkRule20OptimizerStateShape(
         tolerance: 0,
         message:
           `Rule 20: updates[${i}].optimizer.name='${uName}' but optimizer_config.name='${oc.name}'. ` +
-          `Per-update and top-level optimizer name MUST agree (uniform optimizer per receipt in v0.9.1; ` +
+          `Per-update and top-level optimizer name MUST agree (uniform optimizer per receipt in v0.9.1+; ` +
           `per-parameter-group heterogeneity deferred to v0.9.x).`,
       })
     }
   }
-  // (d) hyperparameter presence
-  if (typeof oc.beta1 !== "number" || oc.beta1 <= 0 || oc.beta1 >= 1) {
-    failures.push({
-      rule: 20,
-      field_path: "optimizer_config.beta1",
-      stored: typeof oc.beta1 === "number" ? oc.beta1 : 0,
-      recomputed: 0, delta: 0, tolerance: 0,
-      message: `Rule 20: optimizer_config.beta1 must be a number in (0, 1) (got ${String(oc.beta1)}). ` +
-        `Kingma & Ba 2014 Algorithm 1 defaults beta1=0.9.`,
-    })
-  }
-  if (typeof oc.beta2 !== "number" || oc.beta2 <= 0 || oc.beta2 >= 1) {
-    failures.push({
-      rule: 20,
-      field_path: "optimizer_config.beta2",
-      stored: typeof oc.beta2 === "number" ? oc.beta2 : 0,
-      recomputed: 0, delta: 0, tolerance: 0,
-      message: `Rule 20: optimizer_config.beta2 must be a number in (0, 1) (got ${String(oc.beta2)}). ` +
-        `Kingma & Ba 2014 Algorithm 1 defaults beta2=0.999.`,
-    })
-  }
-  if (typeof oc.epsilon !== "number" || oc.epsilon <= 0) {
-    failures.push({
-      rule: 20,
-      field_path: "optimizer_config.epsilon",
-      stored: typeof oc.epsilon === "number" ? oc.epsilon : 0,
-      recomputed: 0, delta: 0, tolerance: 0,
-      message: `Rule 20: optimizer_config.epsilon must be a positive number (got ${String(oc.epsilon)}). ` +
-        `Kingma & Ba 2014 Algorithm 1 defaults epsilon=1e-8.`,
-    })
-  }
-  if (typeof oc.t !== "number" || !Number.isInteger(oc.t) || oc.t < 1) {
-    failures.push({
-      rule: 20,
-      field_path: "optimizer_config.t",
-      stored: typeof oc.t === "number" ? oc.t : 0,
-      recomputed: 0, delta: 0, tolerance: 0,
-      message: `Rule 20: optimizer_config.t must be a positive integer (got ${String(oc.t)}). ` +
-        `Kingma & Ba 2014 Algorithm 1 indexes the timestep starting at 1.`,
-    })
-  }
-  if (oc.name === "adamw") {
-    if (typeof oc.weight_decay !== "number" || !Number.isFinite(oc.weight_decay) || oc.weight_decay < 0) {
+  // (d) hyperparameter presence — dispatch on optimizer family.
+  if (oc.name === "adam" || oc.name === "adamw") {
+    if (typeof oc.beta1 !== "number" || oc.beta1 <= 0 || oc.beta1 >= 1) {
+      failures.push({
+        rule: 20,
+        field_path: "optimizer_config.beta1",
+        stored: typeof oc.beta1 === "number" ? oc.beta1 : 0,
+        recomputed: 0, delta: 0, tolerance: 0,
+        message: `Rule 20: optimizer_config.beta1 must be a number in (0, 1) (got ${String(oc.beta1)}). ` +
+          `Kingma & Ba 2014 Algorithm 1 defaults beta1=0.9.`,
+      })
+    }
+    if (typeof oc.beta2 !== "number" || oc.beta2 <= 0 || oc.beta2 >= 1) {
+      failures.push({
+        rule: 20,
+        field_path: "optimizer_config.beta2",
+        stored: typeof oc.beta2 === "number" ? oc.beta2 : 0,
+        recomputed: 0, delta: 0, tolerance: 0,
+        message: `Rule 20: optimizer_config.beta2 must be a number in (0, 1) (got ${String(oc.beta2)}). ` +
+          `Kingma & Ba 2014 Algorithm 1 defaults beta2=0.999.`,
+      })
+    }
+    if (typeof oc.epsilon !== "number" || oc.epsilon <= 0) {
+      failures.push({
+        rule: 20,
+        field_path: "optimizer_config.epsilon",
+        stored: typeof oc.epsilon === "number" ? oc.epsilon : 0,
+        recomputed: 0, delta: 0, tolerance: 0,
+        message: `Rule 20: optimizer_config.epsilon must be a positive number (got ${String(oc.epsilon)}). ` +
+          `Kingma & Ba 2014 Algorithm 1 defaults epsilon=1e-8.`,
+      })
+    }
+    if (typeof oc.t !== "number" || !Number.isInteger(oc.t) || oc.t < 1) {
+      failures.push({
+        rule: 20,
+        field_path: "optimizer_config.t",
+        stored: typeof oc.t === "number" ? oc.t : 0,
+        recomputed: 0, delta: 0, tolerance: 0,
+        message: `Rule 20: optimizer_config.t must be a positive integer (got ${String(oc.t)}). ` +
+          `Kingma & Ba 2014 Algorithm 1 indexes the timestep starting at 1.`,
+      })
+    }
+    if (oc.name === "adamw") {
+      if (typeof oc.weight_decay !== "number" || !Number.isFinite(oc.weight_decay) || oc.weight_decay < 0) {
+        failures.push({
+          rule: 20,
+          field_path: "optimizer_config.weight_decay",
+          stored: typeof oc.weight_decay === "number" ? oc.weight_decay : 0,
+          recomputed: 0, delta: 0, tolerance: 0,
+          message:
+            `Rule 20: optimizer_config.weight_decay is REQUIRED for AdamW (got ${String(oc.weight_decay)}). ` +
+            `AdamW adds decoupled weight decay (Loshchilov & Hutter 2017 arXiv:1711.05101 Alg 2 line 12) — ` +
+            `applied directly to the parameter at the parameter-update step. Explicitly contrasted with ` +
+            `coupled L2 (which folds wd into the gradient; rejected by Rule 24 AdamW branch).`,
+        })
+      }
+    }
+  } else if (oc.name === "sgd_momentum") {
+    // v0.9.2 — classical PyTorch-style SGD momentum hyperparameter checks.
+    if (typeof oc.momentum !== "number" || oc.momentum <= 0 || oc.momentum >= 1) {
+      failures.push({
+        rule: 20,
+        field_path: "optimizer_config.momentum",
+        stored: typeof oc.momentum === "number" ? oc.momentum : 0,
+        recomputed: 0, delta: 0, tolerance: 0,
+        message:
+          `Rule 20: optimizer_config.momentum must be a number in (0, 1) (got ${String(oc.momentum)}). ` +
+          `Classical PyTorch-style SGD momentum (Sutskever et al. 2013 ICML / PyTorch torch.optim.SGD) ` +
+          `uses mu in (0, 1); typically 0.9.`,
+      })
+    }
+    // v0.9.2 reserved-for-v0.9.3 fields. Schema enforces const false / const 0;
+    // reconciler defense-in-depth confirms.
+    if (oc.nesterov !== undefined && oc.nesterov !== false) {
+      failures.push({
+        rule: 20,
+        field_path: "optimizer_config.nesterov",
+        stored: 0, recomputed: 0, delta: 0, tolerance: 0,
+        message:
+          `Rule 20: optimizer_config.nesterov === true is NOT supported in v0.9.2 (got ${String(oc.nesterov)}). ` +
+          `Nesterov accelerated gradient is RESERVED for v0.9.3. v0.9.2 ships classical PyTorch-style SGD ` +
+          `momentum ONLY (nesterov: false or absent). Sutskever et al. 2013 ICML §2 for the lookahead form.`,
+      })
+    }
+    if (oc.dampening !== undefined && oc.dampening !== 0) {
+      failures.push({
+        rule: 20,
+        field_path: "optimizer_config.dampening",
+        stored: typeof oc.dampening === "number" ? oc.dampening : 0,
+        recomputed: 0, delta: 0, tolerance: 0,
+        message:
+          `Rule 20: optimizer_config.dampening !== 0 is NOT supported in v0.9.2 (got ${String(oc.dampening)}). ` +
+          `PyTorch's torch.optim.SGD(dampening=tau) recurrence is RESERVED for v0.9.3. v0.9.2 ships ` +
+          `dampening=0 ONLY (recurrence buffer_t = mu * buffer_{t-1} + gradient).`,
+      })
+    }
+    // SGD coupled L2 weight decay deferred to v0.10.
+    if (oc.weight_decay !== undefined) {
       failures.push({
         rule: 20,
         field_path: "optimizer_config.weight_decay",
         stored: typeof oc.weight_decay === "number" ? oc.weight_decay : 0,
         recomputed: 0, delta: 0, tolerance: 0,
         message:
-          `Rule 20: optimizer_config.weight_decay is REQUIRED for AdamW (got ${String(oc.weight_decay)}). ` +
-          `AdamW adds decoupled weight decay (Loshchilov & Hutter 2017 arXiv:1711.05101 Alg 2 line 12) — ` +
-          `applied directly to the parameter at the parameter-update step. Explicitly contrasted with ` +
-          `coupled L2 (which folds wd into the gradient; rejected by Rule 24 AdamW branch).`,
+          `Rule 20: optimizer_config.weight_decay is NOT supported with name === 'sgd_momentum' in v0.9.2 ` +
+          `(got ${String(oc.weight_decay)}). PyTorch's torch.optim.SGD(weight_decay=lambda) applies COUPLED ` +
+          `L2 — distinct from AdamW's DECOUPLED weight decay. v0.9.2 defers SGD coupled L2 to v0.10.`,
       })
     }
   }
-  // (c) per-update state_before + state_after presence + finiteness
+  // (c) per-update state_before + state_after presence + finiteness — dispatch on optimizer family.
   for (let i = 0; i < r.updates.length; i += 1) {
     const u = r.updates[i]!
-    if (!isAdamFamilyUpdate(u)) continue
-    const opt = (u as { optimizer: { state_before?: unknown; state_after?: unknown } }).optimizer
+    if (!isOptimizerWithStateUpdate(u)) continue
+    const opt = (u as { optimizer: { name: string; state_before?: unknown; state_after?: unknown } }).optimizer
+    const uName = opt.name
     for (const which of ["state_before", "state_after"] as const) {
       const st = opt[which]
       if (st === null || st === undefined || typeof st !== "object") {
@@ -3869,32 +3999,190 @@ function checkRule20OptimizerStateShape(
           field_path: `updates[${i}].optimizer.${which}`,
           stored: 0, recomputed: 0, delta: 0, tolerance: 0,
           message:
-            `Rule 20: updates[${i}].optimizer.${which} is REQUIRED when optimizer.name in {adam, adamw} ` +
-            `(got ${String(st)}). state_${which.split("_")[1]} carries the per-parameter (m, v) Adam moment ` +
-            `state. Kingma & Ba 2014 Algorithm 1 names them m_t (first moment) and v_t (second moment).`,
+            `Rule 20: updates[${i}].optimizer.${which} is REQUIRED when optimizer.name in {adam, adamw, sgd_momentum} ` +
+            `(got ${String(st)} on optimizer.name='${uName}'). ` +
+            (uName === "sgd_momentum"
+              ? `sgd_momentum state shape is MomentumState ({buffer}); PyTorch's state['momentum_buffer'].`
+              : `Adam/AdamW state shape is AdamState ({m, v}); Kingma & Ba 2014 Algorithm 1.`),
         })
         continue
       }
       const stAny = st as Record<string, unknown>
-      if (typeof stAny.m !== "number" || !Number.isFinite(stAny.m)) {
-        failures.push({
-          rule: 20,
-          parameter_id: u.parameter_id,
-          field_path: `updates[${i}].optimizer.${which}.m`,
-          stored: typeof stAny.m === "number" ? stAny.m : 0, recomputed: 0, delta: 0, tolerance: 0,
-          message: `Rule 20: updates[${i}].optimizer.${which}.m must be a finite number (got ${String(stAny.m)}).`,
-        })
+      if (uName === "sgd_momentum") {
+        // MomentumState shape: {buffer: number}.
+        if (typeof stAny.buffer !== "number" || !Number.isFinite(stAny.buffer)) {
+          failures.push({
+            rule: 20,
+            parameter_id: u.parameter_id,
+            field_path: `updates[${i}].optimizer.${which}.buffer`,
+            stored: typeof stAny.buffer === "number" ? stAny.buffer : 0, recomputed: 0, delta: 0, tolerance: 0,
+            message: `Rule 20: updates[${i}].optimizer.${which}.buffer must be a finite number ` +
+              `(got ${String(stAny.buffer)}). MomentumState ({buffer}) is the sgd_momentum state shape.`,
+          })
+        }
+        // Reject Adam fields on a MomentumState shape (cross-validation).
+        if (stAny.m !== undefined || stAny.v !== undefined) {
+          failures.push({
+            rule: 20,
+            parameter_id: u.parameter_id,
+            field_path: `updates[${i}].optimizer.${which}`,
+            stored: 0, recomputed: 0, delta: 0, tolerance: 0,
+            message:
+              `Rule 20: updates[${i}].optimizer.${which} on sgd_momentum carries Adam-shape fields ` +
+              `({m, v}) but should be MomentumState ({buffer}). Cross-shape mismatch — optimizer.name ` +
+              `says sgd_momentum but state shape suggests Adam.`,
+          })
+        }
+      } else {
+        // AdamState shape: {m: number, v: number (>= 0)}.
+        if (typeof stAny.m !== "number" || !Number.isFinite(stAny.m)) {
+          failures.push({
+            rule: 20,
+            parameter_id: u.parameter_id,
+            field_path: `updates[${i}].optimizer.${which}.m`,
+            stored: typeof stAny.m === "number" ? stAny.m : 0, recomputed: 0, delta: 0, tolerance: 0,
+            message: `Rule 20: updates[${i}].optimizer.${which}.m must be a finite number (got ${String(stAny.m)}).`,
+          })
+        }
+        if (typeof stAny.v !== "number" || !Number.isFinite(stAny.v) || stAny.v < 0) {
+          failures.push({
+            rule: 20,
+            parameter_id: u.parameter_id,
+            field_path: `updates[${i}].optimizer.${which}.v`,
+            stored: typeof stAny.v === "number" ? stAny.v : 0, recomputed: 0, delta: 0, tolerance: 0,
+            message: `Rule 20: updates[${i}].optimizer.${which}.v must be a non-negative finite number (got ${String(stAny.v)}). ` +
+              `v is the second moment estimate = E[g²], always non-negative.`,
+          })
+        }
+        // Reject MomentumState fields on an AdamState shape (cross-validation).
+        if (stAny.buffer !== undefined) {
+          failures.push({
+            rule: 20,
+            parameter_id: u.parameter_id,
+            field_path: `updates[${i}].optimizer.${which}`,
+            stored: 0, recomputed: 0, delta: 0, tolerance: 0,
+            message:
+              `Rule 20: updates[${i}].optimizer.${which} on ${uName} carries Momentum-shape field ` +
+              `({buffer}) but should be AdamState ({m, v}). Cross-shape mismatch — optimizer.name ` +
+              `says ${uName} but state shape suggests sgd_momentum.`,
+          })
+        }
       }
-      if (typeof stAny.v !== "number" || !Number.isFinite(stAny.v) || stAny.v < 0) {
-        failures.push({
-          rule: 20,
-          parameter_id: u.parameter_id,
-          field_path: `updates[${i}].optimizer.${which}.v`,
-          stored: typeof stAny.v === "number" ? stAny.v : 0, recomputed: 0, delta: 0, tolerance: 0,
-          message: `Rule 20: updates[${i}].optimizer.${which}.v must be a non-negative finite number (got ${String(stAny.v)}). ` +
-            `v is the second moment estimate = E[g²], always non-negative.`,
-        })
+    }
+  }
+}
+
+/**
+ * Rule 21 (v0.9.2): classical PyTorch-style SGD momentum buffer recurrence
+ * + parameter update (GATED). Sub-checks 21a + 21b.
+ *
+ * 21a: buffer_after == momentum * buffer_before + gradient
+ *     (PyTorch convention: lr OUTSIDE the buffer; classical only — no
+ *     Nesterov lookahead, no dampening factor in v0.9.2)
+ * 21b: update == learning_rate * buffer_after
+ *     (descent-direction sign convention; sign already lives in gradient)
+ *
+ * Sutskever et al. 2013 ICML §2 ("On the importance of initialization and
+ * momentum in deep learning"; https://www.cs.toronto.edu/~hinton/absps/momentum.pdf)
+ * documents the PyTorch-style reformulation where lr lives outside the
+ * buffer (so LR schedules don't retroactively rescale momentum history).
+ * Polyak 1964 ("Some methods of speeding up the convergence of iteration
+ * methods", USSR Comput. Math. and Math. Phys. 4(5):1-17) is the
+ * heavy-ball foundation. PyTorch torch.optim.SGD source is the production
+ * reference: https://github.com/pytorch/pytorch/blob/main/torch/optim/sgd.py
+ *
+ * GATED on optimizer.name === "sgd_momentum". v0.9.2 ships CLASSICAL
+ * PyTorch-style ONLY — Nesterov accelerated gradient is reserved for
+ * v0.9.3 (Rule 21 in v0.9.3 will branch on optimizer_config.nesterov);
+ * dampening is reserved for v0.9.3 (Rule 21a in v0.9.3 will use the
+ * dampened recurrence buffer_t = mu * buffer_{t-1} + (1-tau) * gradient).
+ * SGD coupled L2 weight decay deferred to v0.10 (Rule 7 third branch).
+ *
+ * Trust framing (load-bearing): Rule 21 is a STRUCTURAL CONSISTENCY check
+ * (does the recorded buffer recurrence and parameter update match the
+ * classical PyTorch-style equations?), NOT a producer-authenticity check.
+ * Internally consistent (g, buffer, update) triples pass — an attacker
+ * who controls every byte of the sidecar and recomputes a consistent
+ * triple passes Rule 21 trivially. Analogous to Rule 17 bundle-integrity
+ * caveat, Rule 22-24 Adam-rule caveat, and the Fang et al. 2023 EuroS&P
+ * PoL spoofing class (arXiv:2208.03567). Combine with Rule 16
+ * signed_subject_digest or external Sigstore signature for producer-
+ * identity binding.
+ */
+function checkRule21SgdMomentumRecurrence(
+  r: Receipt,
+  tolerance: TolerancePolicy,
+  failures: ReconciliationFailure[],
+): void {
+  const oc = readOptimizerConfig(r)
+  if (!oc || oc.name !== "sgd_momentum") return
+  if (typeof oc.momentum !== "number") return // Rule 20 already fired
+  const mu = oc.momentum
+  for (let i = 0; i < r.updates.length; i += 1) {
+    const u = r.updates[i]!
+    if (!isSgdMomentumUpdate(u)) continue
+    const opt = (u as {
+      optimizer: {
+        learning_rate: number
+        state_before?: { buffer?: number }
+        state_after?: { buffer?: number }
       }
+    }).optimizer
+    if (!opt.state_before || !opt.state_after) continue // Rule 20 already fired
+    if (typeof opt.state_before.buffer !== "number") continue // Rule 20 fired
+    if (typeof opt.state_after.buffer !== "number") continue // Rule 20 fired
+    const lr = opt.learning_rate
+    const grad = u.gradient
+    const bufBefore = opt.state_before.buffer
+    const bufAfter = opt.state_after.buffer
+    // 21a: classical PyTorch-style buffer recurrence (no dampening; no Nesterov).
+    const expectedBufAfter = mu * bufBefore + grad
+    const check21a = applyToleranceCheck(expectedBufAfter, bufAfter, tolerance)
+    if (!check21a.ok) {
+      failures.push({
+        rule: 21,
+        parameter_id: u.parameter_id,
+        field_path: `updates[${i}].optimizer.state_after.buffer`,
+        stored: bufAfter,
+        recomputed: expectedBufAfter,
+        delta: check21a.delta,
+        tolerance: check21a.appliedTolerance,
+        message:
+          `Rule 21a (classical PyTorch-style SGD momentum buffer recurrence): buffer_after ${bufAfter} ` +
+          `does not match momentum * buffer_before + gradient = ${mu} * ${bufBefore} + ${grad} = ` +
+          `${expectedBufAfter}. Sutskever et al. 2013 ICML / PyTorch torch.optim.SGD reference; Polyak 1964 ` +
+          `for the underlying heavy-ball method. v0.9.2 ships CLASSICAL PyTorch-style ONLY — Nesterov ` +
+          `accelerated gradient (lookahead form) is RESERVED for v0.9.3; dampening (recurrence with ` +
+          `(1-tau) factor on gradient) is RESERVED for v0.9.3. Common bugs caught here: dampening ` +
+          `coefficient applied without declaration, Nesterov formula used while declaring classical, ` +
+          `wrong momentum coefficient. STRUCTURAL CHECK — does not verify the gradient came from real ` +
+          `data (Fang et al. 2023 EuroS&P PoL spoofing class applies).`,
+      })
+      continue // skip 21b on the same update — recurrence broken first
+    }
+    // 21b: classical PyTorch-style parameter update.
+    // update = lr * buffer_after (descent direction; sign in gradient).
+    const expectedUpdate = lr * bufAfter
+    const stored = u.update
+    const check21b = applyToleranceCheck(expectedUpdate, stored, tolerance)
+    if (!check21b.ok) {
+      failures.push({
+        rule: 21,
+        parameter_id: u.parameter_id,
+        field_path: `updates[${i}].update`,
+        stored,
+        recomputed: expectedUpdate,
+        delta: check21b.delta,
+        tolerance: check21b.appliedTolerance,
+        message:
+          `Rule 21b (classical PyTorch-style SGD momentum parameter update): update ${stored} does not ` +
+          `match learning_rate * buffer_after = ${lr} * ${bufAfter} = ${expectedUpdate}. ` +
+          `Sutskever et al. 2013 ICML / PyTorch torch.optim.SGD reference. v0.9.2 ships CLASSICAL ` +
+          `PyTorch-style ONLY — Nesterov lookahead update (-lr * (mu * buf_after + gradient)) is RESERVED ` +
+          `for v0.9.3. A stored update that matches the Nesterov form here is a "classical-vs-Nesterov ` +
+          `confusion" porting bug (or a future Nesterov receipt that needs to declare nesterov: true once ` +
+          `v0.9.3 lands). STRUCTURAL CHECK — does not verify producer authenticity.`,
+      })
     }
   }
 }
@@ -4161,89 +4449,146 @@ function checkRule25OptimizerStateChain(
     const curOc = readOptimizerConfig(curR)
     const prevOc = readOptimizerConfig(prevR)
     if (!curOc || !prevOc) continue
-    if (curOc.name !== "adam" && curOc.name !== "adamw") continue
-    if (prevOc.name !== "adam" && prevOc.name !== "adamw") continue
+    const isAdamPair =
+      (curOc.name === "adam" || curOc.name === "adamw") &&
+      (prevOc.name === "adam" || prevOc.name === "adamw")
+    const isMomentumPair =
+      curOc.name === "sgd_momentum" && prevOc.name === "sgd_momentum"
+    if (!isAdamPair && !isMomentumPair) continue
     // Pull per-step tolerance from current receipt's numeric_policy (Rule 9 precedent).
     const curTolRaw = (curR as { numeric_policy?: { tolerance?: unknown } }).numeric_policy?.tolerance
     if (!isValidTolerancePolicy(curTolRaw)) continue
     const tol = curTolRaw
-    // (a) per-parameter state chain m + v
-    const prevAfterByParam = new Map<string, { m: number; v: number }>()
-    for (const u of prevR.updates) {
-      if (!isAdamFamilyUpdate(u)) continue
-      const sa = (u as { optimizer: { state_after?: { m: number; v: number } } }).optimizer.state_after
-      if (sa) prevAfterByParam.set(u.parameter_id, sa)
-    }
-    for (let j = 0; j < curR.updates.length; j += 1) {
-      const u = curR.updates[j]!
-      if (!isAdamFamilyUpdate(u)) continue
-      const sb = (u as { optimizer: { state_before?: { m: number; v: number } } }).optimizer.state_before
-      if (!sb) continue
-      const prevAfter = prevAfterByParam.get(u.parameter_id)
-      if (!prevAfter) {
-        failures.push({
-          rule: 25,
-          parameter_id: u.parameter_id,
-          field_path: `receipts[${i}].updates[${j}].optimizer.state_before`,
-          stored: 0, recomputed: 0, delta: 0, tolerance: 0,
-          message:
-            `Rule 25 (optimizer-state chain): parameter '${u.parameter_id}' has state_before at step ${i} ` +
-            `but no matching state_after at prior step ${i - 1} (parameter not present in prior step's ` +
-            `Adam updates). Multi-step Adam requires every Adam/AdamW parameter to chain forward.`,
-        })
-        continue
+    if (isAdamPair) {
+      // (a) per-parameter state chain m + v
+      const prevAfterByParam = new Map<string, { m: number; v: number }>()
+      for (const u of prevR.updates) {
+        if (!isAdamFamilyUpdate(u)) continue
+        const sa = (u as { optimizer: { state_after?: { m: number; v: number } } }).optimizer.state_after
+        if (sa) prevAfterByParam.set(u.parameter_id, sa)
       }
-      const checkM = applyToleranceCheck(prevAfter.m, sb.m, tol)
-      if (!checkM.ok) {
-        failures.push({
-          rule: 25,
-          parameter_id: u.parameter_id,
-          field_path: `receipts[${i}].updates[${j}].optimizer.state_before.m`,
-          stored: sb.m,
-          recomputed: prevAfter.m,
-          delta: checkM.delta,
-          tolerance: checkM.appliedTolerance,
-          message:
-            `Rule 25 (optimizer-state chain): receipts[${i}].updates[${j}].optimizer.state_before.m=${sb.m} ` +
-            `does not match receipts[${i - 1}].state_after.m=${prevAfter.m} for parameter '${u.parameter_id}'. ` +
-            `Adam moments MUST chain forward unbroken across multi-step receipts (Rule 9 analog for Adam state). ` +
-            `Bad fixture: adam-multi-step.bad-stale-moment-state.`,
-        })
+      for (let j = 0; j < curR.updates.length; j += 1) {
+        const u = curR.updates[j]!
+        if (!isAdamFamilyUpdate(u)) continue
+        const sb = (u as { optimizer: { state_before?: { m: number; v: number } } }).optimizer.state_before
+        if (!sb) continue
+        const prevAfter = prevAfterByParam.get(u.parameter_id)
+        if (!prevAfter) {
+          failures.push({
+            rule: 25,
+            parameter_id: u.parameter_id,
+            field_path: `receipts[${i}].updates[${j}].optimizer.state_before`,
+            stored: 0, recomputed: 0, delta: 0, tolerance: 0,
+            message:
+              `Rule 25 (optimizer-state chain): parameter '${u.parameter_id}' has state_before at step ${i} ` +
+              `but no matching state_after at prior step ${i - 1} (parameter not present in prior step's ` +
+              `Adam updates). Multi-step Adam requires every Adam/AdamW parameter to chain forward.`,
+          })
+          continue
+        }
+        const checkM = applyToleranceCheck(prevAfter.m, sb.m, tol)
+        if (!checkM.ok) {
+          failures.push({
+            rule: 25,
+            parameter_id: u.parameter_id,
+            field_path: `receipts[${i}].updates[${j}].optimizer.state_before.m`,
+            stored: sb.m,
+            recomputed: prevAfter.m,
+            delta: checkM.delta,
+            tolerance: checkM.appliedTolerance,
+            message:
+              `Rule 25 (optimizer-state chain): receipts[${i}].updates[${j}].optimizer.state_before.m=${sb.m} ` +
+              `does not match receipts[${i - 1}].state_after.m=${prevAfter.m} for parameter '${u.parameter_id}'. ` +
+              `Adam moments MUST chain forward unbroken across multi-step receipts (Rule 9 analog for Adam state). ` +
+              `Bad fixture: adam-multi-step.bad-stale-moment-state.`,
+          })
+        }
+        const checkV = applyToleranceCheck(prevAfter.v, sb.v, tol)
+        if (!checkV.ok) {
+          failures.push({
+            rule: 25,
+            parameter_id: u.parameter_id,
+            field_path: `receipts[${i}].updates[${j}].optimizer.state_before.v`,
+            stored: sb.v,
+            recomputed: prevAfter.v,
+            delta: checkV.delta,
+            tolerance: checkV.appliedTolerance,
+            message:
+              `Rule 25: receipts[${i}].updates[${j}].optimizer.state_before.v=${sb.v} ` +
+              `does not match receipts[${i - 1}].state_after.v=${prevAfter.v} for parameter '${u.parameter_id}'.`,
+          })
+        }
       }
-      const checkV = applyToleranceCheck(prevAfter.v, sb.v, tol)
-      if (!checkV.ok) {
-        failures.push({
-          rule: 25,
-          parameter_id: u.parameter_id,
-          field_path: `receipts[${i}].updates[${j}].optimizer.state_before.v`,
-          stored: sb.v,
-          recomputed: prevAfter.v,
-          delta: checkV.delta,
-          tolerance: checkV.appliedTolerance,
-          message:
-            `Rule 25: receipts[${i}].updates[${j}].optimizer.state_before.v=${sb.v} ` +
-            `does not match receipts[${i - 1}].state_after.v=${prevAfter.v} for parameter '${u.parameter_id}'.`,
-        })
+      // (b) t monotonicity (Adam-only — momentum has no t field)
+      if (typeof curOc.t === "number" && typeof prevOc.t === "number") {
+        const expectedT = prevOc.t + 1
+        if (curOc.t !== expectedT) {
+          failures.push({
+            rule: 25,
+            field_path: `receipts[${i}].optimizer_config.t`,
+            stored: curOc.t,
+            recomputed: expectedT,
+            delta: Math.abs(curOc.t - expectedT),
+            tolerance: 0,
+            message:
+              `Rule 25 (optimizer-state chain): receipts[${i}].optimizer_config.t=${curOc.t} ` +
+              `but receipts[${i - 1}].optimizer_config.t=${prevOc.t} (expected t to increment by 1 = ${expectedT}). ` +
+              `Adam timestep MUST advance by 1 per training step. Bad fixture: ` +
+              `adam-multi-step.bad-timestep-off-by-one.`,
+          })
+        }
       }
-    }
-    // (b) t monotonicity
-    if (typeof curOc.t === "number" && typeof prevOc.t === "number") {
-      const expectedT = prevOc.t + 1
-      if (curOc.t !== expectedT) {
-        failures.push({
-          rule: 25,
-          field_path: `receipts[${i}].optimizer_config.t`,
-          stored: curOc.t,
-          recomputed: expectedT,
-          delta: Math.abs(curOc.t - expectedT),
-          tolerance: 0,
-          message:
-            `Rule 25 (optimizer-state chain): receipts[${i}].optimizer_config.t=${curOc.t} ` +
-            `but receipts[${i - 1}].optimizer_config.t=${prevOc.t} (expected t to increment by 1 = ${expectedT}). ` +
-            `Adam timestep MUST advance by 1 per training step. Bad fixture: ` +
-            `adam-multi-step.bad-timestep-off-by-one.`,
-        })
+    } else if (isMomentumPair) {
+      // v0.9.2 — momentum buffer chain. Same Rule-9-analog shape as Adam,
+      // but state is MomentumState ({buffer}) instead of AdamState ({m, v}).
+      const prevAfterByParam = new Map<string, { buffer: number }>()
+      for (const u of prevR.updates) {
+        if (!isSgdMomentumUpdate(u)) continue
+        const sa = (u as { optimizer: { state_after?: { buffer?: number } } }).optimizer.state_after
+        if (sa && typeof sa.buffer === "number") {
+          prevAfterByParam.set(u.parameter_id, { buffer: sa.buffer })
+        }
       }
+      for (let j = 0; j < curR.updates.length; j += 1) {
+        const u = curR.updates[j]!
+        if (!isSgdMomentumUpdate(u)) continue
+        const sb = (u as { optimizer: { state_before?: { buffer?: number } } }).optimizer.state_before
+        if (!sb || typeof sb.buffer !== "number") continue
+        const prevAfter = prevAfterByParam.get(u.parameter_id)
+        if (!prevAfter) {
+          failures.push({
+            rule: 25,
+            parameter_id: u.parameter_id,
+            field_path: `receipts[${i}].updates[${j}].optimizer.state_before`,
+            stored: 0, recomputed: 0, delta: 0, tolerance: 0,
+            message:
+              `Rule 25 (optimizer-state chain): parameter '${u.parameter_id}' has state_before at step ${i} ` +
+              `but no matching state_after at prior step ${i - 1} (parameter not present in prior step's ` +
+              `sgd_momentum updates). Multi-step classical PyTorch-style SGD momentum requires every ` +
+              `parameter's momentum buffer to chain forward.`,
+          })
+          continue
+        }
+        const checkBuf = applyToleranceCheck(prevAfter.buffer, sb.buffer, tol)
+        if (!checkBuf.ok) {
+          failures.push({
+            rule: 25,
+            parameter_id: u.parameter_id,
+            field_path: `receipts[${i}].updates[${j}].optimizer.state_before.buffer`,
+            stored: sb.buffer,
+            recomputed: prevAfter.buffer,
+            delta: checkBuf.delta,
+            tolerance: checkBuf.appliedTolerance,
+            message:
+              `Rule 25 (optimizer-state chain): receipts[${i}].updates[${j}].optimizer.state_before.buffer=${sb.buffer} ` +
+              `does not match receipts[${i - 1}].state_after.buffer=${prevAfter.buffer} for parameter '${u.parameter_id}'. ` +
+              `Classical PyTorch-style SGD momentum buffer MUST chain forward unbroken across multi-step receipts ` +
+              `(Rule 9 analog for momentum state). Bad fixture: momentum-multi-step.bad-stale-buffer.`,
+          })
+        }
+      }
+      // momentum has no t field — no t-monotonicity check (the multi-step
+      // bundle's step ordering is handled by Rule 10's step_index check).
     }
   }
 }
@@ -4284,18 +4629,44 @@ function checkRule26OptimizerConfigConstancy(
         message:
           `Rule 26 (optimizer-config constancy): receipts[${i}] is missing optimizer_config but ` +
           `other receipts in the bundle declare it. Either all receipts in a multi-step bundle ` +
-          `carry optimizer_config (Adam/AdamW) or none (SGD).`,
+          `carry optimizer_config (Adam/AdamW/sgd_momentum) or none (SGD).`,
       })
       return
     }
   }
   const first = ocs[0]!
+  // v0.9.2 — per-optimizer constancy key list (dispatch on first.name).
+  // learning_rate EXCLUDED (LR schedules legitimate); t EXCLUDED (Rule 25
+  // handles t monotonicity for Adam; momentum has no t).
+  const CONSTANCY_KEYS_BY_NAME: Record<string, readonly string[]> = {
+    adam: ["beta1", "beta2", "epsilon", "weight_decay"],
+    adamw: ["beta1", "beta2", "epsilon", "weight_decay"],
+    sgd_momentum: ["momentum", "nesterov", "dampening"],
+    sgd: [],
+  }
+  const constancyKeys = CONSTANCY_KEYS_BY_NAME[first.name] ?? []
   for (let i = 1; i < ocs.length; i += 1) {
     const cur = ocs[i]!
-    // Compare fields except learning_rate (LR schedules legitimate) and t (Rule 25).
-    for (const key of ["name", "beta1", "beta2", "epsilon", "weight_decay"] as const) {
-      const a = first[key]
-      const b = cur[key]
+    // name is ALWAYS checked.
+    if (cur.name !== first.name) {
+      failures.push({
+        rule: 26,
+        field_path: `receipts[${i}].optimizer_config.name`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 26 (optimizer-config constancy): receipts[${i}].optimizer_config.name='${cur.name}' ` +
+          `differs from receipts[0].optimizer_config.name='${first.name}'. Optimizer name MUST be ` +
+          `IDENTICAL across all receipts in a multi-step bundle (a training run cannot switch optimizers ` +
+          `mid-stream).`,
+      })
+      continue // skip per-optimizer-specific key checks when name disagrees
+    }
+    for (const key of constancyKeys) {
+      const a = (first as unknown as Record<string, unknown>)[key]
+      const b = (cur as unknown as Record<string, unknown>)[key]
       if (a !== b) {
         failures.push({
           rule: 26,
@@ -4307,10 +4678,11 @@ function checkRule26OptimizerConfigConstancy(
           message:
             `Rule 26 (optimizer-config constancy): receipts[${i}].optimizer_config.${key}=${String(b)} ` +
             `differs from receipts[0].optimizer_config.${key}=${String(a)}. ` +
-            `optimizer_config.{name, beta1, beta2, epsilon, weight_decay} MUST be IDENTICAL across all ` +
-            `receipts in a multi-step bundle (LR schedules are legitimate — learning_rate is EXCLUDED ` +
-            `from this check; t is EXCLUDED — covered by Rule 25's monotonicity check). ` +
-            `Bad fixture: adam-multi-step.bad-hyperparameter-inconstancy.`,
+            `For optimizer.name='${first.name}', the constancy key list is [${constancyKeys.join(", ")}] — ` +
+            `all MUST be IDENTICAL across all receipts in a multi-step bundle. (learning_rate is EXCLUDED ` +
+            `for LR schedule legitimacy; t is EXCLUDED — Rule 25 handles t monotonicity for Adam; momentum ` +
+            `has no t field.) Bad fixtures: adam-multi-step.bad-hyperparameter-inconstancy (Adam beta1); ` +
+            `momentum-multi-step.bad-hyperparameter-inconstancy (momentum mu).`,
         })
       }
     }

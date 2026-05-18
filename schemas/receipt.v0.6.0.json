@@ -1,0 +1,691 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mcp-tool-shop-org/backprop-trace/schemas/receipt.v0.6.0.json",
+  "title": "backprop-trace canonical receipt schema v0.6.0",
+  "description": "v0.9.2 classical PyTorch-style SGD momentum extension. FORCED bump over receipt.v0.5.0 because Update.optimizer.name was a closed enum ['sgd', 'adam', 'adamw'] and AdamState had additionalProperties:false on required keys [m, v] — adding 'sgd_momentum' as a new optimizer with a distinct state shape ({buffer} instead of {m, v}) could not happen in-place. v0.5.0 SGD/Adam/AdamW receipts continue to validate against v0.5.0 schema unchanged (byte-equal preservation for v0.1-v0.9.1 fixture lineage); v0.9.2 sgd_momentum receipts declare schema_version: '0.6.0'. Rule 21 (classical PyTorch-style SGD momentum recurrence) fires on this version. NO Nesterov (reserved with nesterov: const false — v0.9.3 widens to boolean). NO dampening (reserved with dampening: const 0 — v0.9.3 widens to number). NO SGD coupled L2 weight decay (rejected at engine boundary with 'deferred to v0.10' message; v0.10 adds the Rules 6/7 coupled-L2 branch). NO AMSGrad / NAdam / RAdam / Lion / per-parameter-groups / LR schedules / gradient clipping / mixed precision (deferred to v0.10+). Trust framing: Rule 21 is a STRUCTURAL CONSISTENCY check (does the recorded buffer recurrence and parameter update match the classical PyTorch-style equations?), NOT a producer-authenticity check. An attacker who controls every byte of the sidecar and recomputes a consistent (g, buffer, update) triple passes Rule 21 trivially — analogous to the Rule 17 bundle-integrity caveat, the Rule 22-24 Adam-rule caveat from v0.9.1, and the Fang et al. 2023 EuroS&P spoofing class against Proof-of-Learning. For producer-identity binding, combine with Rule 16 (attestor.signed_subject_digest), Sigstore / cosign signature, or out-of-band attestation.",
+  "type": "object",
+  "x-changes-from-v0.5.0": [
+    "schema_version const bumped 0.5.0 -> 0.6.0",
+    "Update.optimizer.name enum widened: ['sgd', 'adam', 'adamw'] -> ['sgd', 'adam', 'adamw', 'sgd_momentum']. v0.5.0 receipts use the narrower enum unchanged.",
+    "OptimizerConfig.name enum widened: same widening.",
+    "NEW $defs/MomentumState block: { buffer: number }, additionalProperties: false, required: ['buffer']. Classical PyTorch-style SGD momentum state — single per-parameter scalar tracking the accumulated velocity buffer (PyTorch's state['momentum_buffer'] one-token form). Distinct from AdamState's (m, v) pair.",
+    "Update.optimizer.state_before / state_after typed as oneOf [AdamState, MomentumState] at the schema layer. Reconciler Rule 20 enforces that the actual shape matches optimizer.name (Adam/AdamW receipts get AdamState; sgd_momentum receipts get MomentumState) — schema validates either; reconciler strict-checks.",
+    "OptimizerConfig gains OPTIONAL momentum: number (0, 1). Conditionally REQUIRED when optimizer_config.name === 'sgd_momentum' via new allOf if/then clause.",
+    "OptimizerConfig gains RESERVED nesterov: { const: false } (optional; v0.9.3 widens to boolean for Nesterov accelerated gradient — see https://arxiv.org/abs/1412.6980 / Sutskever et al. 2013 ICML for the lookahead update form). When present in v0.9.2, MUST be literally false. When absent, treated as false. Nesterov is NOT supported in v0.9.2 — schema rejects nesterov: true with a clear schema-level error; engine rejects sidecars that bypass schema validation.",
+    "OptimizerConfig gains RESERVED dampening: { const: 0 } (optional; v0.9.3 widens to number in [0, 1) for PyTorch's torch.optim.SGD(dampening=tau) recurrence buffer_t = mu * buffer_{t-1} + (1 - tau) * gradient). When present in v0.9.2, MUST be literally 0. When absent, treated as 0. Dampening is NOT supported in v0.9.2 — schema rejects dampening != 0.",
+    "OptimizerConfig gains conditional NOT clause: when optimizer_config.name === 'sgd_momentum', weight_decay MUST be absent (SGD coupled L2 weight decay is deferred to v0.10 — needs Rules 6/7 third branch distinct from AdamW's decoupled). Schema enforces absence via if/then 'not required weight_decay' clause.",
+    "NO removed fields. NO renamed fields. NO breaking changes to existing v0.5.0 SGD/Adam/AdamW receipt shape. v0.5.0 receipts validate against v0.5.0 schema unchanged. v0.9.2 sgd_momentum receipts declare schema_version: '0.6.0' and pick up the new conditional requirements."
+  ],
+  "x-order": [
+    "schema_version",
+    "fixture",
+    "step",
+    "fixture_status",
+    "source_framework",
+    "attestor",
+    "metadata",
+    "numeric_policy",
+    "bias_policy",
+    "topology",
+    "learning_rate",
+    "optimizer_config",
+    "trace_id",
+    "step_index",
+    "batch",
+    "inputs",
+    "targets",
+    "parameters_before",
+    "per_sample",
+    "forward",
+    "loss",
+    "backward",
+    "updates",
+    "parameters_after",
+    "post_update_forward",
+    "post_update_loss"
+  ],
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fixture",
+    "step",
+    "fixture_status",
+    "numeric_policy",
+    "bias_policy",
+    "topology",
+    "learning_rate",
+    "inputs",
+    "targets",
+    "parameters_before",
+    "forward",
+    "loss",
+    "backward",
+    "updates",
+    "parameters_after"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.6.0" },
+    "fixture": { "type": "string" },
+    "step": { "type": "integer", "minimum": 1 },
+    "fixture_status": { "$ref": "#/$defs/FixtureStatus" },
+    "source_framework": { "$ref": "#/$defs/SourceFramework" },
+    "attestor": { "$ref": "#/$defs/Attestor" },
+    "metadata": { "type": "object" },
+    "numeric_policy": { "$ref": "#/$defs/NumericPolicy" },
+    "bias_policy": { "$ref": "#/$defs/BiasPolicy" },
+    "topology": { "$ref": "#/$defs/Topology" },
+    "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
+    "optimizer_config": {
+      "description": "OPTIONAL. REQUIRED at the reconciler boundary when any update.optimizer.name is in {adam, adamw, sgd_momentum}. SGD-only receipts MAY omit this block. When present, declares global optimizer hyperparameters. Rules 20, 22, 23, 24, 25, 26 (Adam-family) and Rule 21 (sgd_momentum) consume these values. v0.9.2 supports sgd / adam / adamw / sgd_momentum only.",
+      "$ref": "#/$defs/OptimizerConfig"
+    },
+    "trace_id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "step_index": { "type": "integer", "minimum": 0 },
+    "batch": { "$ref": "#/$defs/Batch" },
+    "inputs": { "$ref": "#/$defs/UnitNumberMap" },
+    "targets": { "$ref": "#/$defs/UnitNumberMap" },
+    "parameters_before": { "$ref": "#/$defs/ParameterMap" },
+    "per_sample": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["inputs", "targets", "forward", "loss"],
+        "properties": {
+          "inputs": { "$ref": "#/$defs/UnitNumberMap" },
+          "targets": { "$ref": "#/$defs/UnitNumberMap" },
+          "forward": { "$ref": "#/$defs/ForwardMap" },
+          "loss": { "$ref": "#/$defs/Loss" }
+        }
+      }
+    },
+    "forward": { "$ref": "#/$defs/ForwardMap" },
+    "loss": { "$ref": "#/$defs/Loss" },
+    "backward": { "$ref": "#/$defs/Backward" },
+    "updates": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Update" }
+    },
+    "parameters_after": { "$ref": "#/$defs/ParameterMap" },
+    "post_update_forward": { "$ref": "#/$defs/PostUpdateForward" },
+    "post_update_loss": { "$ref": "#/$defs/PostUpdateLoss" }
+  },
+  "allOf": [
+    {
+      "x-purpose": "Co-presence guard: trace_id and step_index. Same as v0.4.0/v0.5.0.",
+      "anyOf": [
+        { "not": { "required": ["step_index"] } },
+        { "required": ["trace_id"] }
+      ]
+    },
+    {
+      "x-purpose": "Co-presence guard inverse: trace_id requires step_index. Same as v0.4.0/v0.5.0.",
+      "anyOf": [
+        { "not": { "required": ["trace_id"] } },
+        { "required": ["step_index"] }
+      ]
+    },
+    {
+      "x-purpose": "v0.5.0 carried forward: when optimizer_config.name is adam or adamw, beta1/beta2/epsilon/t are required.",
+      "type": "object",
+      "if": {
+        "type": "object",
+        "required": ["optimizer_config"],
+        "properties": {
+          "optimizer_config": {
+            "type": "object",
+            "required": ["name"],
+            "properties": { "name": { "enum": ["adam", "adamw"] } }
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "optimizer_config": {
+            "type": "object",
+            "required": ["name", "learning_rate", "beta1", "beta2", "epsilon", "t"]
+          }
+        }
+      }
+    },
+    {
+      "x-purpose": "v0.5.0 carried forward: when optimizer_config.name is adamw, weight_decay is also required.",
+      "type": "object",
+      "if": {
+        "type": "object",
+        "required": ["optimizer_config"],
+        "properties": {
+          "optimizer_config": {
+            "type": "object",
+            "required": ["name"],
+            "properties": { "name": { "const": "adamw" } }
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "optimizer_config": {
+            "type": "object",
+            "required": ["name", "learning_rate", "beta1", "beta2", "epsilon", "t", "weight_decay"]
+          }
+        }
+      }
+    },
+    {
+      "x-purpose": "v0.9.2 NEW: when optimizer_config.name is sgd_momentum, momentum hyperparameter is required.",
+      "type": "object",
+      "if": {
+        "type": "object",
+        "required": ["optimizer_config"],
+        "properties": {
+          "optimizer_config": {
+            "type": "object",
+            "required": ["name"],
+            "properties": { "name": { "const": "sgd_momentum" } }
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "optimizer_config": {
+            "type": "object",
+            "required": ["name", "learning_rate", "momentum"]
+          }
+        }
+      }
+    },
+    {
+      "x-purpose": "v0.9.2 NEW: when optimizer_config.name is sgd_momentum, weight_decay MUST be absent (SGD coupled L2 deferred to v0.10).",
+      "type": "object",
+      "if": {
+        "type": "object",
+        "required": ["optimizer_config"],
+        "properties": {
+          "optimizer_config": {
+            "type": "object",
+            "required": ["name"],
+            "properties": { "name": { "const": "sgd_momentum" } }
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "optimizer_config": {
+            "type": "object",
+            "not": { "required": ["weight_decay"] }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "UnitOrder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input", "hidden", "output"],
+      "properties": {
+        "input": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } },
+        "hidden": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } },
+        "output": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } }
+      }
+    },
+    "ParameterOrder": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" }
+    },
+    "FixtureStatus": {
+      "type": "object",
+      "x-order": ["authoring_state", "verification_state", "canonical", "promote_to", "describes_in", "blockers_to_promotion"],
+      "additionalProperties": false,
+      "required": ["authoring_state", "verification_state", "canonical"],
+      "properties": {
+        "authoring_state": {
+          "enum": ["hand_derived", "engine_generated", "engine_generated_general", "deliberately_corrupted", "external_imported"]
+        },
+        "verification_state": {
+          "enum": ["pending_engine_reproduction", "engine_reproduced_byte_equal", "expected_to_fail_reconciliation", "engine_recompute_matched_within_tolerance", "engine_recompute_disagreed", "engine_recompute_skipped_with_basis"]
+        },
+        "canonical": { "type": "boolean" },
+        "promote_to": { "type": "string" },
+        "describes_in": { "type": "string" },
+        "blockers_to_promotion": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "SourceFramework": {
+      "type": "object",
+      "x-order": ["name", "version", "information_uri", "extractor"],
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "enum": ["pytorch", "jax", "tensorflow", "hand_derived", "backprop_trace_engine"] },
+        "version": { "type": "string", "minLength": 1 },
+        "information_uri": { "type": "string", "minLength": 1 },
+        "extractor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "Attestor": {
+      "type": "object",
+      "x-order": ["computed_by", "verified_by", "differential_tolerance", "import_provenance", "skip_basis", "signed_subject_digest", "bundle_root_digest"],
+      "additionalProperties": false,
+      "required": ["computed_by", "verified_by", "differential_tolerance"],
+      "properties": {
+        "computed_by": { "$ref": "#/$defs/AttestorIdentity" },
+        "verified_by": { "$ref": "#/$defs/AttestorIdentity" },
+        "differential_tolerance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["atol", "rtol"],
+          "properties": {
+            "atol": { "type": "number", "minimum": 0 },
+            "rtol": { "type": "number", "minimum": 0 }
+          }
+        },
+        "import_provenance": {
+          "type": "object",
+          "x-order": ["source_format", "source_hash", "import_timestamp"],
+          "additionalProperties": false,
+          "required": ["source_format", "source_hash"],
+          "properties": {
+            "source_format": { "type": "string", "minLength": 1 },
+            "source_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+            "import_timestamp": { "type": "string", "minLength": 1 }
+          }
+        },
+        "skip_basis": {
+          "enum": ["hardware_nondeterminism", "framework_op_unsupported", "distributed_only_field", "attested_third_party"]
+        },
+        "signed_subject_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "bundle_root_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      }
+    },
+    "AttestorIdentity": {
+      "type": "object",
+      "x-order": ["kind", "identity"],
+      "additionalProperties": false,
+      "required": ["kind", "identity"],
+      "properties": {
+        "kind": { "enum": ["framework", "engine", "hand_derivation"] },
+        "identity": { "type": "string", "minLength": 1 }
+      }
+    },
+    "OptimizerConfig": {
+      "description": "v0.9.2 — global optimizer hyperparameters. SGD: name + learning_rate. Adam/AdamW: + beta1, beta2, epsilon, t, weight_decay (adamw only). sgd_momentum: + momentum (required, in (0, 1)); reserved fields nesterov (const false) and dampening (const 0) for v0.9.3 forward-compat. weight_decay on sgd_momentum is rejected at schema level (allOf conditional) — SGD coupled L2 deferred to v0.10. Closed-shape additionalProperties:false preserved.",
+      "type": "object",
+      "x-order": ["name", "learning_rate", "beta1", "beta2", "epsilon", "weight_decay", "t", "momentum", "nesterov", "dampening"],
+      "additionalProperties": false,
+      "required": ["name", "learning_rate"],
+      "properties": {
+        "name": { "enum": ["sgd", "adam", "adamw", "sgd_momentum"] },
+        "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
+        "beta1": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 },
+        "beta2": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 },
+        "epsilon": { "type": "number", "exclusiveMinimum": 0 },
+        "weight_decay": { "type": "number", "minimum": 0 },
+        "t": { "type": "integer", "minimum": 1 },
+        "momentum": {
+          "description": "v0.9.2 — momentum coefficient mu for classical PyTorch-style SGD momentum (buffer_t = mu * buffer_{t-1} + gradient). Required when name === 'sgd_momentum'. Typically 0.9 in production (timm / Wilson et al. 2017 / Sutskever et al. 2013).",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1
+        },
+        "nesterov": {
+          "description": "v0.9.2 — RESERVED. Nesterov accelerated gradient deferred to v0.9.3 — when shipped, this widens to boolean. In v0.9.2, MUST be literally false when present (schema-enforced via const). When absent, treated as false (classical momentum). Sutskever et al. 2013 ICML / Nesterov 1983 for the lookahead form.",
+          "const": false
+        },
+        "dampening": {
+          "description": "v0.9.2 — RESERVED. PyTorch's torch.optim.SGD(dampening=tau) recurrence buffer_t = mu * buffer_{t-1} + (1 - tau) * gradient deferred to v0.9.3 — when shipped, this widens to number in [0, 1). In v0.9.2, MUST be literally 0 when present (schema-enforced via const). When absent, treated as 0.",
+          "const": 0
+        }
+      }
+    },
+    "AdamState": {
+      "description": "v0.9.1 — per-parameter Adam/AdamW state (m, v). Canonical names match Kingma & Ba 2014 Algorithm 1.",
+      "type": "object",
+      "x-order": ["m", "v"],
+      "additionalProperties": false,
+      "required": ["m", "v"],
+      "properties": {
+        "m": { "type": "number" },
+        "v": { "type": "number", "minimum": 0 }
+      }
+    },
+    "MomentumState": {
+      "description": "v0.9.2 — per-parameter classical PyTorch-style SGD momentum state. Single scalar 'buffer' tracking the accumulated velocity (PyTorch's state['momentum_buffer'] one-token form). Distinct from AdamState's (m, v) pair. Buffer is signed (tracks gradient sign in descent direction; can be negative when accumulated descent gradient overshoots).",
+      "type": "object",
+      "x-order": ["buffer"],
+      "additionalProperties": false,
+      "required": ["buffer"],
+      "properties": {
+        "buffer": { "type": "number" }
+      }
+    },
+    "OptimizerState": {
+      "description": "v0.9.2 — discriminated union of per-parameter optimizer state shapes. Adam/AdamW use AdamState ({m, v}); sgd_momentum uses MomentumState ({buffer}). Schema validates that the value matches ONE of the two shapes; reconciler Rule 20 enforces that the shape matches optimizer.name (Adam/AdamW receipts get AdamState; sgd_momentum receipts get MomentumState).",
+      "oneOf": [
+        { "$ref": "#/$defs/AdamState" },
+        { "$ref": "#/$defs/MomentumState" }
+      ]
+    },
+    "NumericPolicy": {
+      "type": "object",
+      "x-order": ["number_encoding", "precision_significant_digits", "rounding", "tolerance", "computation_order", "byte_output"],
+      "additionalProperties": false,
+      "required": ["number_encoding", "precision_significant_digits", "rounding", "tolerance"],
+      "properties": {
+        "number_encoding": { "const": "decimal" },
+        "precision_significant_digits": { "type": "integer", "minimum": 1 },
+        "rounding": { "const": "round_half_to_even" },
+        "tolerance": {
+          "oneOf": [
+            {
+              "type": "object", "required": ["atol", "rtol"], "additionalProperties": false,
+              "properties": { "atol": { "type": "number", "minimum": 0 }, "rtol": { "type": "number", "minimum": 0 } }
+            },
+            { "type": "number", "minimum": 0 }
+          ]
+        },
+        "computation_order": { "const": "schema_defined" },
+        "byte_output": {
+          "type": "object",
+          "x-order": ["format", "json_key_order", "trailing_zero_policy", "indent"],
+          "additionalProperties": false,
+          "properties": {
+            "format": { "const": "jsonl" },
+            "json_key_order": { "const": "schema_defined" },
+            "trailing_zero_policy": { "const": "pad_to_significant_digits" },
+            "indent": { "const": "none" }
+          }
+        }
+      }
+    },
+    "BiasPolicy": {
+      "type": "object",
+      "x-order": ["mode", "reason", "updated_in_step", "reconciliation"],
+      "additionalProperties": false,
+      "required": ["mode", "updated_in_step"],
+      "properties": {
+        "mode": { "enum": ["constant", "sgd"] },
+        "reason": { "type": "string" },
+        "updated_in_step": { "type": "boolean" },
+        "reconciliation": { "type": "string" }
+      }
+    },
+    "Topology": {
+      "type": "object",
+      "x-order": ["layers", "input_size", "hidden_size", "output_size", "unit_order", "parameter_order", "parameters", "activation_hidden", "activation_output", "loss", "bias_sharing"],
+      "additionalProperties": false,
+      "required": ["layers", "input_size", "hidden_size", "output_size", "unit_order", "parameter_order", "parameters", "activation_hidden", "activation_output", "loss", "bias_sharing"],
+      "properties": {
+        "layers": { "type": "array", "items": { "type": "string" } },
+        "input_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "hidden_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "output_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "unit_order": { "$ref": "#/$defs/UnitOrder" },
+        "parameter_order": { "$ref": "#/$defs/ParameterOrder" },
+        "parameters": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "role"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "role": { "enum": ["input_to_hidden_weight", "hidden_to_output_weight", "hidden_bias", "output_bias"] },
+              "from_unit": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "to_unit": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "applies_to_units": { "type": "array", "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } }
+            }
+          }
+        },
+        "activation_hidden": { "enum": ["sigmoid", "identity", "relu"] },
+        "activation_output": { "enum": ["sigmoid", "identity", "relu", "softmax"] },
+        "loss": { "enum": ["half_squared_error", "cross_entropy_softmax"] },
+        "bias_sharing": { "enum": ["per_layer", "per_neuron"] }
+      }
+    },
+    "UnitNumberMap": { "type": "object", "additionalProperties": { "type": "number" } },
+    "ParameterMap": { "type": "object", "additionalProperties": { "type": "number" } },
+    "ForwardMap": { "type": "object", "additionalProperties": { "$ref": "#/$defs/ForwardUnit" } },
+    "ForwardUnit": {
+      "type": "object",
+      "x-order": ["net", "out"],
+      "additionalProperties": false,
+      "required": ["net", "out"],
+      "properties": { "net": { "type": "number" }, "out": { "type": "number" } }
+    },
+    "Batch": {
+      "type": "object",
+      "x-order": ["size", "sample_order", "reduction"],
+      "additionalProperties": false,
+      "required": ["size", "sample_order", "reduction"],
+      "properties": {
+        "size": { "type": "integer", "minimum": 1 },
+        "sample_order": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" }
+        },
+        "reduction": { "enum": ["mean", "sum", "none"] }
+      }
+    },
+    "Loss": {
+      "type": "object",
+      "x-order": ["per_output", "per_sample", "reduction", "total"],
+      "additionalProperties": false,
+      "required": ["per_output", "total"],
+      "properties": {
+        "per_output": { "type": "object", "additionalProperties": { "type": "number" } },
+        "per_sample": { "type": "object", "additionalProperties": { "type": "number" } },
+        "reduction": { "enum": ["mean", "sum", "none"] },
+        "total": { "type": "number" }
+      }
+    },
+    "Backward": {
+      "type": "object",
+      "x-order": ["output_error_signals", "hidden_error_signals"],
+      "additionalProperties": false,
+      "required": ["output_error_signals", "hidden_error_signals"],
+      "properties": {
+        "output_error_signals": { "type": "object", "additionalProperties": { "$ref": "#/$defs/OutputErrorSignal" } },
+        "hidden_error_signals": { "type": "object", "additionalProperties": { "$ref": "#/$defs/HiddenErrorSignal" } }
+      }
+    },
+    "OutputErrorSignal": {
+      "type": "object",
+      "x-order": ["factors", "product_order", "signal_value", "dual_form"],
+      "additionalProperties": false,
+      "required": ["factors", "product_order", "signal_value"],
+      "properties": {
+        "factors": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/NamedFactor" } },
+        "product_order": { "const": "left_to_right" },
+        "signal_value": { "type": "number" },
+        "dual_form": { "$ref": "#/$defs/DualForm" }
+      }
+    },
+    "DualForm": {
+      "type": "object",
+      "x-order": ["jacobian_terms", "product_order", "summation_order", "summed_value"],
+      "additionalProperties": false,
+      "required": ["jacobian_terms", "product_order", "summation_order", "summed_value"],
+      "properties": {
+        "jacobian_terms": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/JacobianTerm" } },
+        "product_order": { "const": "left_to_right" },
+        "summation_order": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "summed_value": { "type": "number" }
+      }
+    },
+    "JacobianTerm": {
+      "type": "object",
+      "x-order": ["target_unit", "factors", "term_value"],
+      "additionalProperties": false,
+      "required": ["target_unit", "factors", "term_value"],
+      "properties": {
+        "target_unit": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+        "factors": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/NamedFactor" } },
+        "term_value": { "type": "number" }
+      }
+    },
+    "HiddenErrorSignal": {
+      "type": "object",
+      "x-order": ["downstream_contributions", "summation_order", "backpropagated_sum", "activation_derivative", "product_order", "signal_value"],
+      "additionalProperties": false,
+      "required": ["downstream_contributions", "summation_order", "backpropagated_sum", "activation_derivative", "product_order", "signal_value"],
+      "properties": {
+        "downstream_contributions": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/DownstreamContribution" } },
+        "summation_order": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "backpropagated_sum": { "type": "number" },
+        "activation_derivative": { "type": "number" },
+        "product_order": { "const": "left_to_right" },
+        "signal_value": { "type": "number" }
+      }
+    },
+    "DownstreamContribution": {
+      "type": "object",
+      "x-order": ["from", "downstream_signal", "via_weight", "weight_value", "value"],
+      "additionalProperties": false,
+      "required": ["from", "downstream_signal", "via_weight", "weight_value", "value"],
+      "properties": {
+        "from": { "type": "string" },
+        "downstream_signal": { "type": "number" },
+        "via_weight": { "type": "string" },
+        "weight_value": { "type": "number" },
+        "value": { "type": "number" }
+      }
+    },
+    "NamedFactor": {
+      "type": "object",
+      "x-order": ["name", "from", "value"],
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": { "type": "string" },
+        "from": { "type": "string" },
+        "value": { "type": "number" }
+      }
+    },
+    "Update": {
+      "type": "object",
+      "x-order": ["parameter_id", "kind", "layer_edge", "parameter_role", "from_unit", "to_unit", "weight_before", "optimizer", "gradient", "update", "weight_after"],
+      "additionalProperties": false,
+      "required": ["parameter_id", "kind", "weight_before", "optimizer", "gradient", "update", "weight_after"],
+      "properties": {
+        "parameter_id": { "type": "string" },
+        "kind": { "enum": ["weight", "bias"] },
+        "layer_edge": { "enum": ["input_to_hidden", "hidden_to_output", "bias_to_layer"] },
+        "parameter_role": { "type": "string" },
+        "from_unit": { "type": "string" },
+        "to_unit": { "type": "string" },
+        "weight_before": { "type": "number" },
+        "optimizer": {
+          "type": "object",
+          "x-order": ["name", "learning_rate", "factors", "product_order", "state_before", "state_after"],
+          "additionalProperties": false,
+          "required": ["name", "learning_rate", "factors", "product_order"],
+          "properties": {
+            "name": { "enum": ["sgd", "adam", "adamw", "sgd_momentum"] },
+            "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
+            "factors": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/NamedFactor" } },
+            "product_order": { "const": "left_to_right" },
+            "state_before": { "$ref": "#/$defs/OptimizerState" },
+            "state_after": { "$ref": "#/$defs/OptimizerState" }
+          }
+        },
+        "gradient": { "type": "number" },
+        "update": { "type": "number" },
+        "weight_after": { "type": "number" }
+      },
+      "allOf": [
+        {
+          "x-purpose": "v0.5.0 carried forward: per-update state required for Adam/AdamW.",
+          "type": "object",
+          "if": {
+            "type": "object",
+            "required": ["optimizer"],
+            "properties": {
+              "optimizer": {
+                "type": "object",
+                "required": ["name"],
+                "properties": { "name": { "enum": ["adam", "adamw"] } }
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "optimizer": {
+                "type": "object",
+                "required": ["name", "learning_rate", "factors", "product_order", "state_before", "state_after"]
+              }
+            }
+          }
+        },
+        {
+          "x-purpose": "v0.9.2 NEW: per-update state required for sgd_momentum (buffer_before + buffer_after).",
+          "type": "object",
+          "if": {
+            "type": "object",
+            "required": ["optimizer"],
+            "properties": {
+              "optimizer": {
+                "type": "object",
+                "required": ["name"],
+                "properties": { "name": { "const": "sgd_momentum" } }
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "optimizer": {
+                "type": "object",
+                "required": ["name", "learning_rate", "factors", "product_order", "state_before", "state_after"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "PostUpdateForward": {
+      "type": "object",
+      "required": ["status"],
+      "additionalProperties": { "$ref": "#/$defs/ForwardUnit" },
+      "properties": {
+        "status": { "enum": ["pending_engine_first_run", "filled"] },
+        "required_before_promotion": { "type": "boolean" },
+        "fields_required": { "type": "array", "items": { "type": "string" } },
+        "fill_specification": { "type": "string" },
+        "note": { "type": "string" }
+      }
+    },
+    "PostUpdateLoss": {
+      "type": "object",
+      "x-order": ["status", "required_before_promotion", "fields_required", "drift_check_against_published", "note", "per_output", "total"],
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["pending_engine_first_run", "filled"] },
+        "required_before_promotion": { "type": "boolean" },
+        "fields_required": { "type": "array", "items": { "type": "string" } },
+        "drift_check_against_published": { "type": "object" },
+        "note": { "type": "string" },
+        "per_output": { "type": "object", "additionalProperties": { "type": "number" } },
+        "total": { "type": "number" }
+      }
+    }
+  }
+}

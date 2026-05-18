@@ -62,6 +62,17 @@ import { dirname, resolve } from "node:path";
  *     optimizer_config block could not happen in-place. SGD-only receipts
  *     stay at "0.4.0" byte-equal; Adam/AdamW receipts declare "0.5.0".
  *     Rules 20, 22, 23, 24, 25, 26 fire on this version.
+ *   - "0.6.0" — v0.9.2 classical PyTorch-style SGD momentum extension
+ *     (FORCED bump: Update.optimizer.name was closed enum
+ *     ["sgd","adam","adamw"] and AdamState had additionalProperties:false
+ *     on required [m, v]; widening to ["sgd","adam","adamw","sgd_momentum"]
+ *     plus new MomentumState shape {buffer} could not happen in-place).
+ *     SGD/Adam/AdamW receipts stay at v0.4.0/v0.5.0 byte-equal;
+ *     sgd_momentum receipts declare "0.6.0". Rule 21 (classical
+ *     PyTorch-style recurrence + parameter update) fires on this version.
+ *     Reserves nesterov: const false + dampening: const 0 for v0.9.3
+ *     forward-compat. Rejects weight_decay on sgd_momentum at schema
+ *     level (SGD coupled L2 deferred to v0.10).
  *
  * Receipts that say `schema_version: "0.1.0"` continue to validate against
  * the v0.1.0 schema for byte-equal preservation. v0.3-onward generalized
@@ -69,9 +80,11 @@ import { dirname, resolve } from "node:path";
  * v0.5 softmax+CE receipts declare "0.3.0". v0.6 external observer-mode
  * receipts (output of `bp import pytorch`) declare "0.4.0". v0.9.1 Adam +
  * AdamW receipts declare "0.5.0" (SGD-only observer-mode receipts stay
- * at "0.4.0" for byte-equal preservation).
+ * at "0.4.0" for byte-equal preservation). v0.9.2 classical PyTorch-style
+ * sgd_momentum receipts declare "0.6.0" (SGD-only at "0.4.0", Adam/AdamW
+ * at "0.5.0", all byte-equal preserved).
  */
-export const SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0"] as const;
+export const SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0"] as const;
 
 /**
  * Union of currently-shipped receipt schema versions. Use this for any
@@ -221,8 +234,17 @@ export function getInputSchema(
  *     Update.optimizer; optimizer.name widened to ['sgd','adam','adamw']).
  *     Existing v0.3.0 SGD sidecars stay on v0.3.0 byte-equal; Adam/AdamW
  *     sidecars declare format: "framework-trace.v0.4.0".
+ *   - "0.5.0" — v0.9.2 classical PyTorch-style sgd_momentum additive
+ *     (optimizer.name widened to ['sgd','adam','adamw','sgd_momentum'];
+ *     OptimizerConfig.momentum required when name === 'sgd_momentum';
+ *     nesterov: const false + dampening: const 0 reserved for v0.9.3;
+ *     weight_decay rejected for sgd_momentum at schema level — SGD coupled
+ *     L2 deferred to v0.10; MomentumState shape {buffer} as state_before/
+ *     state_after on the Update.optimizer). Existing v0.4.0 Adam/AdamW
+ *     sidecars stay byte-equal; sgd_momentum sidecars declare format:
+ *     "framework-trace.v0.5.0".
  */
-export const FRAMEWORK_TRACE_SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0"] as const;
+export const FRAMEWORK_TRACE_SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0"] as const;
 
 /**
  * Union of currently-shipped framework-trace sidecar schema versions.

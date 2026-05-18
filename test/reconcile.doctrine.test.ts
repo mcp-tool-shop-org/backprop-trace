@@ -248,6 +248,38 @@ const FILENAME_KIND_TO_RULE: Record<string, number> = {
   "amsgrad-confusion": 20,
   "bad-zero-init-state-mismatch": 22,
   "zero-init-state-mismatch": 22,
+  // v0.9.2 classical PyTorch-style SGD momentum adversarial plate
+  // (momentum.bad-*, momentum-multi-step.bad-*). Rule 21 ACTIVATED in
+  // v0.9.2 — classical PyTorch-style buffer recurrence + parameter update
+  // (sub-checks 21a buffer recurrence, 21b update formula). Nesterov +
+  // dampening RESERVED for v0.9.3; SGD coupled L2 weight decay deferred
+  // to v0.10. Cross-fires noted where the fixture trips multiple rules;
+  // PRIMARY is the named target.
+  //   - coefficient-omitted     → Rule 20 (momentum hyperparam missing
+  //     from optimizer_config)
+  //   - coefficient-swapped     → Rule 21 (recurrence breaks with wrong mu)
+  //   - formula-mismatch        → Rule 21 (update value matches a momentum
+  //     variant the v0.9.2 reconciler does not recognize — scope-agnostic
+  //     phrasing covers the Nesterov-deferred case)
+  //   - stale-buffer            → Rule 25 (multi-step chain break,
+  //     value-mutation flavor)
+  //   - buffer-drop             → Rule 20 (multi-step state-shape drop,
+  //     structural flavor)
+  //   - engine-recompute-disagrees-momentum → Rule 14 (internally consistent
+  //     buffer recurrence + update, weight_after perturbed — only engine
+  //     recompute catches it; Fang et al. 2023 PoL spoofing analog)
+  "bad-coefficient-omitted": 20,
+  "coefficient-omitted": 20,
+  "bad-coefficient-swapped": 21,
+  "coefficient-swapped": 21,
+  "bad-formula-mismatch": 21,
+  "formula-mismatch": 21,
+  "bad-stale-buffer": 25,
+  "stale-buffer": 25,
+  "bad-buffer-drop": 20,
+  "buffer-drop": 20,
+  "bad-engine-recompute-disagrees-momentum": 14,
+  "engine-recompute-disagrees-momentum": 14,
 };
 
 /**
@@ -359,39 +391,48 @@ test(
 );
 
 test(
-  "T-A-009: v0.9.1 reconciler implements Rules 1-26 minus Rule 21 reserved for v0.9.2 momentum (1-8 per-receipt, 9-10 multi-step, 11 softmax-norm, 12 loss formula, 13 gated dual-form, 14 engine-recompute differential, 15 skip-basis required, 16 gated digest binding, 17 gated trace-bundle binding, 18 gated batch reduction, 19 sample-set coherence, 20 Adam state shape, 22 Adam moment recurrences, 23 Adam bias correction, 24 Adam/AdamW parameter update, 25 optimizer-state chain, 26 optimizer-config constancy)",
+  "T-A-009: v0.9.2 reconciler implements Rules 1-26 with Rule 21 ACTIVATED for classical PyTorch-style SGD momentum (1-8 per-receipt, 9-10 multi-step, 11 softmax-norm, 12 loss formula, 13 gated dual-form, 14 engine-recompute differential, 15 skip-basis required, 16 gated digest binding, 17 gated trace-bundle binding, 18 gated batch reduction, 19 sample-set coherence, 20 optimizer-state shape, 21 classical PyTorch-style SGD momentum buffer recurrence + parameter update, 22 Adam moment recurrences, 23 Adam bias correction, 24 Adam/AdamW parameter update, 25 optimizer-state chain, 26 optimizer-config constancy)",
   () => {
     const implemented = extractImplementedRules();
     assert.deepStrictEqual(
       Array.from(implemented).sort((a, b) => a - b),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26],
-      "v0.9.1 reconciler scope: Rules 1-8 (per-receipt math), 9-10 (multi-step), 11 (softmax " +
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26],
+      "v0.9.2 reconciler scope: Rules 1-8 (per-receipt math), 9-10 (multi-step), 11 (softmax " +
         "normalization), 12 (loss formula — both half_squared_error and cross_entropy_softmax " +
         "branches), 13 (GATED dual-form consistency for softmax+CE), 14 (engine-recompute " +
         "differential — MANDATORY for fixture_status.authoring_state === 'external_imported'; " +
-        "no-op for engine-authored receipts), 15 (skip-basis required), 16 (attestation digest " +
-        "binding GATED on attestor.signed_subject_digest), 17 (trace-bundle binding GATED on " +
+        "no-op for engine-authored receipts; v0.9.2 generalizes for sgd_momentum + Adam/AdamW), " +
+        "15 (skip-basis required), 16 (attestation digest binding GATED on " +
+        "attestor.signed_subject_digest), 17 (trace-bundle binding GATED on " +
         "attestor.bundle_root_digest; INTEGRITY-NOT-authenticity), 18 (batch reduction " +
         "consistency GATED on batch + loss.reduction in {mean,sum}), 19 (sample-set coherence " +
-        "GATED on batch.sample_order). v0.9.1 adds Adam/AdamW: Rule 20 (optimizer-state shape " +
+        "GATED on batch.sample_order). v0.9.1 added Adam/AdamW: Rule 20 (optimizer-state shape " +
         "consistency: state_before/state_after presence + finiteness + optimizer_config " +
-        "hyperparameter presence), Rule 22 (Adam moment recurrences 22a/22b — Kingma & Ba 2014 " +
+        "hyperparameter presence; v0.9.2 generalizes shape dispatch to MomentumState ({buffer}) " +
+        "for sgd_momentum), Rule 22 (Adam moment recurrences 22a/22b — Kingma & Ba 2014 " +
         "arXiv:1412.6980 Alg 1 lines 9-10), Rule 23 (Adam bias correction + t consistency with " +
         "step_index + 1), Rule 24 (Adam/AdamW parameter update — update == lr * m_hat / " +
         "(sqrt(v_hat) + epsilon); pinned epsilon OUTSIDE sqrt PyTorch convention; AdamW's " +
         "decoupled weight decay applies at Rule 7's AdamW branch), Rule 25 (multi-step " +
-        "optimizer-state chain: m/v continuity + t monotonicity, analog of Rule 9), Rule 26 " +
-        "(multi-step optimizer-config constancy: name/beta1/beta2/epsilon/weight_decay " +
-        "identical across bundle; learning_rate EXCLUDED for LR schedules; t EXCLUDED — " +
-        "covered by Rule 25). Rule 21 RESERVED for v0.9.2 momentum SGD buffer recurrence — " +
-        "no `rule: 21` failure is emitted in v0.9.1 and this list does NOT include 21. Rule 0.8 " +
-        "(probability bounds) remains a Rule 0 sub-check, not a separate integer rule. When " +
-        "v0.9.2 lands momentum, add 21 to this list AND ship the momentum.bad-* fixture; the " +
-        "doctrine ratchet fails loudly if a rule lands without its paired fixture. Adam-rule " +
-        "trust framing (load-bearing): Rules 22, 23, 24 are STRUCTURAL CONSISTENCY checks, " +
-        "NOT producer-authenticity checks — an attacker who controls every byte and recomputes " +
-        "a consistent (g, m, v, update) quadruple passes Rules 22-24 trivially. Analogous to " +
-        "Rule 17's bundle-integrity caveat and Fang et al. 2023 PoL spoofing class.",
+        "optimizer-state chain: m/v continuity + t monotonicity for Adam; v0.9.2 generalizes " +
+        "to buffer continuity for sgd_momentum; analog of Rule 9), Rule 26 (multi-step " +
+        "optimizer-config constancy: per-optimizer key list — Adam/AdamW {beta1, beta2, epsilon, " +
+        "weight_decay}; sgd_momentum {momentum, nesterov, dampening}; name always checked; " +
+        "learning_rate EXCLUDED for LR schedules; t EXCLUDED — Rule 25 handles it for Adam). " +
+        "v0.9.2 ACTIVATES Rule 21 — classical PyTorch-style SGD momentum buffer recurrence + " +
+        "parameter update (sub-checks 21a: buffer_after == momentum * buffer_before + gradient; " +
+        "21b: update == learning_rate * buffer_after, descent direction; Sutskever et al. 2013 " +
+        "ICML / PyTorch torch.optim.SGD reference). v0.9.2 ships CLASSICAL PyTorch-style ONLY " +
+        "— Nesterov accelerated gradient + dampening RESERVED for v0.9.3, SGD coupled L2 weight " +
+        "decay deferred to v0.10. Rule 0.8 (probability bounds) remains a Rule 0 sub-check, not " +
+        "a separate integer rule. When v0.9.3 lands Nesterov + dampening, Rule 21 widens to " +
+        "branch on optimizer_config.{nesterov, dampening}; this list stays at [1..26] (no new " +
+        "rule slot needed for Nesterov — it folds into Rule 21's update formula branch). " +
+        "Adam-rule + momentum-rule trust framing (load-bearing): Rules 21, 22, 23, 24 are " +
+        "STRUCTURAL CONSISTENCY checks, NOT producer-authenticity checks — an attacker who " +
+        "controls every byte and recomputes a consistent (g, state, update) tuple passes " +
+        "trivially. Analogous to Rule 17's bundle-integrity caveat and Fang et al. 2023 PoL " +
+        "spoofing class.",
     );
   },
 );

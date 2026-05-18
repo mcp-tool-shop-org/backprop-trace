@@ -51,6 +51,40 @@ This matches the v0.8 precedent and CONTRIBUTING.md's "additive evolution
 is allowed within the same schema_version if existing receipts remain
 valid" policy.
 
+### v0.9.2 FORCED bump to receipt.v0.6.0 + framework-trace.v0.5.0 (classical PyTorch-style SGD momentum)
+
+**v0.9.2 forces the bump to `receipt.v0.6.0` + `framework-trace.v0.5.0`** for
+the same reasons v0.9.1 forced v0.5.0/v0.4.0: closed `optimizer.name` enum
+widening (`["sgd", "adam", "adamw"]` → `["sgd", "adam", "adamw", "sgd_momentum"]`)
+plus a new closed-shape state def (`MomentumState = { buffer }`, distinct
+from `AdamState = { m, v }`). The v0.9.1 "force bump when closed enums
+widen" doctrine applies — bending it now would muddy the precedent.
+
+The v0.9.2 slice adds:
+- `OptimizerConfig.name` enum widened by `"sgd_momentum"`
+- `Update.optimizer.name` enum widened to match
+- New `MomentumState = { buffer: number }` def with `additionalProperties:
+  false` and `required: ["buffer"]`
+- `Update.optimizer.state_before` / `state_after` widens to `OptimizerState =
+  oneOf(AdamState, MomentumState)`; reconciler Rule 20 enforces shape-matches-
+  name (schema is permissive; reconciler is strict)
+- `OptimizerConfig.momentum` (optional; conditionally REQUIRED when name ===
+  "sgd_momentum" via allOf if/then)
+- `OptimizerConfig.nesterov: { const: false }` (RESERVED — v0.9.3 widens to
+  `boolean` for Nesterov accelerated gradient)
+- `OptimizerConfig.dampening: { const: 0 }` (RESERVED — v0.9.3 widens to
+  `number` for PyTorch's `torch.optim.SGD(dampening=tau)` recurrence)
+- `OptimizerConfig.weight_decay` REJECTED via allOf if/then when name ===
+  "sgd_momentum" (SGD coupled L2 deferred to v0.10; Rule 7 third branch
+  not yet implemented)
+
+SGD/Adam/AdamW receipts continue to declare their existing `schema_version`
+("0.4.0" for SGD, "0.5.0" for Adam/AdamW) and validate byte-identical.
+sgd_momentum receipts declare `schema_version: "0.6.0"`. The framework-trace
+sidecar parallel bump is `v0.5.0`; v0.1-v0.4 sidecars continue to validate
+against their own schemas unchanged. `package.json` `exports` adds
+`./schema/receipt-0.6.0` + `./schema/framework-trace-0.5.0` subpath exports.
+
 ### v0.9.1 FORCED bump to receipt.v0.5.0 (Adam + AdamW)
 
 **v0.9.1 forces the bump to `receipt.v0.5.0`.** The v0.9.1 Adam + AdamW

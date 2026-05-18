@@ -30,6 +30,8 @@ import type {
   Update as GeneralUpdate,
   OptimizerConfig,
   AdamState,
+  MomentumState,
+  OptimizerStateAny,
 } from "./general-engine.js";
 
 // String emitter — JSON.stringify produces a valid JSON string literal
@@ -941,6 +943,7 @@ function emitOptimizerConfig(oc: OptimizerConfig): string {
     `"name":${S(oc.name)}`,
     `"learning_rate":${N(oc.learning_rate)}`,
   ];
+  // v0.9.1 Adam/AdamW fields (emitted only when present).
   if (oc.beta1 !== undefined) parts.push(`"beta1":${N(oc.beta1)}`);
   if (oc.beta2 !== undefined) parts.push(`"beta2":${N(oc.beta2)}`);
   if (oc.epsilon !== undefined) parts.push(`"epsilon":${N(oc.epsilon)}`);
@@ -948,6 +951,11 @@ function emitOptimizerConfig(oc: OptimizerConfig): string {
     parts.push(`"weight_decay":${N(oc.weight_decay)}`);
   }
   if (oc.t !== undefined) parts.push(`"t":${oc.t}`);
+  // v0.9.2 sgd_momentum field (emitted only when present). Reserved fields
+  // nesterov + dampening are NOT emitted in v0.9.2 (engine never sets them;
+  // when v0.9.3 widens them, the emitter can opt into emission without
+  // breaking v0.9.2 receipt byte-equality).
+  if (oc.momentum !== undefined) parts.push(`"momentum":${N(oc.momentum)}`);
   return `{${parts.join(",")}}`;
 }
 
@@ -956,6 +964,36 @@ function emitOptimizerConfig(oc: OptimizerConfig): string {
  */
 function emitAdamState(s: AdamState): string {
   return `{"m":${N(s.m)},"v":${N(s.v)}}`;
+}
+
+/**
+ * v0.9.2 — emit per-parameter classical PyTorch-style SGD momentum state.
+ * Schema x-order: [buffer].
+ */
+function emitMomentumState(s: MomentumState): string {
+  return `{"buffer":${N(s.buffer)}}`;
+}
+
+/**
+ * v0.9.2 — emit per-parameter optimizer state, dispatching on whether
+ * the value matches AdamState ({m, v}) or MomentumState ({buffer}).
+ * Reconciler Rule 20 cross-checks that the actual shape matches
+ * optimizer.name at verify time; this emitter is shape-only.
+ */
+function emitOptimizerState(s: OptimizerStateAny): string {
+  const probe = s as Partial<AdamState> & Partial<MomentumState>;
+  if (typeof probe.buffer === "number" && probe.m === undefined && probe.v === undefined) {
+    return emitMomentumState(probe as MomentumState);
+  }
+  if (typeof probe.m === "number" && typeof probe.v === "number") {
+    return emitAdamState(probe as AdamState);
+  }
+  throw new Error(
+    `emitOptimizerState: state shape does not match AdamState ({m, v}) or MomentumState ({buffer}); ` +
+      `got ${JSON.stringify(s)}. Hint: this is an internal contract violation — the engine emits one ` +
+      `of the two shapes based on optimizer.name; arriving here means the receipt was authored with ` +
+      `an inconsistent state shape.`,
+  );
 }
 
 /**
@@ -978,10 +1016,10 @@ function emitOptimizerGeneral(o: GeneralOptimizer): string {
     `"product_order":${S(o.product_order)}`,
   ];
   if (o.state_before !== undefined) {
-    parts.push(`"state_before":${emitAdamState(o.state_before)}`);
+    parts.push(`"state_before":${emitOptimizerState(o.state_before)}`);
   }
   if (o.state_after !== undefined) {
-    parts.push(`"state_after":${emitAdamState(o.state_after)}`);
+    parts.push(`"state_after":${emitOptimizerState(o.state_after)}`);
   }
   return `{${parts.join(",")}}`;
 }
