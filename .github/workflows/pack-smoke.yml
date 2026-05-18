@@ -34,7 +34,7 @@ jobs:
         # pnpm version comes from package.json `packageManager` field; do
         # NOT also pass `version:` here — pnpm/action-setup rejects the
         # duplicate spec with ERR_PNPM_BAD_PM_VERSION.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22.x'
           cache: 'pnpm'
