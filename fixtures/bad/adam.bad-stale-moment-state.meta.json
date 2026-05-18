@@ -1,0 +1,27 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "adam.bad-stale-moment-state.meta",
+  "describes": "fixtures/bad/adam.bad-stale-moment-state.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.adam.multi-step.golden.jsonl. v0.9.1 Adam multi-step adversarial plate.",
+  "mutation": {
+    "kind": "reuse_step_0_state_before_at_step_1_breaking_state_chain",
+    "field_path": "receipts[1].updates[0].optimizer.state_before",
+    "parameter_id": "w_x1_h1",
+    "step_0_state_before": {
+      "m": 0,
+      "v": 0
+    },
+    "original_step_1_state_before": {
+      "m": -0.0000438567734,
+      "v": 1.92341658e-10
+    },
+    "mutated_step_1_state_before": {
+      "m": 0,
+      "v": 0
+    },
+    "explanation": "Multi-step Adam requires every parameter's state to chain forward unbroken: receipts[k+1].updates[u].optimizer.state_before == receipts[k].updates[u].optimizer.state_after. Mutating step 1's state_before to step 0's state_before (instead of step 0's state_after) breaks the chain. Rule 25 catches the discrepancy."
+  },
+  "reconciliation_check_targeted_first": "Rule 25: Optimizer-state chain broken — receipts[1].state_before does not match receipts[0].state_after for the same parameter.",
+  "purpose": "v0.9.1 Adam multi-step anti-circularity fixture (kind: 'stale-moment-state'). Pressure-tests that the named multi-step rule fires BEFORE the reconciler consults fixture_status metadata.",
+  "v0_9_1_trust_framing": "Adam multi-step rules 25 (state chain) + 26 (config constancy) are STRUCTURAL consistency checks. Producer-authenticity caveat per Rule 17 / Fang et al. 2023 applies."
+}

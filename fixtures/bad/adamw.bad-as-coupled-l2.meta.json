@@ -1,0 +1,17 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "adamw.bad-as-coupled-l2.meta",
+  "describes": "fixtures/bad/adamw.bad-as-coupled-l2.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.adamw.golden.jsonl. v0.9.1 Adam/AdamW adversarial plate — each fixture surfaces a distinct attack class with a deterministic mutation.",
+  "mutation": {
+    "kind": "drop_decoupled_weight_decay_term_at_parameter_step",
+    "field_path": "updates[0].weight_after",
+    "parameter_id": "w_x1_h1",
+    "original_after_with_decoupled_decay": 0.139985228,
+    "mutated_after_without_decoupled_decay": 0.14000022801,
+    "explanation": "AdamW (Loshchilov & Hutter 2017 arXiv:1711.05101 Alg 2 line 12) applies decoupled weight decay DIRECTLY to the parameter at the parameter-update step: w_after = (1 - lr*wd) * w_before + update. Dropping the (1 - lr*wd) factor produces the SAME math as Adam with no weight decay (and NOT the same as Adam with coupled L2; coupled L2 folds wd into the gradient before the moment update). This bad fixture documents the most common AdamW porting mistake. Rule 7's AdamW branch catches it; Rule 24 may also cross-fire."
+  },
+  "reconciliation_check_targeted_first": "Rule 7: AdamW decoupled weight-decay omitted on parameters_after — recomputed as (1 - lr*wd) * w_before + update (AdamW per Loshchilov & Hutter 2017 arXiv:1711.05101 Alg 2 line 12) ≠ stored value computed as w_before + update (Adam-style; omits the decoupled-decay term). Rule 6 cross-fires on weight_after (Rule 6 has the same AdamW branch as Rule 7); Rule 14 also fires via engine recompute. Rule 24 (parameter update formula) does NOT fire because the update field itself is unchanged — AdamW shares Adam's update value; only weight_after / parameters_after differ.",
+  "purpose": "v0.9.1 Adam/AdamW anti-circularity fixture (kind: 'as-coupled-l2'). Pressure-tests that the named rule fires BEFORE the reconciler consults fixture_status metadata.",
+  "v0_9_1_trust_framing": "Adam-rule trust framing (load-bearing): Rules 22, 23, 24 are STRUCTURAL CONSISTENCY checks, NOT producer-authenticity checks. An attacker who controls every byte of the sidecar and recomputes a consistent (g, m, v, update) quadruple passes Rules 22-24 trivially — analogous to Rule 17's bundle-integrity caveat and the Fang et al. 2023 EuroS&P spoofing class against Proof-of-Learning (arXiv:2208.03567)."
+}

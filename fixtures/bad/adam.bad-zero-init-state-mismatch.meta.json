@@ -1,0 +1,18 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "adam.bad-zero-init-state-mismatch.meta",
+  "describes": "fixtures/bad/adam.bad-zero-init-state-mismatch.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.adam.golden.jsonl. v0.9.1 Adam/AdamW adversarial plate — each fixture surfaces a distinct attack class with a deterministic mutation.",
+  "mutation": {
+    "kind": "set_state_before_m_to_nonzero_at_t_eq_1",
+    "field_path": "updates[0].optimizer.state_before.m",
+    "parameter_id": "w_x1_h1",
+    "original_m_before": 0,
+    "mutated_m_before": 0.5,
+    "t_value": 1,
+    "explanation": "Adam initializes m_0 = v_0 = 0 (Kingma & Ba 2014 arXiv:1412.6980 Alg 1 line 1). At t=1 the FIRST step's state_before MUST be (m: 0, v: 0). Mutating m_before to non-zero contradicts the initialization. Rule 22a recomputes m_after = beta1 * state_before.m + (1 - beta1) * gradient with the mutated state_before and finds disagreement with the stored m_after (which was computed under the zero-init)."
+  },
+  "reconciliation_check_targeted_first": "Rule 22: Adam moment recurrence violation — state_before.m mutated to non-zero at t=1; m_after stored value derived from the zero-init recurrence no longer matches.",
+  "purpose": "v0.9.1 Adam/AdamW anti-circularity fixture (kind: 'zero-init-state-mismatch'). Pressure-tests that the named rule fires BEFORE the reconciler consults fixture_status metadata.",
+  "v0_9_1_trust_framing": "Adam-rule trust framing (load-bearing): Rules 22, 23, 24 are STRUCTURAL CONSISTENCY checks, NOT producer-authenticity checks. An attacker who controls every byte of the sidecar and recomputes a consistent (g, m, v, update) quadruple passes Rules 22-24 trivially — analogous to Rule 17's bundle-integrity caveat and the Fang et al. 2023 EuroS&P spoofing class against Proof-of-Learning (arXiv:2208.03567)."
+}

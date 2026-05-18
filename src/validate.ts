@@ -300,9 +300,13 @@ function pickSchemaVersion(
     }
   }
   // Default to latest. v0.1 callers always set schema_version: "0.1.0"
-  // explicitly, so this branch is reached only by (a) new v0.3 callers
-  // writing generalized receipts and (b) malformed input that the
-  // validator will reject below.
+  // explicitly, so this branch is reached only by (a) new callers writing
+  // generalized receipts without an explicit version and (b) malformed
+  // input that the validator will reject below. The default is kept at
+  // "0.2.0" rather than the latest schema so unversioned generalized
+  // receipts continue to land on the same dispatcher that has shipped
+  // since v0.3 — bumping the default would silently re-route legitimate
+  // callers and risk masking a forgotten schema_version field.
   return "0.2.0";
 }
 
@@ -508,7 +512,8 @@ export function validateFrameworkTraceSidecar(
   let version: FrameworkTraceSchemaVersion = opts?.version ?? "0.1.0";
   if (opts?.version === undefined && typeof input === "object" && input !== null) {
     const format = (input as Record<string, unknown>).format;
-    if (format === "framework-trace.v0.3.0") version = "0.3.0";
+    if (format === "framework-trace.v0.4.0") version = "0.4.0";
+    else if (format === "framework-trace.v0.3.0") version = "0.3.0";
     else if (format === "framework-trace.v0.2.0") version = "0.2.0";
     else if (format === "framework-trace.v0.1.0") version = "0.1.0";
   }

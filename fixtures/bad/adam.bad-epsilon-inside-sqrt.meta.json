@@ -1,0 +1,17 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "adam.bad-epsilon-inside-sqrt.meta",
+  "describes": "fixtures/bad/adam.bad-epsilon-inside-sqrt.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.adam.golden.jsonl. v0.9.1 Adam/AdamW adversarial plate — each fixture surfaces a distinct attack class with a deterministic mutation.",
+  "mutation": {
+    "kind": "mutate_update_to_apply_epsilon_inside_sqrt_not_outside",
+    "field_path": "updates[0].update",
+    "parameter_id": "w_x1_h1",
+    "original_update_pytorch_convention": -0.00999977199,
+    "mutated_update_tf_legacy_convention": -0.009749762233968416,
+    "explanation": "Famous porting bug: PyTorch (and Kingma & Ba 2014 Alg 1 line 13) places epsilon OUTSIDE the sqrt: update = lr * m_hat / (sqrt(v_hat) + epsilon). Some TensorFlow versions and naive implementations apply epsilon inside: update = lr * m_hat / sqrt(v_hat + epsilon). The two diverge by O(epsilon) at small v_hat. v0.9.1 pins the PyTorch convention; Rule 24 catches the wrong placement."
+  },
+  "reconciliation_check_targeted_first": "Rule 24: Adam parameter update inconsistent — stored update matches epsilon-inside-sqrt form, not PyTorch convention (epsilon outside).",
+  "purpose": "v0.9.1 Adam/AdamW anti-circularity fixture (kind: 'epsilon-inside-sqrt'). Pressure-tests that the named rule fires BEFORE the reconciler consults fixture_status metadata.",
+  "v0_9_1_trust_framing": "Adam-rule trust framing (load-bearing): Rules 22, 23, 24 are STRUCTURAL CONSISTENCY checks, NOT producer-authenticity checks. An attacker who controls every byte of the sidecar and recomputes a consistent (g, m, v, update) quadruple passes Rules 22-24 trivially — analogous to Rule 17's bundle-integrity caveat and the Fang et al. 2023 EuroS&P spoofing class against Proof-of-Learning (arXiv:2208.03567)."
+}

@@ -26,6 +26,10 @@ import type {
 import type {
   GeneralReceipt,
   SerializedTopology,
+  Optimizer as GeneralOptimizer,
+  Update as GeneralUpdate,
+  OptimizerConfig,
+  AdamState,
 } from "./general-engine.js";
 
 // String emitter — JSON.stringify produces a valid JSON string literal
@@ -511,6 +515,13 @@ export function emitGeneralReceipt(r: GeneralReceipt): string {
   parts.push(`"bias_policy":${emitBiasPolicyV02(r.bias_policy)}`);
   parts.push(`"topology":${emitTopologyV02(r.topology)}`);
   parts.push(`"learning_rate":${N(r.learning_rate)}`);
+  // v0.9.1 — top-level optimizer_config for Adam/AdamW. Emitted ONLY when
+  // present (engine SGD receipts omit this block to preserve byte-equality
+  // with v0.1-v0.9.0 fixtures). Schema position is between learning_rate
+  // and trace_id per receipt.v0.5.0 x-order.
+  if (r.optimizer_config !== undefined) {
+    parts.push(`"optimizer_config":${emitOptimizerConfig(r.optimizer_config)}`);
+  }
   if (r.trace_id !== undefined) parts.push(`"trace_id":${S(r.trace_id)}`);
   if (r.step_index !== undefined) parts.push(`"step_index":${r.step_index}`);
   if (r.batch !== undefined) parts.push(`"batch":${emitBatch(r.batch)}`);
@@ -523,7 +534,7 @@ export function emitGeneralReceipt(r: GeneralReceipt): string {
   parts.push(`"forward":${emitForwardGeneral(r.forward, r.topology.unit_order)}`);
   parts.push(`"loss":${emitLossGeneral(r.loss, r.topology.unit_order.output, r.batch?.sample_order)}`);
   parts.push(`"backward":${emitBackwardGeneral(r.backward, r.topology.unit_order)}`);
-  parts.push(`"updates":${emitUpdates(r.updates)}`);
+  parts.push(`"updates":${emitUpdatesGeneral(r.updates as unknown as GeneralUpdate[])}`);
   parts.push(`"parameters_after":${emitOrderedNumberMap(r.parameters_after, r.topology.parameter_order)}`);
   parts.push(`"post_update_forward":${emitPostUpdateForwardGeneral(r.post_update_forward, r.topology.unit_order)}`);
   parts.push(`"post_update_loss":${emitPostUpdateLossGeneral(r.post_update_loss, r.topology.unit_order.output)}`);
@@ -914,4 +925,97 @@ function emitAttestor(a: NonNullable<GeneralReceipt["attestor"]>): string {
     parts.push(`"bundle_root_digest":${S(a.bundle_root_digest)}`);
   }
   return `{${parts.join(",")}}`;
+}
+
+// --- v0.9.1 emitters (Adam + AdamW: optimizer_config + per-update state) ---
+
+/**
+ * v0.9.1 — emit top-level `optimizer_config` block. Schema x-order:
+ * [name, learning_rate, beta1, beta2, epsilon, weight_decay, t]. Optional
+ * fields (beta1/beta2/epsilon/weight_decay/t) emit only when present.
+ * Engine emits this block ONLY for Adam/AdamW receipts; SGD receipts
+ * omit it (preserves v0.1-v0.9.0 byte-equality).
+ */
+function emitOptimizerConfig(oc: OptimizerConfig): string {
+  const parts: string[] = [
+    `"name":${S(oc.name)}`,
+    `"learning_rate":${N(oc.learning_rate)}`,
+  ];
+  if (oc.beta1 !== undefined) parts.push(`"beta1":${N(oc.beta1)}`);
+  if (oc.beta2 !== undefined) parts.push(`"beta2":${N(oc.beta2)}`);
+  if (oc.epsilon !== undefined) parts.push(`"epsilon":${N(oc.epsilon)}`);
+  if (oc.weight_decay !== undefined) {
+    parts.push(`"weight_decay":${N(oc.weight_decay)}`);
+  }
+  if (oc.t !== undefined) parts.push(`"t":${oc.t}`);
+  return `{${parts.join(",")}}`;
+}
+
+/**
+ * v0.9.1 — emit per-parameter Adam state. Schema x-order: [m, v].
+ */
+function emitAdamState(s: AdamState): string {
+  return `{"m":${N(s.m)},"v":${N(s.v)}}`;
+}
+
+/**
+ * v0.9.1 — emit GeneralReceipt-side per-update optimizer block.
+ *
+ * Schema x-order: [name, learning_rate, factors, product_order,
+ * state_before, state_after]. state_before + state_after emit ONLY when
+ * present (Adam/AdamW); SGD updates emit byte-equal to v0.1-v0.9.0.
+ *
+ * Distinct from emitOptimizer (the Mazur-side helper) — the Mazur
+ * Optimizer type is narrower (name: "sgd" only, no state). Keeping the
+ * Mazur emitter unchanged preserves the v0.1.0 byte-equal contract.
+ */
+function emitOptimizerGeneral(o: GeneralOptimizer): string {
+  const factors = o.factors.map(emitNamedFactor).join(",");
+  const parts: string[] = [
+    `"name":${S(o.name)}`,
+    `"learning_rate":${N(o.learning_rate)}`,
+    `"factors":[${factors}]`,
+    `"product_order":${S(o.product_order)}`,
+  ];
+  if (o.state_before !== undefined) {
+    parts.push(`"state_before":${emitAdamState(o.state_before)}`);
+  }
+  if (o.state_after !== undefined) {
+    parts.push(`"state_after":${emitAdamState(o.state_after)}`);
+  }
+  return `{${parts.join(",")}}`;
+}
+
+/**
+ * v0.9.1 — emit GeneralReceipt-side per-update entry. Uses
+ * emitOptimizerGeneral for the optimizer block; everything else matches
+ * the Mazur emitUpdate. Per-update x-order matches receipt.v0.5.0
+ * Update: parameter_id, kind, layer_edge, parameter_role, from_unit,
+ * to_unit, weight_before, optimizer, gradient, update, weight_after.
+ */
+function emitUpdateGeneral(u: GeneralUpdate): string {
+  return [
+    "{",
+    `"parameter_id":${S(u.parameter_id)},`,
+    `"kind":${S(u.kind)},`,
+    `"layer_edge":${S(u.layer_edge)},`,
+    `"parameter_role":${S(u.parameter_role)},`,
+    `"from_unit":${S(u.from_unit)},`,
+    `"to_unit":${S(u.to_unit)},`,
+    `"weight_before":${N(u.weight_before)},`,
+    `"optimizer":${emitOptimizerGeneral(u.optimizer)},`,
+    `"gradient":${N(u.gradient)},`,
+    `"update":${N(u.update)},`,
+    `"weight_after":${N(u.weight_after)}`,
+    "}",
+  ].join("");
+}
+
+/**
+ * v0.9.1 — emit GeneralReceipt updates array. emitGeneralReceipt routes
+ * through this (NOT through Mazur's emitUpdates) so Adam/AdamW updates
+ * carry state_before/state_after correctly.
+ */
+function emitUpdatesGeneral(updates: GeneralUpdate[]): string {
+  return `[${updates.map(emitUpdateGeneral).join(",")}]`;
 }

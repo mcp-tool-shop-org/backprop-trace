@@ -1,0 +1,18 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "adam.bad-engine-recompute-disagrees-adam.meta",
+  "describes": "fixtures/bad/adam.bad-engine-recompute-disagrees-adam.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.adam.golden.jsonl. v0.9.1 Adam/AdamW adversarial plate — each fixture surfaces a distinct attack class with a deterministic mutation.",
+  "mutation": {
+    "kind": "perturb_weight_after_internal_arithmetic_stays_consistent",
+    "field_path": "updates[0].weight_after",
+    "parameter_id": "w_x1_h1",
+    "original_weight_after": 0.140000228,
+    "mutated_weight_after": 0.141000228,
+    "perturbation": 0.001,
+    "explanation": "Per-update arithmetic (m_after, v_after, bias-corrected m_hat/v_hat, update formula) is internally consistent — Rules 20, 22, 23, 24 all pass. Only Rule 14's engine recompute catches the divergence. This load-bearing fixture proves that Adam-rule structural consistency is NECESSARY but NOT SUFFICIENT for producer authenticity; engine recompute (Rule 14) is the second line of defense and the Fang et al. 2023 PoL spoofing class (arXiv:2208.03567) maps directly here."
+  },
+  "reconciliation_check_targeted_first": "Rule 14: Engine recompute differential — Adam-internal arithmetic consistent but weight_after stored value diverges from engine recomputation.",
+  "purpose": "v0.9.1 Adam/AdamW anti-circularity fixture (kind: 'engine-recompute-disagrees-adam'). Pressure-tests that the named rule fires BEFORE the reconciler consults fixture_status metadata.",
+  "v0_9_1_trust_framing": "Adam-rule trust framing (load-bearing): Rules 22, 23, 24 are STRUCTURAL CONSISTENCY checks, NOT producer-authenticity checks. An attacker who controls every byte of the sidecar and recomputes a consistent (g, m, v, update) quadruple passes Rules 22-24 trivially — analogous to Rule 17's bundle-integrity caveat and the Fang et al. 2023 EuroS&P spoofing class against Proof-of-Learning (arXiv:2208.03567)."
+}

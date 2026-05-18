@@ -95,11 +95,74 @@ export type HiddenErrorSignal = {
   signal_value: number
 }
 
+/**
+ * v0.9.1 — per-parameter Adam/AdamW state.
+ *
+ * Canonical names follow Kingma & Ba 2014 Algorithm 1 directly (arXiv:1412.6980):
+ *   - m: first moment estimate (signed; same dimension as parameter)
+ *   - v: second moment estimate (non-negative; gradient squared accumulator)
+ *
+ * Framework importers normalize from framework-native names:
+ *   - PyTorch torch.optim.Adam state_dict(): exp_avg → m, exp_avg_sq → v
+ *   - optax.adam ScaleByAdamState: mu → m, nu → v
+ *   - TF Keras Adam: m_<param> → m, v_<param> → v
+ *
+ * Bias-corrected m̂ and v̂ are DERIVED at verify time from (state_after,
+ * beta1, beta2, t) — NEVER stored on the receipt. Storing them risks
+ * silent-wrong on disagreement; Rule 23 recomputes from canonical state.
+ */
+export type AdamState = { m: number; v: number }
+
+/**
+ * v0.9.1 — per-update optimizer block.
+ *
+ * Widened over the v0.4 SGD-only shape: `name` is now a union, and
+ * state_before / state_after are OPTIONAL at the type level but REQUIRED
+ * at the schema + reconciler boundaries when name is "adam" or "adamw".
+ *
+ * For SGD updates the runtime bytes are byte-equal to v0.1-v0.9.0: the
+ * engine never populates state_before/state_after on an SGD update, so
+ * the emitter omits them and existing fixtures round-trip unchanged.
+ */
 export type Optimizer = {
-  name: "sgd"
+  name: "sgd" | "adam" | "adamw"
   learning_rate: number
   factors: NamedFactor[]
   product_order: "left_to_right"
+  /** v0.9.1 — required when name in {adam, adamw}; MUST be omitted for sgd. */
+  state_before?: AdamState
+  /** v0.9.1 — required when name in {adam, adamw}; MUST be omitted for sgd. */
+  state_after?: AdamState
+}
+
+/**
+ * v0.9.1 — top-level optimizer configuration block.
+ *
+ * Carries global hyperparameters (learning rate, betas, epsilon, weight
+ * decay) and the step counter t used by Adam bias correction. SGD-only
+ * receipts MAY omit this block — when omitted the top-level
+ * `learning_rate` field is the sole optimizer descriptor and behavior is
+ * byte-equal to v0.4.0. Adam/AdamW receipts MUST include it; the schema
+ * enforces beta1/beta2/epsilon/t required for adam, plus weight_decay
+ * required for adamw.
+ *
+ * `t` is per-receipt (per-step in a multi-step bundle). Reconciler
+ * Rule 23 asserts `t === step_index + 1` when step_index is present
+ * (Kingma & Ba 2014 indexes the timestep starting at 1, matching
+ * PyTorch's `state["step"]` after the first `.step()` call).
+ *
+ * `learning_rate` is excluded from Rule 26's constancy check (LR
+ * schedules across steps are legitimate; betas/epsilon/weight_decay/name
+ * MUST stay constant).
+ */
+export type OptimizerConfig = {
+  name: "sgd" | "adam" | "adamw"
+  learning_rate: number
+  beta1?: number
+  beta2?: number
+  epsilon?: number
+  weight_decay?: number
+  t?: number
 }
 
 /**
@@ -115,16 +178,15 @@ export type Optimizer = {
  * `layer_edge: "bias_to_layer"` via a single localized type assertion at
  * the push site (search "PER_NEURON_BIAS_UPDATE_CAST" below).
  *
- * CROSS-DOMAIN NOTE for follow-up agents:
- *   - src/engine.ts (Mazur) Update: should widen `kind` to `"weight" | "bias"`
- *     and `layer_edge` to include `"bias_to_layer"` once a cross-cutting
- *     consolidation pass picks up emit.ts coverage. This file's narrow
- *     type is the temporary v0.4 compat shim.
- *   - src/emit.ts emitUpdates: tolerant at runtime (it emits whatever
- *     string is in u.kind / u.layer_edge), but the import path forces
- *     general-engine.Update to be assignable to engine.Update. The
- *     simplest cross-cutting fix is widening engine.ts's Update or
- *     introducing a shared Update type in a third module.
+ * v0.9.1 NOTE — Optimizer widening: general-engine.ts's `Optimizer` now
+ * carries optional state_before/state_after (Adam/AdamW). For SGD the
+ * emitter omits them; for Adam/AdamW the emitter requires them. This
+ * widens general-engine.ts's Update so it is no longer structurally
+ * assignable to engine.ts's narrower Update — emit.ts's general path
+ * uses dedicated emitUpdateGeneral/emitOptimizerGeneral helpers, while
+ * the Mazur path continues to use the existing emitUpdate/emitOptimizer
+ * unchanged. This intentional split keeps the Mazur v0.1.0 byte-equal
+ * contract isolated from the v0.5.0 Adam additions.
  */
 export type Update = {
   parameter_id: string
@@ -206,6 +268,26 @@ export type GeneralInput = {
   readonly step_index?: number
   readonly fixture?: string
   readonly metadata?: GeneralMetadata
+  /**
+   * v0.9.1 — OPTIONAL optimizer config. When absent or `name === "sgd"`,
+   * the engine takes the SGD path (byte-equal to v0.1-v0.9.0). When
+   * `name in {adam, adamw}`, the engine takes the Adam path and REQUIRES
+   * `optimizer_state_before` to be present with an entry for every
+   * weight parameter (biases are handled per `bias_policy`). beta1,
+   * beta2, epsilon, and t MUST be set; for adamw, weight_decay MUST also
+   * be set. Validation happens at runtime in assertOptimizerConfig.
+   */
+  readonly optimizer_config?: OptimizerConfig
+  /**
+   * v0.9.1 — OPTIONAL per-parameter Adam state at step entry. REQUIRED
+   * when optimizer_config.name in {adam, adamw}. Keyed by parameter_id;
+   * MUST cover every WEIGHT parameter (biases skip Adam in v0.9.1 —
+   * documented constraint, bias_policy still drives bias updates and
+   * biases use SGD-style updates with their own gradient even when
+   * weights use Adam). Engine derives state_after deterministically
+   * from (state_before, gradient, beta1, beta2).
+   */
+  readonly optimizer_state_before?: Readonly<Record<string, AdamState>>
 }
 
 export type GeneralMetadata = {
@@ -358,10 +440,14 @@ export type GeneralReceipt = {
   // identical to v0.3/v0.4 fixtures), "0.3.0" for cross_entropy_softmax
   // receipts (v0.5 additive-schema path), and "0.4.0" for observer-mode
   // receipts that carry source_framework + attestor (v0.6 external
-  // ingestion). The engine picks the version based on topology.loss +
-  // (source_framework presence) inside runGeneralStep so legacy callers
-  // don't need to pass it explicitly.
-  schema_version: "0.2.0" | "0.3.0" | "0.4.0"
+  // ingestion). v0.9.1: "0.5.0" for Adam/AdamW receipts (FORCED bump:
+  // optimizer.name was closed enum ["sgd"]; widening to ["sgd","adam","adamw"]
+  // plus per-update state_before/after plus top-level optimizer_config
+  // could not happen in-place on v0.4.0). The engine picks the version
+  // based on optimizer_config.name (adam/adamw → 0.5.0) + topology.loss
+  // + (source_framework presence) inside runGeneralStep so legacy
+  // callers don't need to pass it explicitly.
+  schema_version: "0.2.0" | "0.3.0" | "0.4.0" | "0.5.0"
   fixture: string
   // step is integer ≥1 per receipt.v0.4.0 schema. Engine-authored single-step
   // receipts hardcode step:1. v0.8 multi-step observer-mode receipts set
@@ -385,6 +471,14 @@ export type GeneralReceipt = {
   bias_policy: BiasPolicy
   topology: SerializedTopology
   learning_rate: number
+  /**
+   * v0.9.1 — OPTIONAL top-level optimizer config (Adam/AdamW). Engine
+   * populates this when input.optimizer_config.name in {adam, adamw};
+   * SGD-only receipts MUST omit it for byte-equal preservation with
+   * v0.1-v0.9.0. Schema position is between `learning_rate` and
+   * `trace_id` per receipt.v0.5.0 x-order.
+   */
+  optimizer_config?: OptimizerConfig
   trace_id?: string
   step_index?: number
   /**
@@ -507,6 +601,147 @@ function assertFiniteGeneralInput(input: GeneralInput): void {
     if (!Number.isFinite(v)) {
       throw new Error(
         `runGeneralStep: input.parameters_before['${pid}'] is not finite (got ${String(v)}).`,
+      )
+    }
+  }
+}
+
+/**
+ * v0.9.1 — boundary validation for Adam/AdamW optimizer config + state.
+ *
+ * Fail-loud at the engine boundary so misconfigured callers get a clear
+ * error message naming the missing field. The schema (v0.5.0) enforces
+ * the same conditional requirements but the schema dispatcher runs only
+ * at the importer boundary; engine-direct callers (tests, scripts) get
+ * caught here. Symmetric with assertSupportedPolicy + assertFiniteGeneralInput.
+ */
+function assertOptimizerConfig(input: GeneralInput): void {
+  const oc = input.optimizer_config
+  if (oc === undefined) {
+    // SGD is the implicit default. If optimizer_state_before is set without
+    // an optimizer_config, that's a misconfiguration — fail loudly.
+    if (input.optimizer_state_before !== undefined) {
+      throw new Error(
+        `runGeneralStep: optimizer_state_before is set but optimizer_config is undefined. ` +
+          `Hint: set optimizer_config.name to "adam" or "adamw" to use the per-parameter ` +
+          `state, or unset optimizer_state_before to use the SGD path.`,
+      )
+    }
+    return
+  }
+  if (oc.name === "sgd") {
+    // SGD with optimizer_config explicitly set — allowed; engine still takes
+    // the SGD path and emits no optimizer_config block in the receipt to
+    // preserve v0.1-v0.9.0 byte-equality.
+    if (input.optimizer_state_before !== undefined) {
+      throw new Error(
+        `runGeneralStep: optimizer_state_before is set but optimizer_config.name === "sgd". ` +
+          `SGD has no per-parameter state; unset optimizer_state_before or switch to adam/adamw.`,
+      )
+    }
+    if (oc.learning_rate !== input.learning_rate) {
+      throw new Error(
+        `runGeneralStep: optimizer_config.learning_rate (${oc.learning_rate}) ` +
+          `!= input.learning_rate (${input.learning_rate}). Both must agree.`,
+      )
+    }
+    return
+  }
+  // adam / adamw
+  if (oc.name !== "adam" && oc.name !== "adamw") {
+    throw new Error(
+      `runGeneralStep: optimizer_config.name must be 'sgd', 'adam', or 'adamw' (got '${String(oc.name)}'). ` +
+        `Hint: v0.9.1 supports SGD, Adam, and AdamW. Momentum SGD is v0.9.2; ` +
+        `Nesterov / AMSGrad / per-parameter-groups / LR schedules / gradient ` +
+        `clipping / mixed precision are deferred.`,
+    )
+  }
+  if (oc.learning_rate !== input.learning_rate) {
+    throw new Error(
+      `runGeneralStep: optimizer_config.learning_rate (${oc.learning_rate}) ` +
+        `!= input.learning_rate (${input.learning_rate}). Both must agree.`,
+    )
+  }
+  for (const k of ["beta1", "beta2", "epsilon", "t"] as const) {
+    const v = oc[k]
+    if (v === undefined) {
+      throw new Error(
+        `runGeneralStep: optimizer_config.${k} is required when name === '${oc.name}' (got undefined).`,
+      )
+    }
+    if (!Number.isFinite(v)) {
+      throw new Error(
+        `runGeneralStep: optimizer_config.${k} is not finite (got ${String(v)}).`,
+      )
+    }
+  }
+  if (!(oc.beta1! > 0 && oc.beta1! < 1)) {
+    throw new Error(
+      `runGeneralStep: optimizer_config.beta1 must be in (0, 1) (got ${oc.beta1}).`,
+    )
+  }
+  if (!(oc.beta2! > 0 && oc.beta2! < 1)) {
+    throw new Error(
+      `runGeneralStep: optimizer_config.beta2 must be in (0, 1) (got ${oc.beta2}).`,
+    )
+  }
+  if (!(oc.epsilon! > 0)) {
+    throw new Error(
+      `runGeneralStep: optimizer_config.epsilon must be > 0 (got ${oc.epsilon}).`,
+    )
+  }
+  if (!Number.isInteger(oc.t!) || oc.t! < 1) {
+    throw new Error(
+      `runGeneralStep: optimizer_config.t must be a positive integer (got ${oc.t}). ` +
+        `Hint: Kingma & Ba 2014 Algorithm 1 indexes the timestep starting at 1; ` +
+        `Rule 23 asserts t === step_index + 1 when step_index is present.`,
+    )
+  }
+  if (oc.name === "adamw") {
+    if (oc.weight_decay === undefined) {
+      throw new Error(
+        `runGeneralStep: optimizer_config.weight_decay is required when name === 'adamw' (got undefined). ` +
+          `Hint: AdamW adds decoupled weight decay (Loshchilov & Hutter 2017 Algorithm 2 line 12) — ` +
+          `applied directly to the parameter at the parameter-update step, NOT folded into the gradient ` +
+          `(that would be coupled L2; explicitly contrasted with decoupled in Rule 24's AdamW branch).`,
+      )
+    }
+    if (!Number.isFinite(oc.weight_decay) || oc.weight_decay < 0) {
+      throw new Error(
+        `runGeneralStep: optimizer_config.weight_decay must be a non-negative finite number (got ${oc.weight_decay}).`,
+      )
+    }
+  }
+  // state_before required + must cover every parameter that will be updated
+  // (i.e., weights always; biases only when bias_policy.mode === "sgd").
+  if (input.optimizer_state_before === undefined) {
+    throw new Error(
+      `runGeneralStep: optimizer_state_before is required when optimizer_config.name === '${oc.name}' (got undefined). ` +
+        `Hint: provide { m, v } per parameter id that will get an Update entry.`,
+    )
+  }
+  for (const pid of input.topology.parameter_order) {
+    const param = input.topology.parameters.find((p) => p.id === pid)!
+    const isBias = param.role === "hidden_bias" || param.role === "output_bias"
+    if (isBias && input.bias_policy.mode === "constant") {
+      // Constant biases skip update emission; state not needed.
+      continue
+    }
+    const st = input.optimizer_state_before[pid]
+    if (st === undefined) {
+      throw new Error(
+        `runGeneralStep: optimizer_state_before missing entry for parameter '${pid}'. ` +
+          `Hint: every parameter that will receive an Update entry must have { m, v } in optimizer_state_before.`,
+      )
+    }
+    if (!Number.isFinite(st.m)) {
+      throw new Error(
+        `runGeneralStep: optimizer_state_before['${pid}'].m is not finite (got ${String(st.m)}).`,
+      )
+    }
+    if (!Number.isFinite(st.v) || st.v < 0) {
+      throw new Error(
+        `runGeneralStep: optimizer_state_before['${pid}'].v must be a non-negative finite number (got ${String(st.v)}).`,
       )
     }
   }
@@ -649,10 +884,116 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
   assertTopologyValid(input.topology)
   assertSupportedPolicy(input)
   assertFiniteGeneralInput(input)
+  assertOptimizerConfig(input)
 
   const t = input.topology
   const lr = input.learning_rate
   const before = input.parameters_before
+  // v0.9.1 — Adam family dispatch. When optimizer_config.name in {adam, adamw},
+  // takes the Adam path: weight_after derives from m_hat / sqrt(v_hat) instead
+  // of lr * gradient; per-update emit carries state_before / state_after;
+  // top-level receipt carries optimizer_config block; schema_version is "0.5.0".
+  // SGD path (default / explicit name === "sgd") stays byte-equal to v0.1-v0.9.0.
+  const oc = input.optimizer_config
+  const isAdam = oc?.name === "adam"
+  const isAdamW = oc?.name === "adamw"
+  const isAdamFamily = isAdam || isAdamW
+  /**
+   * Compute (update, weight_after, optimizer) for one parameter. Dispatches
+   * on optimizer_config.name. Shared by weight-update branches and the
+   * per-neuron-bias-sgd branch so all updates pick up Adam state uniformly.
+   *
+   * SGD path: update = lr * gradient ; weight_after = weight_before + update.
+   * Adam path: m_after = beta1*m_before + (1-beta1)*g ; v_after = beta2*v_before + (1-beta2)*g²
+   *   m_hat = m_after / (1 - beta1^t) ; v_hat = v_after / (1 - beta2^t)
+   *   update = lr * m_hat / (sqrt(v_hat) + epsilon)  // descent direction
+   *   weight_after = weight_before + update
+   * AdamW path: same as Adam plus the decoupled-decay step:
+   *   weight_after = (1 - lr*wd) * weight_before + update  // Loshchilov & Hutter 2017 Alg 2 line 12
+   * Factors stay SGD-shape ([signal, upstream] for weights; [signal] for biases)
+   * so Rule 4 (gradient == product(factors)) holds on both paths. Rule 5 is
+   * gated OFF for non-SGD (update != lr*gradient on Adam). Rule 24 is the
+   * Adam-specific update check.
+   */
+  const computeUpdateAndOptimizer = (
+    pid: string,
+    wBefore: number,
+    gradient: number,
+    factors: NamedFactor[],
+  ): { update: number; wAfter: number; optimizer: Optimizer } => {
+    if (!isAdamFamily) {
+      const update = lr * gradient
+      return {
+        update,
+        wAfter: wBefore + update,
+        optimizer: {
+          name: "sgd",
+          learning_rate: lr,
+          factors,
+          product_order: "left_to_right",
+        },
+      }
+    }
+    // Adam / AdamW
+    const cfg = oc!
+    const stateBefore = input.optimizer_state_before![pid]
+    if (stateBefore === undefined) {
+      // Defensive: assertOptimizerConfig already checked this, but keep
+      // the inline guard for non-direct callers / future bias-skip changes.
+      throw new Error(
+        `runGeneralStep: optimizer_state_before missing entry for parameter '${pid}'.`,
+      )
+    }
+    const beta1 = cfg.beta1!
+    const beta2 = cfg.beta2!
+    const epsilon = cfg.epsilon!
+    const t_step = cfg.t!
+    const mBefore = stateBefore.m
+    const vBefore = stateBefore.v
+    // Adam moment recurrences (Kingma & Ba 2014 arXiv:1412.6980 Alg 1
+    // lines 9-10). Pinned product order: (1 - beta1) * gradient is the
+    // RHS factor multiplied second (left-to-right scan); engine convention.
+    const mAfter = beta1 * mBefore + (1 - beta1) * gradient
+    const vAfter = beta2 * vBefore + (1 - beta2) * (gradient * gradient)
+    // Bias correction (Kingma & Ba 2014 Alg 1 lines 11-12). Derived;
+    // never stored on the receipt (single source of truth = state_after + t).
+    const mHat = mAfter / (1 - Math.pow(beta1, t_step))
+    const vHat = vAfter / (1 - Math.pow(beta2, t_step))
+    // Adam parameter update (Kingma & Ba 2014 Alg 1 line 13). Pinned
+    // epsilon placement: OUTSIDE the sqrt (PyTorch convention) —
+    // sqrt(v_hat) + epsilon, NOT sqrt(v_hat + epsilon). Bad fixture
+    // adam.bad-epsilon-inside-sqrt covers the silent-porting-bug case.
+    const update = (lr * mHat) / (Math.sqrt(vHat) + epsilon)
+    let wAfter: number
+    if (isAdamW) {
+      // AdamW decoupled weight decay (Loshchilov & Hutter 2017
+      // arXiv:1711.05101 Alg 2 line 12). Applied at the parameter step,
+      // NOT folded into the gradient (that would be coupled L2 — a
+      // famous porting bug, captured by adamw.bad-as-coupled-l2 fixture).
+      const wd = cfg.weight_decay!
+      wAfter = (1 - lr * wd) * wBefore + update
+    } else {
+      wAfter = wBefore + update
+    }
+    return {
+      update,
+      wAfter,
+      optimizer: {
+        name: cfg.name,
+        learning_rate: lr,
+        // Factors stay SGD-shape [signal, upstream] (or [signal] for bias).
+        // Rule 4 (gradient == product(factors)) continues to hold on
+        // Adam/AdamW updates. The m_hat / sqrt(v_hat) / epsilon
+        // decomposition lives implicitly in Rule 24's recomputation
+        // chain rather than being named in factors — keeps the factors
+        // array reading consistently across SGD and Adam.
+        factors,
+        product_order: "left_to_right",
+        state_before: { m: mBefore, v: vBefore },
+        state_after: { m: mAfter, v: vAfter },
+      },
+    }
+  }
 
   // --- Bias resolution helpers (per_layer vs per_neuron) -------------------
   //
@@ -991,15 +1332,20 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
       // Bias gradient is the unit's error signal alone (no upstream
       // activation factor — see ∂E/∂b_u derivation above).
       const gradient = signal
-      const update = lr * gradient
-      const wAfter = wBefore + update
-      parametersAfter[pid] = wAfter
+      const biasFactors: NamedFactor[] = [
+        { name: factorName, from: signalPath, value: signal },
+      ]
+      // v0.9.1 — dispatch to SGD or Adam/AdamW. For SGD this is byte-equal
+      // to v0.1-v0.9.0 (no state_before/state_after emitted). For
+      // Adam/AdamW, state_before is REQUIRED for biases too (when
+      // bias_policy.mode === "sgd") and assertOptimizerConfig has
+      // verified its presence.
+      const computed = computeUpdateAndOptimizer(pid, wBefore, gradient, biasFactors)
+      parametersAfter[pid] = computed.wAfter
       // PER_NEURON_BIAS_UPDATE_CAST — see TYPE NARROWNESS comment on the
       // `Update` type declaration above. At runtime the receipt bytes
       // carry kind: "bias" and layer_edge: "bias_to_layer" (both schema-
-      // permitted enum values in receipt.v0.2.0.json). The TS Update type
-      // stays narrow to keep src/engine.ts + src/emit.ts compatible until
-      // a cross-cutting consolidation pass widens those.
+      // permitted enum values).
       const biasUpdate = {
         parameter_id: pid,
         kind: "bias" as const,
@@ -1010,21 +1356,10 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
         from_unit: unit,
         to_unit: unit,
         weight_before: wBefore,
-        optimizer: {
-          name: "sgd" as const,
-          learning_rate: lr,
-          factors: [
-            {
-              name: factorName,
-              from: signalPath,
-              value: signal,
-            },
-          ],
-          product_order: "left_to_right" as const,
-        },
+        optimizer: computed.optimizer,
         gradient,
-        update,
-        weight_after: wAfter,
+        update: computed.update,
+        weight_after: computed.wAfter,
       }
       updates.push(biasUpdate as unknown as Update)
       continue
@@ -1036,9 +1371,20 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
       const upstream = input.inputs[fromUnit]!
       const wBefore = before[pid]!
       const gradient = signal * upstream
-      const update = lr * gradient
-      const wAfter = wBefore + update
-      parametersAfter[pid] = wAfter
+      const weightFactors: NamedFactor[] = [
+        {
+          name: "hidden_error_signal",
+          from: `backward.hidden_error_signals.${toUnit}.signal_value`,
+          value: signal,
+        },
+        {
+          name: "upstream_activation",
+          from: `inputs.${fromUnit}`,
+          value: upstream,
+        },
+      ]
+      const computed = computeUpdateAndOptimizer(pid, wBefore, gradient, weightFactors)
+      parametersAfter[pid] = computed.wAfter
       updates.push({
         parameter_id: pid,
         kind: "weight",
@@ -1047,26 +1393,10 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
         from_unit: fromUnit,
         to_unit: toUnit,
         weight_before: wBefore,
-        optimizer: {
-          name: "sgd",
-          learning_rate: lr,
-          factors: [
-            {
-              name: "hidden_error_signal",
-              from: `backward.hidden_error_signals.${toUnit}.signal_value`,
-              value: signal,
-            },
-            {
-              name: "upstream_activation",
-              from: `inputs.${fromUnit}`,
-              value: upstream,
-            },
-          ],
-          product_order: "left_to_right",
-        },
+        optimizer: computed.optimizer,
         gradient,
-        update,
-        weight_after: wAfter,
+        update: computed.update,
+        weight_after: computed.wAfter,
       })
     } else if (param.role === "hidden_to_output_weight") {
       const fromUnit = param.from_unit!
@@ -1075,9 +1405,20 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
       const upstream = forward[fromUnit]!.out
       const wBefore = before[pid]!
       const gradient = signal * upstream
-      const update = lr * gradient
-      const wAfter = wBefore + update
-      parametersAfter[pid] = wAfter
+      const weightFactors: NamedFactor[] = [
+        {
+          name: "output_error_signal",
+          from: `backward.output_error_signals.${toUnit}.signal_value`,
+          value: signal,
+        },
+        {
+          name: "upstream_activation",
+          from: `forward.${fromUnit}.out`,
+          value: upstream,
+        },
+      ]
+      const computed = computeUpdateAndOptimizer(pid, wBefore, gradient, weightFactors)
+      parametersAfter[pid] = computed.wAfter
       updates.push({
         parameter_id: pid,
         kind: "weight",
@@ -1086,26 +1427,10 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
         from_unit: fromUnit,
         to_unit: toUnit,
         weight_before: wBefore,
-        optimizer: {
-          name: "sgd",
-          learning_rate: lr,
-          factors: [
-            {
-              name: "output_error_signal",
-              from: `backward.output_error_signals.${toUnit}.signal_value`,
-              value: signal,
-            },
-            {
-              name: "upstream_activation",
-              from: `forward.${fromUnit}.out`,
-              value: upstream,
-            },
-          ],
-          product_order: "left_to_right",
-        },
+        optimizer: computed.optimizer,
         gradient,
-        update,
-        weight_after: wAfter,
+        update: computed.update,
+        weight_after: computed.wAfter,
       })
     }
   }
@@ -1208,8 +1533,15 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
   // loss). All other receipts (Mazur, XOR, iris, per-neuron-bias, and any
   // future half_squared_error receipts) continue to emit "0.2.0" so the
   // shipped fixtures stay byte-identical.
-  const schemaVersionForReceipt: "0.2.0" | "0.3.0" =
-    t.loss === "cross_entropy_softmax" || t.activation_output === "softmax"
+  // v0.9.1: "0.5.0" for Adam/AdamW receipts (FORCED bump — see receipt.v0.5.0
+  // docstring). Takes precedence over softmax+CE selection because v0.5.0 is
+  // additive over v0.4.0 which is additive over v0.3.0 (so v0.5.0 receipts
+  // can carry softmax+CE topology + Adam optimizer simultaneously; the
+  // version reflects the SCHEMA carrying the most fields, not the
+  // optimizer-vs-loss combination).
+  const schemaVersionForReceipt: "0.2.0" | "0.3.0" | "0.5.0" = isAdamFamily
+    ? "0.5.0"
+    : t.loss === "cross_entropy_softmax" || t.activation_output === "softmax"
       ? "0.3.0"
       : "0.2.0"
   const receipt: GeneralReceipt = {
@@ -1246,6 +1578,23 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
       per_output: postUpdatePerOutput,
       total: postUpdateTotal,
     },
+  }
+  // v0.9.1 — emit top-level optimizer_config ONLY for Adam/AdamW (preserves
+  // SGD byte-equality with v0.1-v0.9.0; engine SGD receipts continue to omit
+  // this block even when an explicit optimizer_config.name === "sgd" was
+  // passed in via the input).
+  if (isAdamFamily) {
+    const cfg = oc!
+    const ocOut: OptimizerConfig = {
+      name: cfg.name,
+      learning_rate: cfg.learning_rate,
+      beta1: cfg.beta1,
+      beta2: cfg.beta2,
+      epsilon: cfg.epsilon,
+      t: cfg.t,
+    }
+    if (cfg.name === "adamw") ocOut.weight_decay = cfg.weight_decay
+    receipt.optimizer_config = ocOut
   }
   if (input.trace_id !== undefined) receipt.trace_id = input.trace_id
   if (input.step_index !== undefined) receipt.step_index = input.step_index
@@ -1311,6 +1660,27 @@ export type BatchedGeneralInput = Omit<GeneralInput, "inputs" | "targets"> & {
  * updates). Reduced gradients only.
  */
 export function runBatchedGeneralStep(input: BatchedGeneralInput): GeneralReceipt {
+  // v0.9.1 — batched Adam/AdamW NOT supported in v0.9.1. The per-sample-runs-
+  // then-reduce pattern works for SGD (reduced gradient → single-step SGD
+  // update) but Adam needs a SINGLE optimizer step against the reduced
+  // gradient with state evolution; the per-sample subreceipts that
+  // runBatchedGeneralStep currently produces don't have that information.
+  // Deferred to v0.9.x / v0.10. The schema CAN express batched + Adam
+  // (batch + optimizer_config blocks coexist on receipt.v0.5.0); the
+  // engine just doesn't implement it yet — fail loudly so callers know.
+  if (
+    input.optimizer_config !== undefined &&
+    input.optimizer_config.name !== "sgd"
+  ) {
+    throw new Error(
+      `runBatchedGeneralStep: batched Adam/AdamW is NOT supported in v0.9.1 ` +
+        `(got optimizer_config.name='${input.optimizer_config.name}'). ` +
+        `Hint: v0.9.1 supports single-step + multi-step Adam/AdamW only. ` +
+        `Batched Adam is deferred (needs reduced-gradient → single-Adam-step ` +
+        `dispatch, distinct from runBatchedGeneralStep's per-sample subreceipt ` +
+        `pattern). Use a batch size of 1 + Adam, or use plain SGD for batched runs.`,
+    )
+  }
   // 1. Validate batch invariants (will be re-checked by Rule 19 at reconcile time,
   //    but fail early at the engine boundary for clear diagnostics).
   if (input.batch.size !== input.batch.sample_order.length) {

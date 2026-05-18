@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "adam.bad-hyperparameter-inconstancy.meta",
+  "describes": "fixtures/bad/adam.bad-hyperparameter-inconstancy.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.adam.multi-step.golden.jsonl. v0.9.1 Adam multi-step adversarial plate.",
+  "mutation": {
+    "kind": "drift_beta1_from_0_9_to_0_95_at_step_1",
+    "field_path": "receipts[1].optimizer_config.beta1",
+    "original_beta1": 0.9,
+    "mutated_beta1": 0.95,
+    "explanation": "Adam hyperparameters {name, beta1, beta2, epsilon, weight_decay} MUST be IDENTICAL across all receipts in a multi-step bundle. learning_rate is EXCLUDED (LR schedules are legitimate). Drifting beta1 from 0.9 to 0.95 at step 1 violates the constancy invariant. Rule 26 catches this — analog of Rule 10 for trace identity. (NOTE: Rule 22 may ALSO fire on step 1 because m_after stored value at step 1 was computed under the original beta1=0.9, not the mutated 0.95.)"
+  },
+  "reconciliation_check_targeted_first": "Rule 26: Optimizer-config constancy — receipts[1].optimizer_config.beta1 (0.95) differs from receipts[0].optimizer_config.beta1 (0.9); hyperparameters must be identical across bundle.",
+  "purpose": "v0.9.1 Adam multi-step anti-circularity fixture (kind: 'hyperparameter-inconstancy'). Pressure-tests that the named multi-step rule fires BEFORE the reconciler consults fixture_status metadata.",
+  "v0_9_1_trust_framing": "Adam multi-step rules 25 (state chain) + 26 (config constancy) are STRUCTURAL consistency checks. Producer-authenticity caveat per Rule 17 / Fang et al. 2023 applies."
+}

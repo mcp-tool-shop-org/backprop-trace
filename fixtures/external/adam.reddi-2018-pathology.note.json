@@ -1,0 +1,4 @@
+{
+  "_note": "POSITIVE FIXTURE — documents that backprop-trace's Adam rules (20, 22, 23, 24) verify internal consistency of (g, m, v, update), NOT optimizer convergence quality. Reddi, Kale, Kumar 2018 'On the Convergence of Adam and Beyond' (ICLR 2018, https://openreview.net/forum?id=ryQu7f-RZ) constructs convex problems where Adam fails to converge — but the per-step Adam math is internally consistent throughout, so Rules 22-24 PASS. This is intentional: the verifier checks 'did you compute Adam honestly?' not 'is Adam the right choice for this problem?'. The companion 3-step Adam fixture (pytorch.adam.multi-step.golden.jsonl) exercises the same code path.",
+  "_documents_principle": "Verifier scope: structural consistency (Rule 22 recurrences, Rule 23 bias correction, Rule 24 parameter update). Verifier NON-scope: convergence guarantees, optimizer choice appropriateness, hyperparameter quality."
+}

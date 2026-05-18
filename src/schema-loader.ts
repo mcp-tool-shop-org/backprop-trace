@@ -39,7 +39,7 @@ import { dirname, resolve } from "node:path";
  * the package payload. The tuple is `as const` so SchemaVersion is the
  * union of string literals (not just `string`).
  *
- * v0.6 ships four:
+ * v0.9.1 ships five:
  *   - "0.1.0" — the Mazur-pinned single-topology schema (v0.1/v0.2 wave)
  *   - "0.2.0" — the generalized schema (REQUIRED unit_order + parameter_order,
  *     hybrid tolerance object form, optional trace_id/step_index for multi-step,
@@ -52,14 +52,26 @@ import { dirname, resolve } from "node:path";
  *     source_framework + attestor blocks for observer-mode receipts;
  *     fixture_status.authoring_state enum gains "external_imported";
  *     fixture_status.verification_state enum gains three external states).
+ *     Extended in-place v0.8 (attestor.bundle_root_digest for Rule 17)
+ *     and v0.9 (top-level batch + per_sample + loss.{reduction, per_sample}
+ *     for Rules 18, 19). See docs/schema.md compatibility note.
+ *   - "0.5.0" — v0.9.1 Adam + AdamW optimizer extension (FORCED bump:
+ *     Update.optimizer.name was closed enum ["sgd"] and Update.optimizer
+ *     had additionalProperties:false; widening to ["sgd","adam","adamw"]
+ *     plus per-update state_before/state_after plus top-level
+ *     optimizer_config block could not happen in-place. SGD-only receipts
+ *     stay at "0.4.0" byte-equal; Adam/AdamW receipts declare "0.5.0".
+ *     Rules 20, 22, 23, 24, 25, 26 fire on this version.
  *
  * Receipts that say `schema_version: "0.1.0"` continue to validate against
  * the v0.1.0 schema for byte-equal preservation. v0.3-onward generalized
  * receipts (XOR, iris, multi-step, per-neuron-bias) declare "0.2.0".
  * v0.5 softmax+CE receipts declare "0.3.0". v0.6 external observer-mode
- * receipts (output of `bp import pytorch`) declare "0.4.0".
+ * receipts (output of `bp import pytorch`) declare "0.4.0". v0.9.1 Adam +
+ * AdamW receipts declare "0.5.0" (SGD-only observer-mode receipts stay
+ * at "0.4.0" for byte-equal preservation).
  */
-export const SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0"] as const;
+export const SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0"] as const;
 
 /**
  * Union of currently-shipped receipt schema versions. Use this for any
@@ -194,14 +206,23 @@ export function getInputSchema(
  * what a foreign framework computed AFTER its engine ran. The two have
  * different fields, different consumers, and different version lineages.
  *
- * v0.6 ships:
+ * v0.9.1 ships four:
  *   - "0.1.0" — initial PyTorch/JAX-shaped single-step sidecar. Carries
  *     topology + inputs + targets + parameters_before + claimed forward
  *     + claimed loss + claimed backward + claimed updates + claimed
  *     parameters_after. The importer adds source_framework + attestor +
  *     fixture_status and runs runGeneralStep as the differential witness.
+ *   - "0.2.0" — v0.8 multi-step JSONL stream additive (optional trace_id +
+ *     step_index with co-presence guard).
+ *   - "0.3.0" — v0.9 batched sidecar additive (optional top-level batch
+ *     block + per_sample block + extended Loss).
+ *   - "0.4.0" — v0.9.1 Adam + AdamW additive (optional top-level optimizer
+ *     block with hyperparameters + per-update state_before/state_after on
+ *     Update.optimizer; optimizer.name widened to ['sgd','adam','adamw']).
+ *     Existing v0.3.0 SGD sidecars stay on v0.3.0 byte-equal; Adam/AdamW
+ *     sidecars declare format: "framework-trace.v0.4.0".
  */
-export const FRAMEWORK_TRACE_SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0"] as const;
+export const FRAMEWORK_TRACE_SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0"] as const;
 
 /**
  * Union of currently-shipped framework-trace sidecar schema versions.

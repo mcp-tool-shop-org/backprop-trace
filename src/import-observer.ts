@@ -48,6 +48,8 @@ import {
   type BatchedGeneralInput,
   type SourceFramework,
   type Attestor,
+  type OptimizerConfig,
+  type AdamState,
 } from "./general-engine.js"
 import type { Topology } from "./topology.js"
 import { applyToleranceCheck, type TolerancePolicy } from "./reconcile.js"
@@ -65,6 +67,7 @@ export type FrameworkTraceSidecar = {
     | "framework-trace.v0.1.0"
     | "framework-trace.v0.2.0"
     | "framework-trace.v0.3.0"
+    | "framework-trace.v0.4.0"
   source_framework: SourceFramework
   topology: Topology
   learning_rate: number
@@ -83,6 +86,26 @@ export type FrameworkTraceSidecar = {
     size: number
     sample_order: string[]
     reduction: "mean" | "sum" | "none"
+  }
+  /**
+   * v0.4.0+ optimizer block (v0.9.1). When `optimizer.name` is "adam" or
+   * "adamw", the sidecar carries top-level Adam/AdamW hyperparameters
+   * (beta1, beta2, epsilon, t, weight_decay for adamw) and each
+   * `updates[].optimizer` carries per-parameter `state_before` /
+   * `state_after` blocks. When omitted, sidecar defaults to SGD (v0.6/
+   * v0.7/v0.8/v0.9.0 behavior). Importer normalizes framework-native
+   * optimizer state to canonical (m, v, t) at extractor time —
+   * PyTorch's exp_avg → m, optax's mu → m, TF Keras's Adam/m/<param>
+   * → m, etc.
+   */
+  optimizer?: {
+    name: "sgd" | "adam" | "adamw"
+    learning_rate: number
+    beta1?: number
+    beta2?: number
+    epsilon?: number
+    weight_decay?: number
+    t?: number
   }
   numeric_policy?: GeneralInput["numeric_policy"]
   bias_policy?: GeneralInput["bias_policy"]
@@ -318,9 +341,11 @@ export function buildObserverReceiptFromSidecar(
     }
     compare("loss.total", engineReceipt.loss.total, sidecar.loss.total)
   } else {
-    // UNBATCHED path (v0.6/v0.7/v0.8 behavior). Preserves byte-identical
-    // emission for v0.1.0/v0.2.0 sidecars.
-    const engineInput: GeneralInput = {
+    // UNBATCHED path (v0.6/v0.7/v0.8 behavior + v0.9.1 Adam/AdamW).
+    // Preserves byte-identical emission for v0.1.0/v0.2.0 sidecars when
+    // sidecar.optimizer is absent. When sidecar.optimizer.name is
+    // adam/adamw, the engine takes the Adam path and emits v0.5.0 receipts.
+    const engineInputBase: GeneralInput = {
       topology: sidecar.topology,
       learning_rate: sidecar.learning_rate,
       inputs: sidecar.inputs,
@@ -329,6 +354,36 @@ export function buildObserverReceiptFromSidecar(
       numeric_policy:
         sidecar.numeric_policy ?? DEFAULT_NUMERIC_POLICY_FOR_OBSERVER,
       bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
+    }
+    let engineInput: GeneralInput = engineInputBase
+    // v0.9.1 — Adam/AdamW dispatch from sidecar.optimizer.
+    if (sidecar.optimizer !== undefined && sidecar.optimizer.name !== "sgd") {
+      const ocIn = sidecar.optimizer
+      const oc: OptimizerConfig = {
+        name: ocIn.name,
+        learning_rate: ocIn.learning_rate,
+        ...(ocIn.beta1 !== undefined ? { beta1: ocIn.beta1 } : {}),
+        ...(ocIn.beta2 !== undefined ? { beta2: ocIn.beta2 } : {}),
+        ...(ocIn.epsilon !== undefined ? { epsilon: ocIn.epsilon } : {}),
+        ...(ocIn.t !== undefined ? { t: ocIn.t } : {}),
+        ...(ocIn.weight_decay !== undefined
+          ? { weight_decay: ocIn.weight_decay }
+          : {}),
+      }
+      // Extract per-parameter state_before from sidecar updates[].optimizer.state_before
+      const stateBefore: Record<string, AdamState> = {}
+      for (const u of sidecar.updates) {
+        const optAny = (u as { optimizer?: { state_before?: AdamState } }).optimizer
+        const sb = optAny?.state_before
+        if (sb !== undefined) {
+          stateBefore[u.parameter_id] = { m: sb.m, v: sb.v }
+        }
+      }
+      engineInput = {
+        ...engineInputBase,
+        optimizer_config: oc,
+        optimizer_state_before: stateBefore,
+      }
     }
     engineReceipt = runGeneralStep(engineInput)
 
@@ -402,8 +457,15 @@ export function buildObserverReceiptFromSidecar(
     ? "engine_recompute_matched_within_tolerance"
     : "engine_recompute_disagreed"
 
+  // v0.9.1 — schema_version "0.5.0" for Adam/AdamW receipts (forced bump),
+  // "0.4.0" for SGD observer-mode receipts (byte-equal preservation with
+  // v0.6/v0.7/v0.8/v0.9.0 SGD observer-mode receipts).
+  const isAdamFamilyImport =
+    sidecar.optimizer !== undefined && sidecar.optimizer.name !== "sgd"
+  const receiptSchemaVersion: "0.4.0" | "0.5.0" = isAdamFamilyImport ? "0.5.0" : "0.4.0"
+
   const receipt: GeneralReceipt = {
-    schema_version: "0.4.0",
+    schema_version: receiptSchemaVersion,
     fixture: fixtureLabel,
     step: 1,
     fixture_status: {
@@ -424,6 +486,30 @@ export function buildObserverReceiptFromSidecar(
     bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
     topology: engineReceipt.topology,
     learning_rate: sidecar.learning_rate,
+    // v0.9.1 — emit optimizer_config block ONLY when Adam/AdamW (preserves
+    // SGD observer-mode receipt byte-equality with v0.6-v0.9.0). The block
+    // carries name + lr + beta1/beta2/epsilon/t (and weight_decay for adamw).
+    ...(isAdamFamilyImport && sidecar.optimizer !== undefined
+      ? {
+          optimizer_config: {
+            name: sidecar.optimizer.name,
+            learning_rate: sidecar.optimizer.learning_rate,
+            ...(sidecar.optimizer.beta1 !== undefined
+              ? { beta1: sidecar.optimizer.beta1 }
+              : {}),
+            ...(sidecar.optimizer.beta2 !== undefined
+              ? { beta2: sidecar.optimizer.beta2 }
+              : {}),
+            ...(sidecar.optimizer.epsilon !== undefined
+              ? { epsilon: sidecar.optimizer.epsilon }
+              : {}),
+            ...(sidecar.optimizer.t !== undefined ? { t: sidecar.optimizer.t } : {}),
+            ...(sidecar.optimizer.weight_decay !== undefined
+              ? { weight_decay: sidecar.optimizer.weight_decay }
+              : {}),
+          } satisfies OptimizerConfig,
+        }
+      : {}),
     // v0.9 — batched receipts carry batch + per_sample blocks; unbatched
     // receipts omit them (preserves byte-equality for v0.6-v0.8 fixtures).
     ...(sidecar.batch !== undefined ? { batch: sidecar.batch } : {}),
@@ -615,17 +701,20 @@ export function buildObserverReceiptStreamFromSidecar(
           `the single-step subcommand (drop 'multi' from the CLI invocation).`,
       )
     }
-    // v0.9: multi-step ingestion accepts framework-trace.v0.2.0 (unbatched)
-    // AND framework-trace.v0.3.0 (batched or unbatched per record). v0.1.0
+    // v0.9.1: multi-step ingestion accepts framework-trace.v0.2.0 (unbatched
+    // SGD), framework-trace.v0.3.0 (batched or unbatched SGD), AND
+    // framework-trace.v0.4.0 (Adam/AdamW + optimizer state). v0.1.0
     // single-step sidecars are still rejected — they lack trace_id/step_index
     // and must use the single-step subcommand.
     if (
       validation.schemaVersion !== "0.2.0" &&
-      validation.schemaVersion !== "0.3.0"
+      validation.schemaVersion !== "0.3.0" &&
+      validation.schemaVersion !== "0.4.0"
     ) {
       throw new Error(
         `${callerLabel}: sidecar line ${i + 1} declares format='framework-trace.v${validation.schemaVersion}' but multi-step ` +
-          `ingestion requires 'framework-trace.v0.2.0' or 'framework-trace.v0.3.0'. Use the single-step subcommand for v0.1.0 sidecars.`,
+          `ingestion requires 'framework-trace.v0.2.0', 'framework-trace.v0.3.0', or 'framework-trace.v0.4.0'. ` +
+          `Use the single-step subcommand for v0.1.0 sidecars.`,
       )
     }
     sidecars.push(validation.sidecar as FrameworkTraceSidecarV2)
@@ -798,8 +887,8 @@ export function buildObserverReceiptStreamFromSidecar(
       }
       compare("loss.total", engineReceipt.loss.total, sidecar.loss.total)
     } else {
-      // UNBATCHED record (v0.6/v0.7/v0.8 path).
-      const engineInput: GeneralInput = {
+      // UNBATCHED record (v0.6/v0.7/v0.8 path + v0.9.1 Adam/AdamW path).
+      const engineInputBase: GeneralInput = {
         topology: sidecar.topology,
         learning_rate: sidecar.learning_rate,
         inputs: sidecar.inputs,
@@ -808,6 +897,34 @@ export function buildObserverReceiptStreamFromSidecar(
         numeric_policy:
           sidecar.numeric_policy ?? DEFAULT_NUMERIC_POLICY_FOR_OBSERVER,
         bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
+      }
+      let engineInput: GeneralInput = engineInputBase
+      if (sidecar.optimizer !== undefined && sidecar.optimizer.name !== "sgd") {
+        const ocIn = sidecar.optimizer
+        const oc: OptimizerConfig = {
+          name: ocIn.name,
+          learning_rate: ocIn.learning_rate,
+          ...(ocIn.beta1 !== undefined ? { beta1: ocIn.beta1 } : {}),
+          ...(ocIn.beta2 !== undefined ? { beta2: ocIn.beta2 } : {}),
+          ...(ocIn.epsilon !== undefined ? { epsilon: ocIn.epsilon } : {}),
+          ...(ocIn.t !== undefined ? { t: ocIn.t } : {}),
+          ...(ocIn.weight_decay !== undefined
+            ? { weight_decay: ocIn.weight_decay }
+            : {}),
+        }
+        const stateBefore: Record<string, AdamState> = {}
+        for (const u of sidecar.updates) {
+          const optAny = (u as { optimizer?: { state_before?: AdamState } }).optimizer
+          const sb = optAny?.state_before
+          if (sb !== undefined) {
+            stateBefore[u.parameter_id] = { m: sb.m, v: sb.v }
+          }
+        }
+        engineInput = {
+          ...engineInputBase,
+          optimizer_config: oc,
+          optimizer_state_before: stateBefore,
+        }
       }
       engineReceipt = runGeneralStep(engineInput)
 
@@ -872,8 +989,13 @@ export function buildObserverReceiptStreamFromSidecar(
       ? "engine_recompute_matched_within_tolerance"
       : "engine_recompute_disagreed"
 
+    // v0.9.1 — schema_version "0.5.0" when sidecar declares Adam/AdamW;
+    // otherwise stays "0.4.0" (byte-equal preservation for SGD multi-step).
+    const isAdamFamilyRecord =
+      sidecar.optimizer !== undefined && sidecar.optimizer.name !== "sgd"
+    const recordSchemaVersion: "0.4.0" | "0.5.0" = isAdamFamilyRecord ? "0.5.0" : "0.4.0"
     const receipt: GeneralReceipt = {
-      schema_version: "0.4.0",
+      schema_version: recordSchemaVersion,
       fixture: `${fixtureLabelBase}-step-${i}`,
       step: resolvedStepIndices[i]! + 1, // legacy 1-indexed `step` field
       trace_id: resolvedTraceId,
@@ -896,6 +1018,30 @@ export function buildObserverReceiptStreamFromSidecar(
       bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
       topology: engineReceipt.topology,
       learning_rate: sidecar.learning_rate,
+      // v0.9.1 — emit optimizer_config block ONLY for Adam/AdamW records.
+      ...(isAdamFamilyRecord && sidecar.optimizer !== undefined
+        ? {
+            optimizer_config: {
+              name: sidecar.optimizer.name,
+              learning_rate: sidecar.optimizer.learning_rate,
+              ...(sidecar.optimizer.beta1 !== undefined
+                ? { beta1: sidecar.optimizer.beta1 }
+                : {}),
+              ...(sidecar.optimizer.beta2 !== undefined
+                ? { beta2: sidecar.optimizer.beta2 }
+                : {}),
+              ...(sidecar.optimizer.epsilon !== undefined
+                ? { epsilon: sidecar.optimizer.epsilon }
+                : {}),
+              ...(sidecar.optimizer.t !== undefined
+                ? { t: sidecar.optimizer.t }
+                : {}),
+              ...(sidecar.optimizer.weight_decay !== undefined
+                ? { weight_decay: sidecar.optimizer.weight_decay }
+                : {}),
+            } satisfies OptimizerConfig,
+          }
+        : {}),
       // v0.9 — batched record fields propagated to the receipt.
       ...(sidecar.batch !== undefined ? { batch: sidecar.batch } : {}),
       inputs: sidecar.inputs,

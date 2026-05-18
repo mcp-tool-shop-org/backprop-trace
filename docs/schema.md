@@ -49,12 +49,40 @@ additive doesn't mean old validators magically understand new fields.
 
 This matches the v0.8 precedent and CONTRIBUTING.md's "additive evolution
 is allowed within the same schema_version if existing receipts remain
-valid" policy. Strict closed-shape evolution (bumping to `receipt.v0.5.0`
-on every additive change) is the alternative discipline; the v0.8 + v0.9
-decision was to defer the v0.5.0 bump until a load-bearing reason emerges
-(likely v0.9.1 Adam, which adds new closed-shape `Update.optimizer.{name,
-hyperparameters, state_*}` fields and may force the bump per Agent 3's
-v0.9 study analysis).
+valid" policy.
+
+### v0.9.1 FORCED bump to receipt.v0.5.0 (Adam + AdamW)
+
+**v0.9.1 forces the bump to `receipt.v0.5.0`.** The v0.9.1 Adam + AdamW
+slice adds:
+- Top-level `optimizer_config` block (`name`, `learning_rate`, `beta1`,
+  `beta2`, `epsilon`, `weight_decay?`, `t`)
+- Per-update `Update.optimizer.state_before` and `Update.optimizer.state_after`
+  blocks (each with `m, v`)
+- Widened `Update.optimizer.name` enum from `["sgd"]` to `["sgd", "adam", "adamw"]`
+
+These changes CANNOT happen in-place on `receipt.v0.4.0` because:
+- `Update.optimizer.name` was a closed enum `["sgd"]` — widening requires
+  schema-version bump (the old schema rejects `"adam"` / `"adamw"`)
+- `Update.optimizer` had `additionalProperties: false` — adding `state_before`
+  / `state_after` would require either weakening the closure (kills the
+  v0.1-v0.9.0 closed-shape discipline) or bumping the version
+- Root-level `optimizer_config` requires the same trade-off
+
+This is the load-bearing reason the v0.8/v0.9 decision deferred — Adam
+was anticipated. SGD-only receipts continue to declare `schema_version:
+"0.4.0"` and validate against the v0.4.0 schema unchanged (byte-equal
+preservation for the entire v0.1-v0.9.0 fixture lineage). Adam/AdamW
+receipts declare `schema_version: "0.5.0"` and pick up the new
+conditional `if/then` requirements on `optimizer_config` +
+`Update.optimizer`. The `framework-trace` sidecar schema bumps in
+parallel (`framework-trace.v0.4.0` is forced for the same reasons —
+`optimizer.name` closed enum + `Update.optimizer.additionalProperties:
+false`).
+
+The `package.json` `exports` map now also exposes the v0.2.0 and v0.3.0
+framework-trace subpath exports (previously bundled in `files:` but not
+subpath-exported; fixed in v0.9.1 alongside the v0.4.0 export).
 
 A receipt's `schema_version` field selects which schema validates it.
 The bundled validator (`src/validate.ts`) compiles both schemas at

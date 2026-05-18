@@ -12,9 +12,9 @@
   <a href="https://www.npmjs.com/package/@mcptoolshop/backprop-trace"><img alt="npm" src="https://img.shields.io/npm/v/@mcptoolshop/backprop-trace.svg"></a>
 </p>
 
-A deterministic structural-trace verifier for neural-network training steps — a 19-rule reconciler that re-derives gradients, signals, and parameter updates from named factors and emits canonical bytewise JSONL receipts. In the Csmith/CompCert lineage of *"the oracle must not consult the artifact it judges."*
+A deterministic structural-trace verifier for neural-network training steps — a 25-rule reconciler (Rule 21 reserved for v0.9.2 momentum SGD) that re-derives gradients, signals, parameter updates, and Adam/AdamW moment state from named factors and emits canonical bytewise JSONL receipts. In the Csmith/CompCert lineage of *"the oracle must not consult the artifact it judges."*
 
-> **Status: mid-v0 (v0.9.0).** The core engine and reconciler are real and shipping. CPU-only, SGD-only. External framework traces are hand-authored sidecars today; v0.8 added multi-step observer-mode ingestion via JSONL streams; v0.9 adds batched (multi-sample) observer-mode ingestion (single-step or multi-step). See [What's not in this version (yet)](#whats-not-in-this-version-yet) before you pick this up for production work.
+> **Status: mid-v0 (v0.9.1).** The core engine and reconciler are real and shipping. CPU-only. SGD + Adam + AdamW supported (momentum SGD = v0.9.2). External framework traces are hand-authored sidecars today; v0.8 added multi-step observer-mode ingestion via JSONL streams; v0.9 added batched (multi-sample) observer-mode ingestion; **v0.9.1 adds Adam + AdamW** with decoupled weight decay (Loshchilov & Hutter 2017 arXiv:1711.05101 Alg 2 line 12) — **AdamW adds decoupled weight decay** and is explicitly contrasted with coupled L2 (the most common AdamW porting bug; see Rule 24 + the `fixtures/bad/adamw.bad-as-coupled-l2.jsonl` fixture). See [What's not in this version (yet)](#whats-not-in-this-version-yet) before you pick this up for production work.
 
 ## 30-second quickstart
 
@@ -41,7 +41,9 @@ The Mazur 2-2-2 is the most-cited single-step backprop walkthrough on the open w
 
 ## What this is
 
-backprop-trace is a numerical-correctness verifier for neural-network training steps. You hand it a receipt — a JSONL record naming every factor that contributed to a single gradient update — and the reconciler walks 19 rules that re-derive every claim from the named factors. If any rule disagrees within hybrid tolerance (`atol + rtol`, symmetric max form), the receipt is rejected. Multi-step observer-mode ingestion (v0.8+) produces one verified receipt per training step plus cross-step chain integrity checks (Rules 9 + 10) and optional bundle-integrity binding (Rule 17, GATED). Batched observer-mode ingestion (v0.9+) accepts multi-sample training steps with per-sample (`forward`, `loss`) data and reduced (`gradient`, `update`) values; Rule 18 verifies the batch reduction (mean vs sum) and Rule 19 verifies the sample-set is coherent. None of this validates the overall training run; only that each recorded step (per sample, then reduced) is mathematically consistent and that the recorded chain is intact.
+backprop-trace is a numerical-correctness verifier for neural-network training steps. You hand it a receipt — a JSONL record naming every factor that contributed to a single gradient update — and the reconciler walks 25 rules (Rule 21 reserved for v0.9.2 momentum) that re-derive every claim from the named factors. If any rule disagrees within hybrid tolerance (`atol + rtol`, symmetric max form), the receipt is rejected. Multi-step observer-mode ingestion (v0.8+) produces one verified receipt per training step plus cross-step chain integrity checks (Rules 9 + 10) and optional bundle-integrity binding (Rule 17, GATED). Batched observer-mode ingestion (v0.9+) accepts multi-sample training steps with per-sample (`forward`, `loss`) data and reduced (`gradient`, `update`) values; Rule 18 verifies the batch reduction (mean vs sum) and Rule 19 verifies the sample-set is coherent. Adam + AdamW observer-mode ingestion (v0.9.1+) accepts per-update `(m, v)` state and top-level `optimizer_config`; Rules 22, 23, 24 verify the moment recurrences, bias correction, and parameter update against Kingma & Ba 2014 Algorithm 1; Rules 25, 26 verify multi-step optimizer-state chain + config constancy. None of this validates the overall training run; only that each recorded step (per sample, then reduced) is mathematically consistent and that the recorded chain is intact.
+
+**Trust-framing caveat (load-bearing).** Rules 22, 23, 24 (Adam/AdamW math), Rule 17 (bundle binding), and Rules 18, 19 (batch reduction) are **structural consistency checks, NOT producer-authenticity checks**. An attacker who controls every byte of the sidecar and recomputes a consistent `(g, m, v, update)` quadruple passes Rules 22-24 trivially — analogous to the [Fang et al. 2023 EuroS&P spoofing class against Proof-of-Learning](https://arxiv.org/abs/2208.03567) ("'Adversarial Examples' for Proof-of-Learning"; the original PoL construction is [Jia et al. 2021 IEEE S&P](https://arxiv.org/abs/2103.05633)). For producer-identity binding, combine the rules with Rule 16 (`attestor.signed_subject_digest`), an external Sigstore / cosign signature, or an out-of-band attestation. backprop-trace is a **per-step structural complement** to PoL, not a replacement; both PoL and backprop-trace are themselves spoofable in isolation.
 
 The doctrinal anchor is Csmith (Yang, Chen, Eide, Regehr — PLDI 2011, [https://users.cs.utah.edu/~regehr/papers/pldi11-preprint.pdf](https://users.cs.utah.edu/~regehr/papers/pldi11-preprint.pdf)) and CompCert (Leroy, CACM 2009, [https://xavierleroy.org/publi/compcert-CACM.pdf](https://xavierleroy.org/publi/compcert-CACM.pdf)): adversarial corpora prove a verifier, passing tests do not. Every reconciler rule ships with a deliberately-broken fixture in [`fixtures/bad/`](./fixtures/bad) that the verifier must reject *before* reading any `fixture_status` lifecycle metadata. This anti-circularity discipline — the oracle must not consult the artifact it judges — is the load-bearing property.
 
@@ -67,10 +69,10 @@ Pinned to Node 22.x (V8 fdlibm `Math.exp` determinism is load-bearing — see [`
 
 ## CLI usage
 
-v0.9 ships 19 subcommands. Full reference: [`docs/cli.md`](./docs/cli.md). v0.9 adds NO new subcommands — batched ingestion is a property of the sidecar (declared via the optional `batch` block), not a CLI verb.
+v0.9.1 ships the same 19 subcommands as v0.9. Full reference: [`docs/cli.md`](./docs/cli.md). v0.9.1 adds NO new subcommands — Adam/AdamW ingestion is a property of the sidecar (declared via the optional `optimizer` block + per-update `state_before`/`state_after`), not a CLI verb. Same dispatch pattern as v0.9 batched ingestion.
 
 ```
-bp reconcile receipt <file>                Reconcile a receipt against the 19 rules.
+bp reconcile receipt <file>                Reconcile a receipt against the 25 rules (Rule 21 reserved for v0.9.2 momentum).
 bp verify mazur [<file>]                   Full gate (Mazur 2-2-2): schema + reconcile + engine-reproduce + byte-equal + drift.
 bp verify general <file>                   Generalized verify for any v0.2+ receipt (XOR, iris, softmax+CE, custom).
 bp verify multi <file.jsonl>               Multi-record JSONL; per-record Rules 1-8 + cross-record Rules 9 + 10.
@@ -188,7 +190,7 @@ bp import pytorch multi train.multi-step-batched.sidecar.jsonl | bp verify multi
 
 The bundled batched hero fixture is a PyTorch 4-sample softmax+CE SGD trace on the same 2-2-3 network. A multi-step batched fixture (2 steps × 4 samples) is also bundled to demonstrate the cross-step + bundle-binding flow with batching active.
 
-## The 19 rules
+## The 25 rules (Rule 21 reserved for v0.9.2 momentum)
 
 | # | Rule |
 |---|---|
@@ -198,21 +200,28 @@ The bundled batched hero fixture is a PyTorch 4-sample softmax+CE SGD trace on t
 | 2 | Downstream contribution and backpropagated sum |
 | 3 | Hidden error signal consistency |
 | 4 | Update gradient consistency |
-| 5 | Update value consistency |
-| 6 | Weight progression |
-| 7 | Final state consistency |
+| 5 | Update value consistency (v0.9.1: GATED OFF for non-SGD; Adam/AdamW use Rule 24) |
+| 6 | Weight progression (v0.9.1: AdamW branch adds `(1 - lr*wd)` decoupled-decay factor on `weight_after`) |
+| 7 | Final state consistency (v0.9.1: AdamW branch adds `(1 - lr*wd)` decoupled-decay factor on `parameters_after`) |
 | 8 | Provenance reference consistency |
 | 9 | Multi-step parameter chain (`parameters_before[N]` = prior `parameters_after[N-1]`) |
 | 10 | Multi-step trace identity (shared `trace_id` + sequential `step_index`) |
 | 11 | Softmax normalization (`sum(forward[output].out) == 1.0`) |
 | 12 | Loss formula consistency (half-squared-error + cross-entropy-softmax branches; skipped for batched receipts — Rule 18 handles batched loss) |
 | 13 | Dual-form consistency (softmax+CE jacobian decomposition; GATED — fires only when `dual_form` present) |
-| 14 | Engine-recompute differential (MANDATORY for observer-mode imported receipts; batch-aware via `runBatchedGeneralStep` when `batch` is present) |
+| 14 | Engine-recompute differential (MANDATORY for observer-mode imported receipts; batch-aware via `runBatchedGeneralStep`; v0.9.1 Adam-aware — compares engine `state_after` against stored) |
 | 15 | Skip-basis required (closed enum `EXTERNAL_TRUST_BASIS`, 4 values) |
 | 16 | Attestation digest binding (GATED — fires when `attestor.signed_subject_digest` present) |
 | 17 | Trace-bundle binding — bundle-integrity / post-binding mutation detection (GATED — fires when `attestor.bundle_root_digest` present; NOT a producer-authenticity check) |
 | 18 | Batch reduction consistency — `loss.total == reduction(loss.per_sample.values(), batch.reduction)` (GATED — fires when `batch` is present AND `loss.reduction` in {`mean`, `sum`}; catches mean-vs-sum confusion) |
 | 19 | Sample-set coherence — every per-sample map's key set equals `batch.sample_order` set (GATED — fires when `batch.sample_order` is present; missing, duplicate, or extra sample IDs in any ordered per-sample projection used for reduction / emission / canonical digest construction fail) |
+| 20 | **v0.9.1** Optimizer-state shape consistency — Adam/AdamW state_before/state_after presence + hyperparameter presence (GATED on Adam-family updates) |
+| 21 | **RESERVED for v0.9.2 momentum** — buffer recurrence `buffer_t == mu * buffer_{t-1} + gradient` |
+| 22 | **v0.9.1** Adam moment recurrences — 22a `m_after == beta1 * m_before + (1-beta1) * gradient`; 22b `v_after == beta2 * v_before + (1-beta2) * gradient²` (Kingma & Ba 2014 Alg 1 lines 9-10) |
+| 23 | **v0.9.1** Adam bias correction + t consistency — `optimizer_config.t == step_index + 1` when both present |
+| 24 | **v0.9.1** Adam/AdamW parameter update — `update == lr * m_hat / (sqrt(v_hat) + epsilon)`, **epsilon OUTSIDE sqrt** (PyTorch convention; Kingma & Ba 2014 Alg 1 line 13) |
+| 25 | **v0.9.1** Multi-step optimizer-state chain — `state_before[step+1] == state_after[step]` for `m, v`; `t` monotonic +1 (analog of Rule 9) |
+| 26 | **v0.9.1** Multi-step optimizer-config constancy — `{name, beta1, beta2, epsilon, weight_decay}` identical across bundle; `learning_rate` EXCLUDED (LR schedules legitimate); `t` EXCLUDED (Rule 25 handles it) |
 
 Full statements in [`docs/reconciliation.md`](./docs/reconciliation.md). Every rule ships with a paired bad fixture in `fixtures/bad/` per the Csmith doctrine.
 
@@ -240,7 +249,8 @@ backprop-trace v0.7.0 is a **mid-v0 product**. The core engine, the reconciler, 
 
 - **Heterogeneous multi-framework traces.** A multi-step bundle today must come from a single framework — you cannot ingest `[pytorch_step_0, jax_step_1, tensorflow_step_2]` in one stream. Framework switches mid-training are uncommon in practice; this may stay out of scope. *Roadmap target: not before v1.0, may stay out of scope.*
 - **Producer-identity binding on multi-step traces.** Rule 17 (`attestor.bundle_root_digest`) catches bundle-integrity failures — accidental splice, post-binding mutation, inconsistent bundle roots — but does NOT prove producer authenticity. An attacker who controls all receipt bytes and recomputes the bundle digest passes Rule 17 trivially. Producer-identity binding requires combining `bundle_root_digest` with Rule 16's `signed_subject_digest`, an external signature, or an out-of-band attestation. v0.8 ships the bundle-integrity layer; the signature layer is downstream operator work, not a built-in. *Roadmap target: documented today; built-in operator surface may follow.*
-- **Optimizers beyond vanilla SGD.** No Adam, AdamW, momentum, or weight decay. Real ML training in 2026 is overwhelmingly Adam; SGD-only is a real limitation. The next product-completeness slice. *Roadmap target: v0.9.1.*
+- ~~**Optimizers beyond vanilla SGD.** No Adam, AdamW, momentum, or weight decay.~~ **PARTIALLY CLOSED in v0.9.1** — Adam + AdamW shipped via `receipt.v0.5.0` + `framework-trace.v0.4.0` forced bump + top-level `optimizer_config` block + per-update `state_before` / `state_after` blocks + Rules 20, 22, 23, 24, 25, 26. **AdamW adds decoupled weight decay** (Loshchilov & Hutter 2017 arXiv:1711.05101 Alg 2 line 12 — applied directly to `weight_after`, explicitly NOT folded into the gradient like coupled L2). Adam-rule trust framing (load-bearing): structural consistency checks NOT producer-authenticity (Fang et al. 2023 PoL spoofing class applies — see Trust-framing caveat above and `docs/reconciliation.md`). **Remaining**: momentum SGD (`v0.9.2`); Nesterov / AMSGrad / per-parameter-group hyperparameters / LR schedules / gradient clipping / mixed precision (`v0.10+`).
+- **Momentum SGD (and Nesterov variant).** Production ResNet-family training still uses SGD+momentum (Wilson et al. 2017 arXiv:1705.08292 documents the generalization advantage). Rule 21 is reserved for the momentum buffer recurrence. *Roadmap target: v0.9.2.*
 - **Per-sample gradients in batched receipts.** v0.9.0 ships reduced gradients only — the gradient the optimizer actually applied to each parameter is a single scalar (mean or sum across the batch). Per-sample gradients (the full `N × |params|` decomposition) are useful for influence audits and sample-poisoning detection but were deferred to keep the v0.9.0 slice small. *Roadmap target: v0.9.x / v0.10.*
 - **Heterogeneous batch sizes across steps.** A multi-step batched bundle today fixes the batch_size per stream (every step has the same number of samples). Variable-size batching (last-batch-in-epoch having fewer samples) is out of scope for v0.9.0. *Roadmap target: not before v1.0, may stay out of scope.*
 - **Live framework helpers.** The sidecar is hand-authored today; no `pip install backprop-trace-pytorch` package, no `scripts/python-helpers/dump_pytorch_trace.py` ready-to-run extractor. The path from "I have a PyTorch step" to "I have a receipt" is too long. *Roadmap target: v0.10.*

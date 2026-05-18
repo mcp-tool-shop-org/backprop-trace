@@ -14,6 +14,237 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.9.1] - 2026-05-18
+
+The v0.9.1 Adam + AdamW wave. **Not a v1.0.0 promotion** — backprop-trace
+remains mid-v0 (no momentum SGD yet, no live framework helpers, no real-
+world fixture, no adopter validation). What v0.9.1 actually does: closes
+the "SGD-only" gap named in v0.9.0's SHIP_GATE — Adam and AdamW receipts
+now validate end-to-end (engine + reconciler + observer-mode ingestion +
+multi-step state chain + bundle binding). AdamW adds decoupled weight
+decay (Loshchilov & Hutter 2017 arXiv:1711.05101 Algorithm 2 line 12) —
+**explicitly contrasted with coupled L2**, the most common AdamW porting
+bug. Momentum SGD deferred to v0.9.2.
+
+### Added
+
+- **`receipt.v0.5.0` schema** (NEW file). FORCED bump over `receipt.v0.4.0`:
+  the closed `Update.optimizer.name: ["sgd"]` enum + `Update.optimizer`
+  `additionalProperties: false` block prevented in-place evolution.
+  v0.5.0 widens `optimizer.name` to `["sgd", "adam", "adamw"]`, adds
+  optional per-update `state_before` / `state_after` (Adam `m, v`), and
+  adds optional top-level `optimizer_config` block (`name`, `learning_rate`,
+  `beta1`, `beta2`, `epsilon`, `weight_decay?`, `t`). Conditional `if/then`
+  requirements on optimizer_config + per-update state when name in
+  `{adam, adamw}`. SGD-only receipts continue to declare `schema_version:
+  "0.4.0"` (byte-equal preservation for v0.1-v0.9.0 fixtures).
+- **`framework-trace.v0.4.0` schema** (NEW file). FORCED bump for the same
+  reasons. Adds optional top-level `optimizer` block + per-update
+  `state_before` / `state_after` + widened `optimizer.name` enum.
+  v0.3.0 / v0.2.0 / v0.1.0 sidecars continue to validate against their
+  own schemas unchanged. Importer dispatcher accepts all four versions
+  on the multi-step path.
+- **`runGeneralStep` Adam/AdamW dispatch** in `src/general-engine.ts`.
+  New types: `OptimizerConfig`, `AdamState`. Extended `GeneralInput` with
+  optional `optimizer_config` + `optimizer_state_before`. When
+  `optimizer_config.name in {adam, adamw}`, the engine computes m, v,
+  m_hat, v_hat per Kingma & Ba 2014 Alg 1, then `update = lr * m_hat /
+  (sqrt(v_hat) + epsilon)` (epsilon OUTSIDE sqrt — PyTorch convention).
+  AdamW additionally applies decoupled weight decay at the parameter
+  step: `weight_after = (1 - lr*wd) * weight_before + update`. SGD
+  receipts byte-equal to v0.1-v0.9.0; new `optimizer_config` block
+  emitted ONLY for Adam/AdamW (preserves SGD byte-equality).
+- **`runBatchedGeneralStep` Adam guard** — batched Adam/AdamW deferred to
+  v0.9.x/v0.10 (per-sample-runs-then-reduce pattern doesn't fit the
+  single-Adam-step-with-reduced-gradient shape); engine throws a clear
+  error if both `batch` and Adam/AdamW are requested. SGD batched
+  continues to work unchanged.
+- **Rules 20 + 22 + 23 + 24 + 25 + 26** in `src/reconcile.ts`:
+  - **Rule 20** — optimizer-state shape consistency (Adam/AdamW
+    state_before/state_after presence + finiteness + optimizer_config
+    hyperparameter presence + bounds). GATED on Adam-family updates.
+  - **Rule 22** (22a + 22b) — Adam moment recurrences (Kingma & Ba 2014
+    Alg 1 lines 9-10).
+  - **Rule 23** — Adam bias correction + t consistency
+    (`optimizer_config.t === step_index + 1` when both present;
+    bias-correction divisor non-degeneracy).
+  - **Rule 24** — Adam/AdamW parameter update (Kingma & Ba 2014 Alg 1
+    line 13; pinned epsilon OUTSIDE sqrt — PyTorch convention; catches
+    the famous TF/Keras epsilon-inside-sqrt porting bug).
+  - **Rule 25** — multi-step optimizer-state chain (m/v continuity +
+    t monotonicity across receipts in a bundle; analog of Rule 9 for
+    optimizer state).
+  - **Rule 26** — multi-step optimizer-config constancy
+    (`name, beta1, beta2, epsilon, weight_decay` identical across
+    bundle; `learning_rate` EXCLUDED for LR schedules; `t` EXCLUDED
+    — Rule 25 handles it). Analog of Rule 10 for optimizer config.
+- **Rules 6 + 7 AdamW branches** — when `update.optimizer.name === "adamw"`,
+  `weight_after` (Rule 6) and `parameters_after[pid]` (Rule 7) are
+  recomputed as `(1 - lr*wd) * weight_before + update` instead of
+  `weight_before + update`. The decoupled-decay term is applied
+  DIRECTLY to the parameter, NOT folded into the gradient (coupled L2
+  is the alternative — explicitly rejected by the
+  `fixtures/bad/adamw.bad-as-coupled-l2.jsonl` fixture). This is the
+  load-bearing AdamW math distinction (Loshchilov & Hutter 2017 §2.1).
+- **Rule 5 GATED OFF for non-SGD** — Adam/AdamW updates do NOT satisfy
+  `update == lr * gradient` (Adam uses `lr * m_hat / (sqrt(v_hat) +
+  epsilon)`). Rule 5 silently skips Adam/AdamW updates; Rule 24 takes
+  over for the Adam-family update-formula check.
+- **Rule 14 (engine-recompute differential) Adam-aware** — when receipt
+  declares `optimizer_config.name in {adam, adamw}`, Rule 14 re-runs
+  `runGeneralStep` with the same `optimizer_config` + per-update
+  `state_before`, then compares engine `state_after` (m, v) against
+  stored values. Catches the Fang et al. 2023 spoofing class where a
+  malicious actor mutates `weight_after` while keeping internal
+  arithmetic consistent. Bad fixture:
+  `adam.bad-engine-recompute-disagrees-adam.jsonl`.
+- **Adam + AdamW good fixtures** in `fixtures/external/`:
+  - `pytorch.adam.{sidecar,golden}.jsonl` — single-step Adam (Mazur 2-2-2
+    topology, 9 weights + 1 bias, t=1, zero-init moments)
+  - `pytorch.adamw.{sidecar,golden}.jsonl` — single-step AdamW
+    (weight_decay=0.01)
+  - `pytorch.adam.multi-step.{sidecar,golden}.jsonl` — 3-step Adam
+    exercising Rules 25 + 26 + bundle binding
+  - `adam.reddi-2018-pathology.note.json` — positive-fixture
+    documentation anchor (Reddi et al. 2018 ICLR convergence pathology
+    is OUTSIDE verifier scope; rules check internal consistency, NOT
+    optimizer convergence quality)
+- **Adam adversarial fixture plate** (10 bad fixtures) in `fixtures/bad/`:
+  - `adam.bad-bias-correction-omitted.jsonl` → Rule 24
+  - `adam.bad-beta-swap.jsonl` → Rule 22
+  - `adam.bad-epsilon-inside-sqrt.jsonl` → Rule 24
+  - `adamw.bad-as-coupled-l2.jsonl` → Rule 7 (AdamW branch; cross-fires
+    Rule 6, Rule 14)
+  - `adam.bad-engine-recompute-disagrees-adam.jsonl` → Rule 14
+    (load-bearing per Fang et al. 2023 PoL spoofing class)
+  - `adam.bad-amsgrad-confusion.jsonl` → Rule 20
+  - `adam.bad-zero-init-state-mismatch.jsonl` → Rule 22
+  - `adam.bad-stale-moment-state.jsonl` → Rule 25 (multi-step)
+  - `adam.bad-timestep-off-by-one.jsonl` → Rule 23 (per-receipt t check
+    fires first; Rule 25's multi-step monotonicity check cross-fires)
+  - `adam.bad-hyperparameter-inconstancy.jsonl` → Rule 26 (multi-step)
+- **`schemas/receipt.v0.5.0.json` + `schemas/framework-trace.v0.4.0.json`
+  subpath exports** in `package.json` exports map (`./schema/receipt-0.5.0`,
+  `./schema/framework-trace-0.4.0`). Also fixes a v0.9.0 gap by adding
+  the missing `./schema/framework-trace-0.2.0` + `./schema/framework-trace-0.3.0`
+  subpath exports (the v0.2.0 + v0.3.0 schemas were bundled in `files:`
+  but not exposed as subpath exports; fixed in v0.9.1).
+- **`bp` CLI** rule labels updated for Rules 20-26 with honest Fang/PoL
+  trust framing (`src/bin/bp.ts` RULE_LABELS).
+- **Tests**: `test/import-pytorch-adam.test.ts` (Adam engine unit tests +
+  Adam sidecar import + Adam multi-step + AdamW differs-from-Adam-by-decoupled-decay
+  check) and `test/reconcile.bad-adam.test.ts` (anti-circularity tests
+  for each Adam bad fixture). 413 → 435 tests (+22, all passing).
+- **Doctrine ratchet**: `FILENAME_KIND_TO_RULE` extended with 11 Adam
+  fixture entries. `extractImplementedRules()` now expects Rules
+  `[1..26]` minus `21` (reserved for v0.9.2 momentum). Rule 21 stable
+  numbering ensures momentum slots into v0.9.2 without renumbering
+  Rules 22-26.
+
+### Changed
+
+- **`package.json` version 0.9.0 → 0.9.1.** Description rewritten:
+  "25-rule reconciler" (was "19-rule"); mentions Adam + AdamW with
+  decoupled weight decay explicitly contrasted with coupled L2;
+  preserves Mid-v0 status flag (CPU-only, SGD/Adam/AdamW only;
+  momentum + Nesterov + AMSGrad + per-parameter-groups + LR schedules
+  + gradient clipping + mixed precision deferred).
+- **`docs/reconciliation.md`** — Quick-reference rule table updated for
+  Rules 20-26 + Rule 21 reserved note. Added "Adam-rule trust framing
+  (load-bearing)" section (Fang et al. 2023 PoL spoofing class
+  caveat) + "AdamW: decoupled weight decay, explicitly NOT coupled L2"
+  section.
+- **`docs/schema.md`** — Added "v0.9.1 FORCED bump to receipt.v0.5.0"
+  section documenting why the v0.4.0 in-place additive path closed
+  for Adam (closed `optimizer.name` enum + `additionalProperties:
+  false` on `Update.optimizer`).
+- **`SHIP_GATE.md`** — "Optimizers beyond vanilla SGD" gap marked as
+  PARTIALLY CLOSED in v0.9.1 (Adam + AdamW shipped; momentum SGD
+  deferred to v0.9.2 in a new row with Rule 21 reservation).
+- **`README.md`** — Status line, 30-second quickstart, 25-rule table,
+  Trust-framing caveat paragraph (per-step structural complement to
+  PoL, not a replacement), What's-not-in-this-version Adam entry
+  marked PARTIALLY CLOSED + new momentum-SGD-deferred entry.
+- **Schema-loader docstrings** in `src/schema-loader.ts` —
+  `SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0"]`;
+  `FRAMEWORK_TRACE_SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0",
+  "0.4.0"]`. Docstrings updated to describe the v0.5.0 + v0.4.0
+  framework-trace additions.
+- **Validator dispatcher** (`src/validate.ts`) — `validateFrameworkTraceSidecar`
+  recognizes `format: "framework-trace.v0.4.0"` and routes to the new
+  validator.
+- **Engine identity** stays at `"backprop-trace-engine@0.6.0"` (the
+  Adam additions are NEW math paths but they don't change SGD math;
+  observer-mode receipts emitted by the importer keep the same engine
+  identity for byte-equal preservation). Bump only when SGD math
+  changes — Adam is additive surface area, not a SGD-math revision.
+
+### Notes (forward compatibility)
+
+- **Batched Adam** is deferred to v0.9.x / v0.10. The schema CAN
+  represent it (`batch` + `optimizer_config` blocks coexist on
+  receipt.v0.5.0), but the engine rejects the combination — batched
+  Adam requires a reduced-gradient → single-Adam-step dispatch shape
+  distinct from `runBatchedGeneralStep`'s per-sample subreceipt
+  pattern. Single-sample (batch.size=1) Adam works today via the
+  unbatched path.
+- **Momentum SGD** is v0.9.2 — Rule 21 reserved. PyTorch convention
+  `buffer_t = mu * buffer_{t-1} + gradient; update = -lr * buffer_t`.
+  Rules 6 + 7 already accept any update value (SGD/Adam/AdamW dispatch
+  is in place); momentum just adds Rule 21 + 1-2 new fixtures.
+- **AMSGrad / NAdam / RAdam / Lion** — v0.10+. AMSGrad's `max(v_t,
+  v_{t-1})` projection doesn't fit Rule 4's `product(factors)`
+  vocabulary cleanly; needs a separate rule design pass.
+- **Per-parameter-group hyperparameters** (PyTorch param_groups with
+  different lr/wd per group) — v0.9.x. Schema currently assumes
+  uniform optimizer per receipt; per-group would extend
+  `optimizer_config` to allow `groups: [...]` instead of flat fields.
+- **Learning rate schedules** (cosine, warmup) — trainer responsibility,
+  not optimizer responsibility. The receipt records the EFFECTIVE
+  lr at step t; how that number was scheduled is out of scope for
+  the verifier surface.
+- **Gradient clipping** (`max_norm` on gradient before optimizer step)
+  — trainer responsibility. The receipt records the POST-CLIP
+  gradient if clipping happened.
+- **Mixed-precision (fp16/bf16) Adam state** — v0.10+. Binary64 scope
+  is current Determinism Scope lock per `docs/computation-order.md`.
+
+### Numbers
+
+- 435 tests pass (was 413; +22 from new Adam test suites)
+- typecheck + build green
+- 9 new src files modified (schema-loader, validate, general-engine,
+  emit, reconcile, import-observer, import-pytorch via shared core,
+  bin/bp, package.json)
+- 2 new schema files (`schemas/receipt.v0.5.0.json` +
+  `schemas/framework-trace.v0.4.0.json`)
+- 4 new fixture files in `fixtures/external/` (Adam + AdamW +
+  Adam-multi-step + Reddi-pathology note)
+- 10 new fixture files in `fixtures/bad/` (Adam adversarial plate)
+- 2 new test files (`test/import-pytorch-adam.test.ts` +
+  `test/reconcile.bad-adam.test.ts`)
+- 2 new fixture-generation scripts (`scripts/generate-pytorch-adam-fixtures.ts`
+  + `scripts/generate-adam-bad-fixtures.ts`)
+- 22nd consecutive byte-identical fixture lineage from v0.1.0 forward
+  (SGD goldens unchanged; Adam goldens establish a new lineage starting
+  at v0.5.0 schema_version)
+
+### What v0.9.1 does NOT do
+
+- Does **not** promote to v1.0.0
+- Does **not** ship batched Adam/AdamW (engine rejects; deferred)
+- Does **not** ship momentum SGD (v0.9.2)
+- Does **not** ship Nesterov / AMSGrad / per-parameter-groups / LR
+  schedules / gradient clipping / mixed precision (v0.10+)
+- Does **not** ship live Python helpers (still hand-authored sidecars)
+- Does **not** add new CLI verbs (Adam dispatch is sidecar-driven, same
+  pattern as v0.9 batched dispatch)
+- Does **not** add a real-world fixture (Mazur 2-2-2 + softmax+CE
+  remain the heroes; CNN / transformer-block deferred to v0.11)
+- Does **not** add adopter validation (deferred to v0.12)
+- Does **not** change SGD byte-output (v0.1-v0.9.0 fixtures byte-equal
+  under the v0.9.1 engine)
+
 ## [0.9.0] - 2026-05-18
 
 The v0.9 batched observer-mode ingestion wave. **Not a v1.0.0 promotion** —

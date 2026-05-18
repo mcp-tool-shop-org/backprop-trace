@@ -16,7 +16,7 @@ to have done actually add up?**
 If the answer is "no," the reconciler refuses to certify the receipt and
 the verifier fails closed.
 
-## Quick reference: the 19 rules (+ Rule 0.8 structural sub-check)
+## Quick reference: the 25 rules (+ Rule 0.8 structural sub-check; Rule 21 reserved for v0.9.2 momentum)
 
 | # | Rule | Status |
 |---|------|--------|
@@ -25,9 +25,9 @@ the verifier fails closed.
 | 2 | Backpropagated sum == sum(downstream contributions) AND contribution.value == downstream_signal * weight_value | **implemented (v0.2)** |
 | 3 | Hidden error signal == backprop_sum * activation_derivative | **implemented (v0.2)** |
 | 4 | Update gradient == product(optimizer.factors) | **implemented (v0.1)** |
-| 5 | Update value == learning_rate * gradient | **implemented (v0.2)** |
-| 6 | Weight progression: weight_after == weight_before + update | **implemented (v0.2)** |
-| 7 | Parameter final state consistency | **implemented (v0.2)** |
+| 5 | Update value == learning_rate * gradient. **v0.9.1 GATED OFF for non-SGD** — Adam/AdamW use Rule 24's update formula instead | **implemented (v0.2)** |
+| 6 | Weight progression: `weight_after == weight_before + update` (SGD/Adam) or `(1 - lr*wd) * weight_before + update` (AdamW decoupled-decay branch added v0.9.1; same formula shape as Rule 7's AdamW branch) | **implemented (v0.2)** |
+| 7 | Parameter final state consistency: `parameters_after[pid] == parameters_before[pid] + update[pid]` (SGD/Adam) or `(1 - lr*wd) * parameters_before[pid] + update[pid]` (AdamW v0.9.1 branch; decoupled weight decay applied directly to the parameter per Loshchilov & Hutter 2017 arXiv:1711.05101 Alg 2 line 12) | **implemented (v0.2; AdamW branch v0.9.1)** |
 | 8 | Provenance reference (factor.from path) | **implemented (v0.2)** |
 | 9 | Multi-step parameter chain (`parameters_before[N]` equals prior `parameters_after[N-1]`) | **implemented (v0.3)** |
 | 10 | Multi-step trace identity (shared `trace_id` + sequential `step_index`) | **implemented (v0.3)** |
@@ -40,6 +40,13 @@ the verifier fails closed.
 | 17 | Trace-bundle binding: when any receipt in a multi-record reconcile declares `attestor.bundle_root_digest`, ALL receipts in the bundle MUST declare the same digest, AND that digest MUST equal the recomputed sha256 of the canonical-byte concatenation of every receipt with `bundle_root_digest` stripped. **GATED** on `bundle_root_digest` presence; fires only from `reconcileMultiStep`. **INTEGRITY ONLY**, not producer-authenticity — an attacker who controls all receipt bytes AND recomputes the digest passes Rule 17 trivially. Combine with Rule 16 (`signed_subject_digest`) or an external signature for producer-identity binding. | **implemented (v0.8)** |
 | 18 | Batch reduction consistency: when `receipt.batch` is present AND `loss.reduction` in {`mean`, `sum`}, assert `loss.total == reduction(loss.per_sample.values(), batch.reduction)`. Catches the canonical mean-vs-sum confusion attack structurally — a producer claiming `reduction: "mean"` but emitting `loss.total = sum(per_sample)` (off by a factor of N). **GATED** on `batch` presence + non-`none` reduction + `per_sample` presence. | **implemented (v0.9)** |
 | 19 | Sample-set coherence: when `batch.sample_order` is present, every ordered per-sample projection used for reduction / emission / canonical digest construction MUST be derived by iterating exactly that order. Concretely: per-sample maps (`loss.per_sample`, top-level `per_sample`) MUST have key sets EQUAL to `batch.sample_order`'s set. Missing IDs (gap), extra IDs (substitution), or duplicate `sample_order` entries fail. **GATED** on `batch.sample_order` presence. Schema-level `uniqueItems` on `batch.sample_order` is the first line of defense; Rule 19 is the reconciler-side defense-in-depth check. | **implemented (v0.9)** |
+| 20 | Optimizer-state shape consistency: when any update declares `optimizer.name` in `{adam, adamw}`, the top-level `optimizer_config` block MUST be present with all required hyperparameters (`name`, `learning_rate`, `beta1`, `beta2`, `epsilon`, `t`; plus `weight_decay` for `adamw`), and every Adam-family update MUST carry per-parameter `state_before` and `state_after` with finite numeric `m` and non-negative finite `v`. **GATED** on Adam/AdamW updates. STRUCTURAL CONSISTENCY check, NOT producer-authenticity. | **implemented (v0.9.1)** |
+| 21 | **RESERVED for v0.9.2 momentum SGD buffer recurrence** (`buffer_t == mu * buffer_{t-1} + gradient`). No `rule: 21` failure is emitted in v0.9.1 and the doctrine ratchet does not require a paired fixture for it. Stable numbering across v0.9.1 → v0.9.2 so momentum slots in without renumbering Rules 22-26. | **reserved (v0.9.2)** |
+| 22 | Adam moment recurrences (Kingma & Ba 2014 arXiv:1412.6980 Algorithm 1 lines 9-10): **22a** `m_after == beta1 * m_before + (1 - beta1) * gradient` AND **22b** `v_after == beta2 * v_before + (1 - beta2) * gradient²`. **GATED** on Adam/AdamW updates. Catches beta-swap, m/v swap, wrong-recurrence-coefficient porting bugs. STRUCTURAL CHECK — does not verify the gradient came from real data. | **implemented (v0.9.1)** |
+| 23 | Adam bias correction + t consistency: `optimizer_config.t == step_index + 1` when both present (Kingma & Ba 2014 indexes the Adam timestep starting at 1; PyTorch's `state["step"]` matches after the first `.step()` call). Setup for Rule 24's m_hat / v_hat derivation chain. **GATED** on Adam/AdamW updates. | **implemented (v0.9.1)** |
+| 24 | Adam/AdamW parameter update (Kingma & Ba 2014 Algorithm 1 line 13): `update == lr * m_hat / (sqrt(v_hat) + epsilon)` where `m_hat = m_after / (1 - beta1^t)` and `v_hat = v_after / (1 - beta2^t)`. Pinned `epsilon` placement: **OUTSIDE** the sqrt (PyTorch convention) — `sqrt(v_hat) + epsilon`, NOT `sqrt(v_hat + epsilon)` (a famous TF-vs-Keras-vs-PyTorch porting bug; captured by `fixtures/bad/adam.bad-epsilon-inside-sqrt.jsonl`). For AdamW: same Adam update formula here; decoupled weight decay applies at Rule 7's AdamW branch on `parameters_after`. **GATED** on Adam/AdamW updates. STRUCTURAL CHECK. | **implemented (v0.9.1)** |
+| 25 | Multi-step optimizer-state chain: when receipts in a bundle declare Adam/AdamW, `receipts[k+1].updates[u].optimizer.state_before == receipts[k].updates[u].optimizer.state_after` per parameter for both `m` and `v`, AND `receipts[k+1].optimizer_config.t == receipts[k].optimizer_config.t + 1`. Analog of Rule 9 (parameter chain) for optimizer state. **GATED** on Adam/AdamW + multi-step. Fires from `reconcileMultiStep` only. | **implemented (v0.9.1)** |
+| 26 | Multi-step optimizer-config constancy: `optimizer_config.{name, beta1, beta2, epsilon, weight_decay}` MUST be IDENTICAL across all receipts in a bundle. `learning_rate` is **EXCLUDED** — LR schedules across steps (warmup, cosine decay) are legitimate. `t` is **EXCLUDED** — covered by Rule 25's monotonicity check. Analog of Rule 10 (trace identity) for optimizer config. **GATED** on Adam/AdamW + multi-step. Fires from `reconcileMultiStep` only. | **implemented (v0.9.1)** |
 
 Rules 1-8 ship in v0.2.0. Rules 9 + 10 ship in v0.3.0 and fire from the
 multi-record verify path (`bp verify multi <file.jsonl>` /
@@ -53,11 +60,60 @@ dual-form consistency with three sub-checks). Rule 13 is GATED — it fires
 only when the receipt carries an `OutputErrorSignal.dual_form` block; the
 engine emits dual_form for every softmax+CE receipt, but receipts authored
 from PyTorch / JAX / other frameworks may omit it and Rule 13 silently
-skips. This is the v0.5 consolidator's Q1 decision locked into the
-reconciler. Each shipped rule landed with a deliberately-broken bad-*
-fixture per the anti-circularity doctrine — bad receipts precede good
-receipts (Csmith / CompCert lineage; see "Academic lineage" below and
-`CONTRIBUTING.md`).
+skips. **v0.9.1** lands the Adam + AdamW wave: Rule 20 (optimizer-state
+shape consistency), Rule 22 (Adam moment recurrences), Rule 23 (Adam bias
+correction + t consistency), Rule 24 (Adam/AdamW parameter update), Rule 25
+(multi-step optimizer-state chain), Rule 26 (multi-step optimizer-config
+constancy). Rule 5 gates OFF for non-SGD updates. Rules 6 + 7 gain an AdamW
+branch for the decoupled weight-decay term on `weight_after` / `parameters_after`.
+Rule 21 is RESERVED for v0.9.2's momentum SGD addition. Each shipped rule
+landed with a deliberately-broken bad-* fixture per the anti-circularity
+doctrine — bad receipts precede good receipts (Csmith / CompCert lineage;
+see "Academic lineage" below and `CONTRIBUTING.md`).
+
+### Adam-rule trust framing (load-bearing)
+
+Rules 20, 22, 23, 24, 25, 26 are **STRUCTURAL CONSISTENCY checks, NOT
+producer-authenticity checks.** Together with Rule 14 (engine-recompute
+differential), they verify that the recorded `(g, m, v, t, update,
+weight_after)` tuple is internally consistent with the published Adam /
+AdamW recurrences. They do **NOT** prove that this gradient `g` was
+actually computed on actual data by an actual trainer. An attacker who
+controls every byte of the sidecar and recomputes a consistent
+`(g, m, v, update)` quadruple passes Rules 22-24 trivially — analogous
+to the Rule 17 bundle-integrity caveat and to the
+[Fang et al. 2023 EuroS&P spoofing class against Proof-of-Learning](https://arxiv.org/abs/2208.03567)
+("'Adversarial Examples' for Proof-of-Learning"; the original PoL
+construction is [Jia et al. 2021 IEEE S&P](https://arxiv.org/abs/2103.05633)
+"Proof-of-Learning: Definitions and Practice"). For producer-identity
+binding, combine the Adam rules with Rule 16 (`attestor.signed_subject_digest`),
+an external Sigstore / cosign signature, or an out-of-band attestation.
+The Adam rules are a **tamper-evidence layer for moment-vector splicing,
+not an authentication layer.**
+
+### AdamW: decoupled weight decay, explicitly NOT coupled L2
+
+**AdamW adds decoupled weight decay** (Loshchilov & Hutter 2017,
+arXiv:1711.05101, "Decoupled Weight Decay Regularization", Algorithm 2 line 12)
+— the decay term `lr * weight_decay * weight_before` is applied DIRECTLY
+to the parameter at the parameter-update step, NOT folded into the gradient
+before the moment update. The result of AdamW's parameter step is
+`weight_after = (1 - lr * weight_decay) * weight_before + update`, where
+`update` is the standard Adam update formula (`lr * m_hat / (sqrt(v_hat) + epsilon)`).
+
+The contrast with **coupled L2 regularization** is load-bearing: under
+coupled L2, the gradient is augmented with `weight_decay * weight_before`
+BEFORE the moment update, so the weight-decay term enters m, v, m_hat,
+v_hat, and is rescaled by `1 / (sqrt(v_hat) + epsilon)` — yielding very
+different effective decay per parameter and worse generalization than
+AdamW (per Loshchilov & Hutter 2017 §2.1). v0.9.1 implements AdamW
+according to the decoupled spec; the bad fixture
+`fixtures/bad/adamw.bad-as-coupled-l2.jsonl` mutates an AdamW receipt to
+drop the decoupled term on `weight_after`, demonstrating that Rule 7's
+AdamW branch (and Rule 6's, and Rule 14) catches the mistake. The
+distinction is the entire reason AdamW exists as a separate optimizer
+from Adam-with-L2; calling AdamW "just Adam plus weight decay" papers
+over the math.
 
 v0.5 ships **eight new bad fixtures**: `fixtures/bad/softmax-ce.bad-{prob-bound,
 softmax-sum, ce-per-output, ce-total, dual-term, dual-sum, collapsed-vs-dual}.jsonl`

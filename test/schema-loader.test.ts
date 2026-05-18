@@ -52,15 +52,18 @@ test('getReceiptSchema throws on an unknown version', () => {
   );
 });
 
-test("SCHEMA_VERSIONS = ['0.1.0', '0.2.0', '0.3.0', '0.4.0'] in v0.6 (extended from v0.5's three with the external-ingestion additive bump)", () => {
+test("SCHEMA_VERSIONS = ['0.1.0', '0.2.0', '0.3.0', '0.4.0', '0.5.0'] in v0.9.1 (extended from v0.6's four with the Adam/AdamW forced bump)", () => {
   assert.deepStrictEqual(
     Array.from(SCHEMA_VERSIONS).sort(),
-    ["0.1.0", "0.2.0", "0.3.0", "0.4.0"],
+    ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0"],
     "SCHEMA_VERSIONS must include '0.1.0' (Mazur-pinned), '0.2.0' (generalized), " +
-      "'0.3.0' (v0.5 softmax+CE additive), and '0.4.0' (v0.6 external observer-mode " +
-      "additive: source_framework + attestor + extended fixture_status enums). When v0.7+ " +
-      "adds a new schema version, update this expected list AND drop the " +
-      "schemas/receipt.v<version>.json file alongside it.",
+      "'0.3.0' (v0.5 softmax+CE additive), '0.4.0' (v0.6 external observer-mode " +
+      "additive: source_framework + attestor + extended fixture_status enums; in-place " +
+      "extended v0.8 + v0.9 with bundle_root_digest + batch/per_sample), and '0.5.0' " +
+      "(v0.9.1 Adam + AdamW FORCED bump: Update.optimizer.name widened from ['sgd'] to " +
+      "['sgd', 'adam', 'adamw'], optimizer.state_before/state_after per-update, top-level " +
+      "optimizer_config block). When the next version ships, update this expected list AND " +
+      "drop the schemas/receipt.v<version>.json file alongside it.",
   );
 });
 

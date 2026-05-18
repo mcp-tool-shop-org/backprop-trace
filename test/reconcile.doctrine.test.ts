@@ -210,6 +210,44 @@ const FILENAME_KIND_TO_RULE: Record<string, number> = {
   "sample-order-duplicate": 19,
   "bad-reduced-gradient-wrong": 14,
   "reduced-gradient-wrong": 14,
+  // v0.9.1 Adam + AdamW adversarial plate (adam.bad-*, adamw.bad-*,
+  // adam-multi-step.bad-*). Rule 21 RESERVED for v0.9.2 momentum SGD —
+  // no `rule: 21` failure emitted in v0.9.1; doctrine test does not
+  // expect a fixture for it. Cross-fires noted where the fixture trips
+  // multiple rules; PRIMARY is the named target.
+  //   - bias-correction-omitted  → Rule 24 (update value diverges; m_hat not applied)
+  //   - beta-swap                → Rule 22 (moment recurrence breaks with wrong beta)
+  //   - epsilon-inside-sqrt      → Rule 24 (update denominator placement)
+  //   - stale-moment-state       → Rule 25 (state chain broken; multi-step)
+  //   - timestep-off-by-one      → Rule 25 (t monotonicity broken; multi-step)
+  //   - as-coupled-l2            → Rule 24 (AdamW decoupled-vs-coupled-L2)
+  //   - engine-recompute-disagrees-adam → Rule 14 (internally consistent moments,
+  //     weight_after perturbed — only engine recompute catches it; Fang et al. 2023)
+  //   - hyperparameter-inconstancy → Rule 26 (beta1 drifts across steps; multi-step)
+  //   - amsgrad-confusion        → Rule 20 (state shape mismatch — name='adam' but
+  //     factors imply AMSGrad variant — schema-strict cousins surfaced at Rule 20)
+  //   - zero-init-state-mismatch → Rule 22 (m_after recurrence with non-zero
+  //     m_0 contradicts t=1 Adam initialization)
+  "bad-bias-correction-omitted": 24,
+  "bias-correction-omitted": 24,
+  "bad-beta-swap": 22,
+  "beta-swap": 22,
+  "bad-epsilon-inside-sqrt": 24,
+  "epsilon-inside-sqrt": 24,
+  "bad-stale-moment-state": 25,
+  "stale-moment-state": 25,
+  "bad-timestep-off-by-one": 23,
+  "timestep-off-by-one": 23,
+  "bad-as-coupled-l2": 7,
+  "as-coupled-l2": 7,
+  "bad-engine-recompute-disagrees-adam": 14,
+  "engine-recompute-disagrees-adam": 14,
+  "bad-hyperparameter-inconstancy": 26,
+  "hyperparameter-inconstancy": 26,
+  "bad-amsgrad-confusion": 20,
+  "amsgrad-confusion": 20,
+  "bad-zero-init-state-mismatch": 22,
+  "zero-init-state-mismatch": 22,
 };
 
 /**
@@ -321,29 +359,39 @@ test(
 );
 
 test(
-  "T-A-009: v0.9 reconciler implements Rules 1-19 (1-8 per-receipt, 9-10 multi-step, 11 softmax-norm, 12 loss formula, 13 gated dual-form, 14 engine-recompute differential, 15 skip-basis required, 16 gated digest binding, 17 gated trace-bundle binding, 18 gated batch reduction consistency, 19 gated sample-set coherence)",
+  "T-A-009: v0.9.1 reconciler implements Rules 1-26 minus Rule 21 reserved for v0.9.2 momentum (1-8 per-receipt, 9-10 multi-step, 11 softmax-norm, 12 loss formula, 13 gated dual-form, 14 engine-recompute differential, 15 skip-basis required, 16 gated digest binding, 17 gated trace-bundle binding, 18 gated batch reduction, 19 sample-set coherence, 20 Adam state shape, 22 Adam moment recurrences, 23 Adam bias correction, 24 Adam/AdamW parameter update, 25 optimizer-state chain, 26 optimizer-config constancy)",
   () => {
     const implemented = extractImplementedRules();
     assert.deepStrictEqual(
       Array.from(implemented).sort((a, b) => a - b),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
-      "v0.9 reconciler scope: Rules 1-8 (per-receipt math), 9-10 (multi-step), 11 (softmax " +
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26],
+      "v0.9.1 reconciler scope: Rules 1-8 (per-receipt math), 9-10 (multi-step), 11 (softmax " +
         "normalization), 12 (loss formula — both half_squared_error and cross_entropy_softmax " +
         "branches), 13 (GATED dual-form consistency for softmax+CE), 14 (engine-recompute " +
         "differential — MANDATORY for fixture_status.authoring_state === 'external_imported'; " +
-        "no-op for engine-authored receipts), 15 (skip-basis required — when verification_state " +
-        "is 'engine_recompute_skipped_with_basis', attestor.skip_basis must be in the closed " +
-        "EXTERNAL_TRUST_BASIS enum), 16 (attestation digest binding — GATED on " +
-        "attestor.signed_subject_digest presence), 17 (trace-bundle binding — GATED on " +
-        "attestor.bundle_root_digest presence; BUNDLE INTEGRITY check, NOT producer-" +
-        "authenticity), 18 (batch reduction consistency — GATED on receipt.batch presence + " +
-        "loss.reduction in {mean,sum}; catches mean-vs-sum confusion), 19 (sample-set " +
-        "coherence — GATED on batch.sample_order presence; precisely scoped to ordered " +
-        "per-sample projections used for reduction / emission / canonical digest construction). " +
-        "Rule 0.8 (probability bounds) remains a Rule 0 sub-check, not a separate integer rule. " +
-        "When a future version adds a new rule, update this expected list AND ship a sibling " +
-        "bad-* fixture; the doctrine ratchet fails loudly if a rule lands without its paired " +
-        "fixture.",
+        "no-op for engine-authored receipts), 15 (skip-basis required), 16 (attestation digest " +
+        "binding GATED on attestor.signed_subject_digest), 17 (trace-bundle binding GATED on " +
+        "attestor.bundle_root_digest; INTEGRITY-NOT-authenticity), 18 (batch reduction " +
+        "consistency GATED on batch + loss.reduction in {mean,sum}), 19 (sample-set coherence " +
+        "GATED on batch.sample_order). v0.9.1 adds Adam/AdamW: Rule 20 (optimizer-state shape " +
+        "consistency: state_before/state_after presence + finiteness + optimizer_config " +
+        "hyperparameter presence), Rule 22 (Adam moment recurrences 22a/22b — Kingma & Ba 2014 " +
+        "arXiv:1412.6980 Alg 1 lines 9-10), Rule 23 (Adam bias correction + t consistency with " +
+        "step_index + 1), Rule 24 (Adam/AdamW parameter update — update == lr * m_hat / " +
+        "(sqrt(v_hat) + epsilon); pinned epsilon OUTSIDE sqrt PyTorch convention; AdamW's " +
+        "decoupled weight decay applies at Rule 7's AdamW branch), Rule 25 (multi-step " +
+        "optimizer-state chain: m/v continuity + t monotonicity, analog of Rule 9), Rule 26 " +
+        "(multi-step optimizer-config constancy: name/beta1/beta2/epsilon/weight_decay " +
+        "identical across bundle; learning_rate EXCLUDED for LR schedules; t EXCLUDED — " +
+        "covered by Rule 25). Rule 21 RESERVED for v0.9.2 momentum SGD buffer recurrence — " +
+        "no `rule: 21` failure is emitted in v0.9.1 and this list does NOT include 21. Rule 0.8 " +
+        "(probability bounds) remains a Rule 0 sub-check, not a separate integer rule. When " +
+        "v0.9.2 lands momentum, add 21 to this list AND ship the momentum.bad-* fixture; the " +
+        "doctrine ratchet fails loudly if a rule lands without its paired fixture. Adam-rule " +
+        "trust framing (load-bearing): Rules 22, 23, 24 are STRUCTURAL CONSISTENCY checks, " +
+        "NOT producer-authenticity checks — an attacker who controls every byte and recomputes " +
+        "a consistent (g, m, v, update) quadruple passes Rules 22-24 trivially. Analogous to " +
+        "Rule 17's bundle-integrity caveat and Fang et al. 2023 PoL spoofing class.",
     );
   },
 );

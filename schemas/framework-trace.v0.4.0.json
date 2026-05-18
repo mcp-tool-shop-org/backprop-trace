@@ -1,0 +1,426 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mcp-tool-shop-org/backprop-trace/schemas/framework-trace.v0.4.0.json",
+  "title": "backprop-trace framework-trace sidecar schema v0.4.0",
+  "description": "v0.9.1 Adam + AdamW observer-mode ingestion — input sidecar format. FORCED bump over framework-trace.v0.3.0 because the `format` const + root `additionalProperties: false` make additive evolution impossible on the same major. Adds optional top-level `optimizer` block (name + hyperparameters + per-parameter state_before/after) and widens Update.optimizer.name closed enum from ['sgd'] to ['sgd', 'adam', 'adamw'] with optional per-update state_before/state_after. v0.3.0 sidecars do NOT validate against this schema (the format const distinguishes them; the importer dispatches on it). v0.9.1 supports Adam + AdamW; momentum SGD deferred to v0.9.2; Nesterov / AMSGrad / per-parameter-groups / LR schedules / gradient clipping / mixed precision deferred.",
+  "type": "object",
+  "x-purpose": "Input contract for `bp import {pytorch,jax,tensorflow}` and `bp import {pytorch,jax,tensorflow} multi`. Per-framework subcommand discipline preserved (importer rejects sidecars whose source_framework.name differs from the calling importer's expected framework). Adam/AdamW dispatch happens internally on `optimizer.name` — NO new CLI verbs. The receipts produced are observer-mode v0.5.0 receipts (forced bump alongside this schema). Framework-native optimizer state is normalized to canonical (m, v, t) per Kingma & Ba 2014 Algorithm 1 notation: PyTorch (exp_avg → m, exp_avg_sq → v, step → t), optax (mu → m, nu → v, count → t), TF Keras (Adam/m/<param> → m, Adam/v/<param> → v, iteration → t).",
+  "x-order": [
+    "format",
+    "source_framework",
+    "trace_id",
+    "step_index",
+    "topology",
+    "learning_rate",
+    "optimizer",
+    "numeric_policy",
+    "bias_policy",
+    "batch",
+    "inputs",
+    "targets",
+    "parameters_before",
+    "per_sample",
+    "forward",
+    "loss",
+    "backward",
+    "updates",
+    "parameters_after",
+    "post_update_forward",
+    "post_update_loss"
+  ],
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "source_framework",
+    "topology",
+    "learning_rate",
+    "inputs",
+    "targets",
+    "parameters_before",
+    "forward",
+    "loss",
+    "backward",
+    "updates",
+    "parameters_after"
+  ],
+  "allOf": [
+    {
+      "x-purpose": "Co-presence guard: trace_id and step_index. Same pattern as v0.2.0/v0.3.0.",
+      "anyOf": [
+        { "not": { "required": ["trace_id"] }, "not": { "required": ["step_index"] } },
+        { "required": ["trace_id", "step_index"] }
+      ]
+    },
+    {
+      "x-purpose": "v0.9.1 NEW: when optimizer.name is adam or adamw, beta1/beta2/epsilon/t are required.",
+      "type": "object",
+      "if": {
+        "type": "object",
+        "required": ["optimizer"],
+        "properties": {
+          "optimizer": {
+            "type": "object",
+            "required": ["name"],
+            "properties": { "name": { "enum": ["adam", "adamw"] } }
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "optimizer": {
+            "type": "object",
+            "required": ["name", "learning_rate", "beta1", "beta2", "epsilon", "t"]
+          }
+        }
+      }
+    },
+    {
+      "x-purpose": "v0.9.1 NEW: when optimizer.name is adamw, weight_decay is also required.",
+      "type": "object",
+      "if": {
+        "type": "object",
+        "required": ["optimizer"],
+        "properties": {
+          "optimizer": {
+            "type": "object",
+            "required": ["name"],
+            "properties": { "name": { "const": "adamw" } }
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "optimizer": {
+            "type": "object",
+            "required": ["name", "learning_rate", "beta1", "beta2", "epsilon", "t", "weight_decay"]
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "format": {
+      "const": "framework-trace.v0.4.0",
+      "description": "Format discriminator. MUST be 'framework-trace.v0.4.0'. v0.1.0 / v0.2.0 / v0.3.0 sidecars use their respective format consts. The importer rejects sidecars without the exact matching format const — no auto-detection."
+    },
+    "source_framework": {
+      "type": "object",
+      "x-order": ["name", "version", "information_uri", "extractor"],
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "enum": ["pytorch", "jax", "tensorflow", "hand_derived"] },
+        "version": { "type": "string", "minLength": 1 },
+        "information_uri": { "type": "string", "minLength": 1 },
+        "extractor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "trace_id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "step_index": { "type": "integer", "minimum": 0 },
+    "topology": { "$ref": "#/$defs/Topology" },
+    "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
+    "optimizer": {
+      "description": "OPTIONAL. When present, declares the optimizer used to produce this sidecar's updates. When absent, defaults to SGD (the v0.1/v0.2/v0.3 behavior). When name in {adam, adamw}, beta1/beta2/epsilon/t are required (allOf conditional). When name === adamw, weight_decay is also required. Per-parameter state is carried on each updates[].optimizer (state_before, state_after).",
+      "type": "object",
+      "x-order": ["name", "learning_rate", "beta1", "beta2", "epsilon", "weight_decay", "t"],
+      "additionalProperties": false,
+      "required": ["name", "learning_rate"],
+      "properties": {
+        "name": { "enum": ["sgd", "adam", "adamw"] },
+        "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
+        "beta1": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 },
+        "beta2": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 },
+        "epsilon": { "type": "number", "exclusiveMinimum": 0 },
+        "weight_decay": { "type": "number", "minimum": 0 },
+        "t": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "numeric_policy": { "$ref": "#/$defs/NumericPolicy" },
+    "bias_policy": { "$ref": "#/$defs/BiasPolicy" },
+    "batch": {
+      "type": "object",
+      "x-order": ["size", "sample_order", "reduction"],
+      "additionalProperties": false,
+      "required": ["size", "sample_order", "reduction"],
+      "properties": {
+        "size": { "type": "integer", "minimum": 1 },
+        "sample_order": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" }
+        },
+        "reduction": { "enum": ["mean", "sum", "none"] }
+      }
+    },
+    "inputs": { "$ref": "#/$defs/UnitNumberMap" },
+    "targets": { "$ref": "#/$defs/UnitNumberMap" },
+    "parameters_before": { "$ref": "#/$defs/ParameterMap" },
+    "per_sample": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["inputs", "targets", "forward", "loss"],
+        "properties": {
+          "inputs": { "$ref": "#/$defs/UnitNumberMap" },
+          "targets": { "$ref": "#/$defs/UnitNumberMap" },
+          "forward": { "$ref": "#/$defs/ForwardMap" },
+          "loss": { "$ref": "#/$defs/Loss" }
+        }
+      }
+    },
+    "forward": { "$ref": "#/$defs/ForwardMap" },
+    "loss": { "$ref": "#/$defs/Loss" },
+    "backward": { "$ref": "#/$defs/Backward" },
+    "updates": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Update" }
+    },
+    "parameters_after": { "$ref": "#/$defs/ParameterMap" },
+    "post_update_forward": { "$ref": "#/$defs/PostUpdateForward" },
+    "post_update_loss": { "$ref": "#/$defs/PostUpdateLoss" }
+  },
+  "$defs": {
+    "UnitOrder": {
+      "type": "object", "additionalProperties": false, "required": ["input", "hidden", "output"],
+      "properties": {
+        "input":  { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } },
+        "hidden": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } },
+        "output": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } }
+      }
+    },
+    "ParameterOrder": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" }
+    },
+    "NumericPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number_encoding", "precision_significant_digits", "rounding", "tolerance"],
+      "properties": {
+        "number_encoding": { "const": "decimal" },
+        "precision_significant_digits": { "type": "integer", "minimum": 1 },
+        "rounding": { "const": "round_half_to_even" },
+        "tolerance": {
+          "oneOf": [
+            {
+              "type": "object", "required": ["atol", "rtol"], "additionalProperties": false,
+              "properties": { "atol": { "type": "number", "minimum": 0 }, "rtol": { "type": "number", "minimum": 0 } }
+            },
+            { "type": "number", "minimum": 0 }
+          ]
+        },
+        "computation_order": { "const": "schema_defined" },
+        "byte_output": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "format": { "const": "jsonl" },
+            "json_key_order": { "const": "schema_defined" },
+            "trailing_zero_policy": { "const": "pad_to_significant_digits" },
+            "indent": { "const": "none" }
+          }
+        }
+      }
+    },
+    "BiasPolicy": {
+      "type": "object", "additionalProperties": false, "required": ["mode", "updated_in_step"],
+      "properties": {
+        "mode": { "enum": ["constant", "sgd"] },
+        "reason": { "type": "string" },
+        "updated_in_step": { "type": "boolean" },
+        "reconciliation": { "type": "string" }
+      }
+    },
+    "Topology": {
+      "type": "object", "additionalProperties": false,
+      "required": ["layers", "input_size", "hidden_size", "output_size", "unit_order", "parameter_order", "parameters", "activation_hidden", "activation_output", "loss", "bias_sharing"],
+      "properties": {
+        "layers": { "type": "array", "items": { "type": "string" } },
+        "input_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "hidden_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "output_size": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "unit_order": { "$ref": "#/$defs/UnitOrder" },
+        "parameter_order": { "$ref": "#/$defs/ParameterOrder" },
+        "parameters": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["id", "role"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "role": { "enum": ["input_to_hidden_weight", "hidden_to_output_weight", "hidden_bias", "output_bias"] },
+              "from_unit": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "to_unit":   { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "applies_to_units": { "type": "array", "items": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" } }
+            }
+          }
+        },
+        "activation_hidden": { "enum": ["sigmoid", "identity", "relu"] },
+        "activation_output": { "enum": ["sigmoid", "identity", "relu", "softmax"] },
+        "loss": { "enum": ["half_squared_error", "cross_entropy_softmax"] },
+        "bias_sharing": { "enum": ["per_layer", "per_neuron"] }
+      }
+    },
+    "UnitNumberMap": { "type": "object", "additionalProperties": { "type": "number" } },
+    "ParameterMap":  { "type": "object", "additionalProperties": { "type": "number" } },
+    "ForwardMap":    { "type": "object", "additionalProperties": { "$ref": "#/$defs/ForwardUnit" } },
+    "ForwardUnit": {
+      "type": "object", "additionalProperties": false, "required": ["net", "out"],
+      "properties": { "net": { "type": "number" }, "out": { "type": "number" } }
+    },
+    "Loss": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["per_output", "total"],
+      "x-order": ["per_output", "per_sample", "reduction", "total"],
+      "properties": {
+        "per_output": { "type": "object", "additionalProperties": { "type": "number" } },
+        "per_sample": { "type": "object", "additionalProperties": { "type": "number" } },
+        "reduction": { "enum": ["mean", "sum", "none"] },
+        "total": { "type": "number" }
+      }
+    },
+    "Backward": {
+      "type": "object", "additionalProperties": false, "required": ["output_error_signals", "hidden_error_signals"],
+      "properties": {
+        "output_error_signals": { "type": "object", "additionalProperties": { "$ref": "#/$defs/OutputErrorSignal" } },
+        "hidden_error_signals": { "type": "object", "additionalProperties": { "$ref": "#/$defs/HiddenErrorSignal" } }
+      }
+    },
+    "OutputErrorSignal": {
+      "type": "object", "additionalProperties": false, "required": ["factors", "product_order", "signal_value"],
+      "properties": {
+        "factors": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/NamedFactor" } },
+        "product_order": { "const": "left_to_right" },
+        "signal_value": { "type": "number" },
+        "dual_form": { "$ref": "#/$defs/DualForm" }
+      }
+    },
+    "DualForm": {
+      "type": "object", "additionalProperties": false,
+      "required": ["jacobian_terms", "product_order", "summation_order", "summed_value"],
+      "properties": {
+        "jacobian_terms": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/JacobianTerm" } },
+        "product_order": { "const": "left_to_right" },
+        "summation_order": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "summed_value": { "type": "number" }
+      }
+    },
+    "JacobianTerm": {
+      "type": "object", "additionalProperties": false, "required": ["target_unit", "factors", "term_value"],
+      "properties": {
+        "target_unit": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+        "factors": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/NamedFactor" } },
+        "term_value": { "type": "number" }
+      }
+    },
+    "HiddenErrorSignal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["downstream_contributions", "summation_order", "backpropagated_sum", "activation_derivative", "product_order", "signal_value"],
+      "properties": {
+        "downstream_contributions": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/DownstreamContribution" } },
+        "summation_order": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "backpropagated_sum": { "type": "number" },
+        "activation_derivative": { "type": "number" },
+        "product_order": { "const": "left_to_right" },
+        "signal_value": { "type": "number" }
+      }
+    },
+    "DownstreamContribution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["from", "downstream_signal", "via_weight", "weight_value", "value"],
+      "properties": {
+        "from": { "type": "string" },
+        "downstream_signal": { "type": "number" },
+        "via_weight": { "type": "string" },
+        "weight_value": { "type": "number" },
+        "value": { "type": "number" }
+      }
+    },
+    "NamedFactor": {
+      "type": "object", "additionalProperties": false, "required": ["name", "value"],
+      "properties": { "name": { "type": "string" }, "from": { "type": "string" }, "value": { "type": "number" } }
+    },
+    "AdamState": {
+      "type": "object", "additionalProperties": false, "required": ["m", "v"],
+      "properties": { "m": { "type": "number" }, "v": { "type": "number", "minimum": 0 } }
+    },
+    "Update": {
+      "type": "object", "additionalProperties": false,
+      "required": ["parameter_id", "kind", "weight_before", "optimizer", "gradient", "update", "weight_after"],
+      "properties": {
+        "parameter_id": { "type": "string" },
+        "kind": { "enum": ["weight", "bias"] },
+        "layer_edge": { "enum": ["input_to_hidden", "hidden_to_output", "bias_to_layer"] },
+        "parameter_role": { "type": "string" },
+        "from_unit": { "type": "string" },
+        "to_unit": { "type": "string" },
+        "weight_before": { "type": "number" },
+        "optimizer": {
+          "type": "object", "additionalProperties": false,
+          "required": ["name", "learning_rate", "factors", "product_order"],
+          "properties": {
+            "name": { "enum": ["sgd", "adam", "adamw"] },
+            "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
+            "factors": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/NamedFactor" } },
+            "product_order": { "const": "left_to_right" },
+            "state_before": { "$ref": "#/$defs/AdamState" },
+            "state_after": { "$ref": "#/$defs/AdamState" }
+          }
+        },
+        "gradient": { "type": "number" },
+        "update": { "type": "number" },
+        "weight_after": { "type": "number" }
+      },
+      "allOf": [
+        {
+          "x-purpose": "v0.9.1 NEW: per-update state required for Adam/AdamW.",
+          "type": "object",
+          "if": {
+            "type": "object",
+            "required": ["optimizer"],
+            "properties": {
+              "optimizer": {
+                "type": "object",
+                "required": ["name"],
+                "properties": { "name": { "enum": ["adam", "adamw"] } }
+              }
+            }
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "optimizer": {
+                "type": "object",
+                "required": ["name", "learning_rate", "factors", "product_order", "state_before", "state_after"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "PostUpdateForward": {
+      "type": "object", "required": ["status"],
+      "additionalProperties": { "$ref": "#/$defs/ForwardUnit" },
+      "properties": { "status": { "enum": ["pending_engine_first_run", "filled"] } }
+    },
+    "PostUpdateLoss": {
+      "type": "object", "additionalProperties": false, "required": ["status"],
+      "properties": {
+        "status": { "enum": ["pending_engine_first_run", "filled"] },
+        "per_output": { "type": "object", "additionalProperties": { "type": "number" } },
+        "total": { "type": "number" }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "adam.bad-timestep-off-by-one.meta",
+  "describes": "fixtures/bad/adam.bad-timestep-off-by-one.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.adam.multi-step.golden.jsonl. v0.9.1 Adam multi-step adversarial plate.",
+  "mutation": {
+    "kind": "advance_t_by_2_instead_of_1_at_step_1",
+    "field_path": "receipts[1].optimizer_config.t",
+    "original_t": 2,
+    "mutated_t": 3,
+    "explanation": "Adam timestep MUST advance by exactly 1 per training step (Kingma & Ba 2014 Alg 1: t <- t + 1 once per step). Mutating step 1's t from 2 to 3 skips a step. Rule 25 catches the monotonicity violation (expected receipts[1].t == receipts[0].t + 1 = 2; got 3)."
+  },
+  "reconciliation_check_targeted_first": "Rule 23: Adam bias correction t consistency — receipts[1].optimizer_config.t=3 but step_index=1 (expected t === step_index + 1 = 2). Rule 23 fires PER-RECEIPT before Rule 25's multi-step cross-receipt monotonicity check; both rules cross-fire on this fixture and either catches the off-by-one. Primary listed as Rule 23 to give Rule 23 dedicated bad-fixture coverage; Rule 25 has its own primary fixture (adam.bad-stale-moment-state).",
+  "purpose": "v0.9.1 Adam multi-step anti-circularity fixture (kind: 'timestep-off-by-one'). Pressure-tests that the named multi-step rule fires BEFORE the reconciler consults fixture_status metadata.",
+  "v0_9_1_trust_framing": "Adam multi-step rules 25 (state chain) + 26 (config constancy) are STRUCTURAL consistency checks. Producer-authenticity caveat per Rule 17 / Fang et al. 2023 applies."
+}
