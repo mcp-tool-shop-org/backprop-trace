@@ -160,7 +160,10 @@ test("bp import (overview) includes jax row", () => {
   const { status, stdout } = runBp(["import", "--help"])
   assert.strictEqual(status, 0)
   assert.match(stdout, /bp import jax/)
-  assert.match(stdout, /shipped v0\.6\.1/)
+  // v0.8 reformatted the overview as "single-step (v0.6.1)" / "multi-step
+  // (v0.8)" rows. The shipped-version marker for jax single-step changed
+  // from "shipped v0.6.1" to "single-step (v0.6.1)".
+  assert.match(stdout, /single-step \(v0\.6\.1\)/)
 })
 
 test("bp import jax on a PyTorch sidecar exits 2 (per-framework discipline)", () => {

@@ -201,7 +201,7 @@ export function getInputSchema(
  *     parameters_after. The importer adds source_framework + attestor +
  *     fixture_status and runs runGeneralStep as the differential witness.
  */
-export const FRAMEWORK_TRACE_SCHEMA_VERSIONS = ["0.1.0"] as const;
+export const FRAMEWORK_TRACE_SCHEMA_VERSIONS = ["0.1.0", "0.2.0"] as const;
 
 /**
  * Union of currently-shipped framework-trace sidecar schema versions.

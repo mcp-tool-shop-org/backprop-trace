@@ -179,6 +179,24 @@ const FILENAME_KIND_TO_RULE: Record<string, number> = {
   // shape as JAX's pytree-flatten-order; framework-distinctive root cause).
   "bad-variable-list-order": 14,
   "variable-list-order": 14,
+  // v0.8 multi-step observer-mode adversarial plate (cross-step attacks
+  // on the JSONL stream produced by `bp import {pytorch,jax,tensorflow}
+  // multi`). Each fixture targets one rule:
+  //   - step-index-gap                                → Rule 10
+  //   - chain-break-cross-step-internally-consistent  → Rule 9 (load-bearing)
+  //   - fabricated-mid-step                           → Rule 9
+  //   - cross-trace-splice                            → Rule 17 (bundle-integrity, NOT authenticity)
+  //   - bundle-digest-tampered                        → Rule 17
+  "bad-step-index-gap": 10,
+  "step-index-gap": 10,
+  "bad-chain-break-cross-step-internally-consistent": 9,
+  "chain-break-cross-step-internally-consistent": 9,
+  "bad-fabricated-mid-step": 9,
+  "fabricated-mid-step": 9,
+  "bad-cross-trace-splice": 17,
+  "cross-trace-splice": 17,
+  "bad-bundle-digest-tampered": 17,
+  "bundle-digest-tampered": 17,
 };
 
 /**
@@ -290,23 +308,25 @@ test(
 );
 
 test(
-  "T-A-009: v0.6 reconciler implements Rules 1-16 (1-8 per-receipt, 9-10 multi-step, 11 softmax-norm, 12 loss formula, 13 gated dual-form, 14 engine-recompute differential, 15 skip-basis required, 16 gated digest binding)",
+  "T-A-009: v0.8 reconciler implements Rules 1-17 (1-8 per-receipt, 9-10 multi-step, 11 softmax-norm, 12 loss formula, 13 gated dual-form, 14 engine-recompute differential, 15 skip-basis required, 16 gated digest binding, 17 gated trace-bundle binding)",
   () => {
     const implemented = extractImplementedRules();
     assert.deepStrictEqual(
       Array.from(implemented).sort((a, b) => a - b),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-      "v0.6 reconciler scope: Rules 1-8 (per-receipt math), 9-10 (multi-step), 11 (softmax " +
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+      "v0.8 reconciler scope: Rules 1-8 (per-receipt math), 9-10 (multi-step), 11 (softmax " +
         "normalization), 12 (loss formula — both half_squared_error and cross_entropy_softmax " +
         "branches), 13 (GATED dual-form consistency for softmax+CE), 14 (engine-recompute " +
         "differential — MANDATORY for fixture_status.authoring_state === 'external_imported'; " +
         "no-op for engine-authored receipts), 15 (skip-basis required — when verification_state " +
         "is 'engine_recompute_skipped_with_basis', attestor.skip_basis must be in the closed " +
         "EXTERNAL_TRUST_BASIS enum), 16 (attestation digest binding — GATED on " +
-        "attestor.signed_subject_digest presence). Rule 0.8 (probability bounds) remains a Rule 0 " +
-        "sub-check, not a separate integer rule. When a future version adds a new rule, update " +
-        "this expected list AND ship a sibling bad-* fixture; the doctrine ratchet fails loudly " +
-        "if a rule lands without its paired fixture.",
+        "attestor.signed_subject_digest presence), 17 (trace-bundle binding — GATED on " +
+        "attestor.bundle_root_digest presence; BUNDLE INTEGRITY check, NOT producer-" +
+        "authenticity). Rule 0.8 (probability bounds) remains a Rule 0 sub-check, not a " +
+        "separate integer rule. When a future version adds a new rule, update this expected list " +
+        "AND ship a sibling bad-* fixture; the doctrine ratchet fails loudly if a rule lands " +
+        "without its paired fixture.",
     );
   },
 );

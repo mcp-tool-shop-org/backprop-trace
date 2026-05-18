@@ -57,6 +57,7 @@
 
 import {
   buildObserverReceiptFromSidecar,
+  buildObserverReceiptStreamFromSidecar,
   type ObserverImportOptions,
   type ObserverImportResult,
   type FrameworkTraceSidecar,
@@ -104,6 +105,30 @@ export function importTensorflowSidecar(
     "tensorflow",
     "bp-import-tensorflow@0.7.0",
     "importTensorflowSidecar",
+    opts,
+  )
+}
+
+/**
+ * v0.8 — Import a multi-step TensorFlow sidecar JSONL stream and produce
+ * N observer-mode v0.4.0 receipts (one per training step) bound by
+ * `attestor.bundle_root_digest` (Rule 17). Thin wrapper over the shared
+ * multi-step core. Same trust model + per-framework discipline as
+ * `importPytorchSidecarStream` / `importJaxSidecarStream`.
+ */
+export type ImportTensorflowStreamOptions = ImportTensorflowOptions
+export type ImportTensorflowStreamResult =
+  import("./import-observer.js").ObserverImportStreamResult
+
+export function importTensorflowSidecarStream(
+  sidecarBytes: string,
+  opts?: ImportTensorflowStreamOptions,
+): ImportTensorflowStreamResult {
+  return buildObserverReceiptStreamFromSidecar(
+    sidecarBytes,
+    "tensorflow",
+    "bp-import-tensorflow@0.8.0",
+    "importTensorflowSidecarStream",
     opts,
   )
 }

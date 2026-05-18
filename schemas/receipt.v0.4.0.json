@@ -204,7 +204,7 @@
     "Attestor": {
       "description": "Identifies the producer (who computed the math) and verifier (the backprop-trace engine that re-ran it), the differential tolerance bounds, and optional provenance / skip-basis / signature-digest sub-blocks. Modeled on in-toto v1 Statement (subject vs predicate vs predicateType) + SLSA Provenance v1.0 builder.id pattern + Sigstore fail-closed discipline.",
       "type": "object",
-      "x-order": ["computed_by", "verified_by", "differential_tolerance", "import_provenance", "skip_basis", "signed_subject_digest"],
+      "x-order": ["computed_by", "verified_by", "differential_tolerance", "import_provenance", "skip_basis", "signed_subject_digest", "bundle_root_digest"],
       "additionalProperties": false,
       "required": ["computed_by", "verified_by", "differential_tolerance"],
       "properties": {
@@ -261,6 +261,11 @@
         },
         "signed_subject_digest": {
           "description": "OPTIONAL. SHA-256 hex of the canonical-byte hash of the receipt (computed by hashReceipt with this attestor.signed_subject_digest field stripped before hashing). Rule 16 is GATED on this field's presence: when present, the reconciler recomputes the digest and asserts it matches. Catches SolarWinds-style 'signed-but-substituted' attacks where a valid signature is bound to mutated bytes. Signature *validity* (cosign verification of the signature itself) is out of scope for the reconciler — that's a CI-side concern. Rule 16 only checks digest-binding integrity. 'sha256:<hex>' format.",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "bundle_root_digest": {
+          "description": "OPTIONAL. v0.8+. SHA-256 hex of the canonical-byte digest binding all receipts in a multi-step observer-mode bundle. Rule 17 is GATED on this field's presence: when present, ALL receipts in the same trace MUST carry the same value, AND that value MUST equal sha256 of the canonical concatenation of every receipt's bytes (each receipt re-emitted with its own bundle_root_digest field stripped first, then JSONL-concatenated). Rule 17 catches BUNDLE INTEGRITY failures — accidental splice, post-binding mutation, inconsistent bundle roots — when the digest was not recomputed after the change. Rule 17 is NOT a producer-authenticity check: an attacker who controls all receipt bytes and recomputes the bundle digest passes Rule 17 trivially. For producer-identity binding, combine bundle_root_digest with signed_subject_digest (Rule 16), an external signature, or an out-of-band attestation. Rule 17 is a tamper-evidence layer, not an authentication layer. 'sha256:<hex>' format.",
           "type": "string",
           "pattern": "^sha256:[0-9a-f]{64}$"
         }

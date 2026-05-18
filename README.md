@@ -12,9 +12,9 @@
   <a href="https://www.npmjs.com/package/@mcptoolshop/backprop-trace"><img alt="npm" src="https://img.shields.io/npm/v/@mcptoolshop/backprop-trace.svg"></a>
 </p>
 
-A deterministic structural-trace verifier for single neural-network training steps — a 16-rule reconciler that re-derives gradients, signals, and parameter updates from named factors and emits canonical bytewise JSONL receipts. In the Csmith/CompCert lineage of *"the oracle must not consult the artifact it judges."*
+A deterministic structural-trace verifier for neural-network training steps — a 17-rule reconciler that re-derives gradients, signals, and parameter updates from named factors and emits canonical bytewise JSONL receipts. In the Csmith/CompCert lineage of *"the oracle must not consult the artifact it judges."*
 
-> **Status: mid-v0 (v0.7.0).** The core engine and reconciler are real and shipping. Single-step, CPU-only, SGD-only, single-sample. External framework traces are hand-authored sidecars today. See [What's not in this version (yet)](#whats-not-in-this-version-yet) before you pick this up for production work.
+> **Status: mid-v0 (v0.8.0).** The core engine and reconciler are real and shipping. CPU-only, SGD-only, single-sample. External framework traces are hand-authored sidecars today; v0.8 adds multi-step observer-mode ingestion via JSONL streams (single-step path unchanged). See [What's not in this version (yet)](#whats-not-in-this-version-yet) before you pick this up for production work.
 
 ## 30-second quickstart
 
@@ -41,7 +41,7 @@ The Mazur 2-2-2 is the most-cited single-step backprop walkthrough on the open w
 
 ## What this is
 
-backprop-trace is a numerical-correctness verifier for *one* neural-network training step. You hand it a receipt — a JSONL record naming every factor that contributed to a single gradient update — and the reconciler walks 16 rules that re-derive every claim from the named factors. If any rule disagrees within hybrid tolerance (`atol + rtol`, symmetric max form), the receipt is rejected.
+backprop-trace is a numerical-correctness verifier for neural-network training steps. You hand it a receipt — a JSONL record naming every factor that contributed to a single gradient update — and the reconciler walks 17 rules that re-derive every claim from the named factors. If any rule disagrees within hybrid tolerance (`atol + rtol`, symmetric max form), the receipt is rejected. Multi-step observer-mode ingestion (v0.8+) produces one verified receipt per training step plus cross-step chain integrity checks (Rules 9 + 10) and optional bundle-integrity binding (Rule 17, GATED) — it does **not** validate that the overall training run is correct; only that each recorded step is mathematically consistent and that the recorded chain is intact.
 
 The doctrinal anchor is Csmith (Yang, Chen, Eide, Regehr — PLDI 2011, [https://users.cs.utah.edu/~regehr/papers/pldi11-preprint.pdf](https://users.cs.utah.edu/~regehr/papers/pldi11-preprint.pdf)) and CompCert (Leroy, CACM 2009, [https://xavierleroy.org/publi/compcert-CACM.pdf](https://xavierleroy.org/publi/compcert-CACM.pdf)): adversarial corpora prove a verifier, passing tests do not. Every reconciler rule ships with a deliberately-broken fixture in [`fixtures/bad/`](./fixtures/bad) that the verifier must reject *before* reading any `fixture_status` lifecycle metadata. This anti-circularity discipline — the oracle must not consult the artifact it judges — is the load-bearing property.
 
@@ -67,23 +67,26 @@ Pinned to Node 22.x (V8 fdlibm `Math.exp` determinism is load-bearing — see [`
 
 ## CLI usage
 
-v0.7 ships 16 subcommands. Full reference: [`docs/cli.md`](./docs/cli.md).
+v0.8 ships 19 subcommands (16 from v0.7 + 3 multi-step import subnouns). Full reference: [`docs/cli.md`](./docs/cli.md).
 
 ```
-bp reconcile receipt <file>          Reconcile a receipt against the 16 rules.
-bp verify mazur [<file>]             Full gate (Mazur 2-2-2): schema + reconcile + engine-reproduce + byte-equal + drift.
-bp verify general <file>             Generalized verify for any v0.2+ receipt (XOR, iris, softmax+CE, custom).
-bp verify multi <file.jsonl>         Multi-record JSONL; per-record Rules 1-8 + cross-record Rules 9 + 10.
-bp generate mazur [--out F]          Re-run the Mazur engine, emit canonical bytes.
-bp generate xor [--out F]            Re-run the XOR engine, emit canonical bytes.
-bp generate iris [--out F]           Re-run the iris engine, emit canonical bytes.
-bp generate from-config <file>       Read a topology+input JSON, emit a canonical receipt.
-bp scaffold topology --topology T    Write a sample input file (T = mazur|xor|iris).
-bp validate-input <file>             Schema-validate an input config without running the engine.
-bp validate <file>                   Schema-only validation of a receipt (auto-detects v0.1/0.2/0.3/0.4).
-bp import pytorch <sidecar.jsonl>    Ingest a PyTorch framework trace; emit observer-mode receipt + Rule 14 diff.
-bp import jax <sidecar.jsonl>        Ingest a JAX framework trace; same shape as PyTorch.
-bp import tensorflow <sidecar.jsonl> Ingest a TensorFlow framework trace; same shape as PyTorch / JAX.
+bp reconcile receipt <file>                Reconcile a receipt against the 17 rules.
+bp verify mazur [<file>]                   Full gate (Mazur 2-2-2): schema + reconcile + engine-reproduce + byte-equal + drift.
+bp verify general <file>                   Generalized verify for any v0.2+ receipt (XOR, iris, softmax+CE, custom).
+bp verify multi <file.jsonl>               Multi-record JSONL; per-record Rules 1-8 + cross-record Rules 9 + 10.
+bp generate mazur [--out F]                Re-run the Mazur engine, emit canonical bytes.
+bp generate xor [--out F]                  Re-run the XOR engine, emit canonical bytes.
+bp generate iris [--out F]                 Re-run the iris engine, emit canonical bytes.
+bp generate from-config <file>             Read a topology+input JSON, emit a canonical receipt.
+bp scaffold topology --topology T          Write a sample input file (T = mazur|xor|iris).
+bp validate-input <file>                   Schema-validate an input config without running the engine.
+bp validate <file>                         Schema-only validation of a receipt (auto-detects v0.1/0.2/0.3/0.4).
+bp import pytorch <sidecar.jsonl>          Ingest a PyTorch single-step framework trace; emit observer-mode receipt + Rule 14 diff.
+bp import jax <sidecar.jsonl>              Ingest a JAX single-step framework trace; same shape as PyTorch.
+bp import tensorflow <sidecar.jsonl>       Ingest a TensorFlow single-step framework trace; same shape as PyTorch / JAX.
+bp import pytorch multi <sidecar.jsonl>    Ingest a PyTorch multi-step trace (JSONL stream); emit N observer-mode receipts.
+bp import jax multi <sidecar.jsonl>        Ingest a JAX multi-step trace; same shape as PyTorch.
+bp import tensorflow multi <sidecar.jsonl> Ingest a TensorFlow multi-step trace; same shape as PyTorch / JAX.
 ```
 
 Common flags (see [`docs/cli.md`](./docs/cli.md)):
@@ -133,19 +136,33 @@ Subpath imports: `./reconcile`, `./engine`, `./general-engine`, `./mazur`, `./to
 
 ## Bring your own training trace
 
-The v0.6 external-ingestion path lets PyTorch / JAX / TensorFlow users verify their own single-step backprop traces against the same 16 rules — but **today the sidecar is hand-authored**. There is no `pip install backprop-trace-pytorch` helper yet. To produce a sidecar:
+The v0.6 external-ingestion path lets PyTorch / JAX / TensorFlow users verify their own single-step or multi-step backprop traces against the same 17 rules — but **today the sidecar is hand-authored**. There is no `pip install backprop-trace-pytorch` helper yet. To produce a sidecar:
 
-1. Read the [`framework-trace.v0.1.0`](./schemas/framework-trace.v0.1.0.json) schema — it defines a JSONL contract for one training step (topology + input + forward + gradients + parameters_before + parameters_after + provenance).
+1. Read the [`framework-trace.v0.1.0`](./schemas/framework-trace.v0.1.0.json) schema (single-step) or [`framework-trace.v0.2.0`](./schemas/framework-trace.v0.2.0.json) (multi-step, v0.8+). Both define a JSONL contract for a training step (topology + input + forward + gradients + parameters_before + parameters_after + provenance); the v0.2.0 schema adds optional `trace_id` + `step_index` so a stream of records can be linked into a chain.
 2. Extract those values from your training step (PyTorch `autograd`, JAX `grad`/`value_and_grad`, TF `tf.GradientTape` — all expose the necessary per-tensor numerics).
-3. Emit the sidecar as canonical JSONL (decimal strings, not binary floats — see [`docs/canonical-emission.md`](./docs/canonical-emission.md)).
-4. Run `bp import pytorch <sidecar.jsonl>` (or `import jax` / `import tensorflow`).
-5. The importer produces an **observer-mode receipt**: the framework's claims live as canonical fields; the backprop-trace engine recomputes the same step and runs **Rule 14** as a differential check. Disagreement = your extractor lied, or your framework drifted, or something is wrong with the trace.
+3. Emit the sidecar as canonical JSONL (decimal strings, not binary floats — see [`docs/canonical-emission.md`](./docs/canonical-emission.md)). For single-step, one JSON object. For multi-step, one JSON object per line, in step order.
+4. Run `bp import pytorch <sidecar.jsonl>` for one step, or `bp import pytorch multi <sidecar.jsonl>` for a multi-step stream. Same for `jax` / `tensorflow`.
+5. The importer produces one **observer-mode receipt** per step: the framework's claims live as canonical fields; the backprop-trace engine recomputes the same step and runs **Rule 14** as a differential check. Disagreement = your extractor lied, or your framework drifted, or something is wrong with the trace.
 
 This is a real workflow today, but it is friction-heavy. See [What's not in this version (yet)](#whats-not-in-this-version-yet) for the live-helper packaging gap.
 
-Per-framework subcommand discipline is enforced: `bp import pytorch` rejects JAX sidecars and vice versa. No auto-detection (no live framework runtime dependency in this package — by design).
+Per-framework subcommand discipline is enforced: `bp import pytorch` rejects JAX sidecars and vice versa. No auto-detection (no live framework runtime dependency in this package — by design). Multi-step bundles also reject heterogeneous-framework streams — all records in one bundle must share `source_framework.name`.
 
-## The 16 rules
+### Multi-step ingestion (v0.8+)
+
+Multi-step observer-mode lets you ingest a 2+ step training trace as a single JSONL stream — one record per training step in one file. The importer hashes the whole stream once, emits one observer-mode receipt per step (one JSONL line per receipt) with shared `trace_id` + dense `step_index` + identical `attestor.import_provenance.source_hash`, and runs **Rule 14** (engine-recompute differential) per step at import time. The output is pipe-ready for `bp verify multi`, which adds cross-step **Rules 9** (parameter chain: `parameters_before[N]` = prior `parameters_after[N-1]`) and **10** (trace identity: shared `trace_id` + sequential `step_index`):
+
+```bash
+bp import pytorch multi train.multi-step.sidecar.jsonl | bp verify multi -
+# exit 0 — per-step Rules 1-8 + Rule 14 pass on every step,
+#          cross-step Rules 9 + 10 pass on the chain
+```
+
+**Rule 17 (Trace-bundle binding, GATED).** When any receipt in the trace declares `attestor.bundle_root_digest`, ALL receipts must carry the same value, and that value must equal the recomputed canonical-byte digest of the receipt stream (with `bundle_root_digest` stripped). This catches **bundle-integrity** failures — accidental splice, post-binding mutation, inconsistent bundle roots when the digest is not recomputed. It does **NOT** prove producer authenticity: an attacker who controls all receipt bytes and recomputes the bundle digest passes Rule 17 trivially. For producer-identity binding, combine `bundle_root_digest` with Rule 16 (`attestor.signed_subject_digest`), an external signature, or an out-of-band attestation. Rule 17 is a tamper-evidence layer, not an authentication layer.
+
+The bundled hero fixture is a 3-step PyTorch softmax+CE SGD trace on a 2-2-3 network. Loss does not converge — it's a pedagogical trace, not a real training run. The verifier checks that the recorded updates are mathematically consistent with the recorded factors, not that the training is good.
+
+## The 17 rules
 
 | # | Rule |
 |---|---|
@@ -167,6 +184,7 @@ Per-framework subcommand discipline is enforced: `bp import pytorch` rejects JAX
 | 14 | Engine-recompute differential (MANDATORY for observer-mode imported receipts) |
 | 15 | Skip-basis required (closed enum `EXTERNAL_TRUST_BASIS`, 4 values) |
 | 16 | Attestation digest binding (GATED — fires when `attestor.signed_subject_digest` present) |
+| 17 | Trace-bundle binding — bundle-integrity / post-binding mutation detection (GATED — fires when `attestor.bundle_root_digest` present; NOT a producer-authenticity check) |
 
 Full statements in [`docs/reconciliation.md`](./docs/reconciliation.md). Every rule ships with a paired bad fixture in `fixtures/bad/` per the Csmith doctrine.
 
@@ -175,7 +193,7 @@ Full statements in [`docs/reconciliation.md`](./docs/reconciliation.md). Every r
 What's contractual on the pinned matrix (Node 22.x × {ubuntu, macos, windows} × backprop-trace 0.7.x):
 
 - Byte-equal `mazur.golden.jsonl` / `xor.golden.jsonl` / `iris.golden.jsonl` / `softmax-ce.golden.jsonl` / `xor-per-neuron-bias.golden.jsonl` / `xor.multi-step.jsonl`
-- Byte-equal external goldens for the bundled framework sidecars: `pytorch.softmax-ce.golden.jsonl`, `jax.softmax-ce.golden.jsonl`, `tensorflow.softmax-ce.golden.jsonl`
+- Byte-equal external goldens for the bundled framework sidecars: `pytorch.softmax-ce.golden.jsonl`, `jax.softmax-ce.golden.jsonl`, `tensorflow.softmax-ce.golden.jsonl`, `pytorch.softmax-ce.multi-step.golden.jsonl` (v0.8+)
 - The Mazur 2-2-2 anchor: `post_update_loss.total = 0.29102777369359933` (vs widely-cited downstream `0.291027924` — drift ~1.5e-7; see `fixtures/mazur.published.json` for the ledger)
 - Per-rule reconciliation within hybrid tolerance (`atol = 1e-12`, `rtol = 1e-9` for engine-authored; tighter where the math is exact)
 
@@ -192,7 +210,8 @@ A `Math.exp(-0.5)` canary runs on every CI cell as an early-warning siren for V8
 
 backprop-trace v0.7.0 is a **mid-v0 product**. The core engine, the reconciler, the canonical-emission contract, and the external-ingestion path are real and stable. But several things a v1.0 verifier needs are not yet in:
 
-- **Multi-step observer-mode receipts.** External ingestion is single-step today. Real training runs are thousands of steps. *Targeted next: v0.8.*
+- **Heterogeneous multi-framework traces.** A multi-step bundle today must come from a single framework — you cannot ingest `[pytorch_step_0, jax_step_1, tensorflow_step_2]` in one stream. Framework switches mid-training are uncommon in practice; this may stay out of scope. *Roadmap target: not before v1.0, may stay out of scope.*
+- **Producer-identity binding on multi-step traces.** Rule 17 (`attestor.bundle_root_digest`) catches bundle-integrity failures — accidental splice, post-binding mutation, inconsistent bundle roots — but does NOT prove producer authenticity. An attacker who controls all receipt bytes and recomputes the bundle digest passes Rule 17 trivially. Producer-identity binding requires combining `bundle_root_digest` with Rule 16's `signed_subject_digest`, an external signature, or an out-of-band attestation. v0.8 ships the bundle-integrity layer; the signature layer is downstream operator work, not a built-in. *Roadmap target: documented today; built-in operator surface may follow.*
 - **Optimizers beyond vanilla SGD.** No Adam, AdamW, momentum, or weight decay. Real ML training in 2026 is overwhelmingly Adam; SGD-only is a real limitation. *Roadmap target: v0.9.*
 - **Batch dimension.** Currently single-sample. Real PyTorch/JAX/TF training is batched. A user with their actual training step cannot import it without manually unrolling per-sample. *Roadmap target: v0.9.*
 - **Live framework helpers.** The sidecar is hand-authored today; no `pip install backprop-trace-pytorch` package, no `scripts/python-helpers/dump_pytorch_trace.py` ready-to-run extractor. The path from "I have a PyTorch step" to "I have a receipt" is too long. *Roadmap target: v0.10.*

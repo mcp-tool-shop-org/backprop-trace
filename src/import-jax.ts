@@ -37,6 +37,7 @@
 
 import {
   buildObserverReceiptFromSidecar,
+  buildObserverReceiptStreamFromSidecar,
   type ObserverImportOptions,
   type ObserverImportResult,
   type FrameworkTraceSidecar,
@@ -82,6 +83,30 @@ export function importJaxSidecar(
     "jax",
     "bp-import-jax@0.6.1",
     "importJaxSidecar",
+    opts,
+  )
+}
+
+/**
+ * v0.8 — Import a multi-step JAX sidecar JSONL stream and produce N
+ * observer-mode v0.4.0 receipts (one per training step) bound by
+ * `attestor.bundle_root_digest` (Rule 17). Thin wrapper over the shared
+ * multi-step core. Same trust model + per-framework discipline as
+ * `importPytorchSidecarStream` / `importTensorflowSidecarStream`.
+ */
+export type ImportJaxStreamOptions = ImportJaxOptions
+export type ImportJaxStreamResult =
+  import("./import-observer.js").ObserverImportStreamResult
+
+export function importJaxSidecarStream(
+  sidecarBytes: string,
+  opts?: ImportJaxStreamOptions,
+): ImportJaxStreamResult {
+  return buildObserverReceiptStreamFromSidecar(
+    sidecarBytes,
+    "jax",
+    "bp-import-jax@0.8.0",
+    "importJaxSidecarStream",
     opts,
   )
 }

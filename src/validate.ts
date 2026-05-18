@@ -499,7 +499,18 @@ export function validateFrameworkTraceSidecar(
   input: unknown,
   opts?: ValidateFrameworkTraceOptions,
 ): FrameworkTraceValidationResult {
-  const version: FrameworkTraceSchemaVersion = opts?.version ?? "0.1.0";
+  // v0.8 dispatch: if opts.version is explicit, use it. Else sniff
+  // input.format to dispatch on the "framework-trace.v<V>" const declared
+  // in the sidecar itself (this is the load-bearing path — single-step
+  // callers see v0.1.0, multi-step callers see v0.2.0). Else default to
+  // "0.1.0" for legacy single-step callers that pre-date the format
+  // const dispatch (defensive — no current caller hits this branch).
+  let version: FrameworkTraceSchemaVersion = opts?.version ?? "0.1.0";
+  if (opts?.version === undefined && typeof input === "object" && input !== null) {
+    const format = (input as Record<string, unknown>).format;
+    if (format === "framework-trace.v0.2.0") version = "0.2.0";
+    else if (format === "framework-trace.v0.1.0") version = "0.1.0";
+  }
   const validator = frameworkTraceValidators.get(version);
   if (!validator) {
     throw new Error(

@@ -855,5 +855,13 @@ function emitAttestor(a: NonNullable<GeneralReceipt["attestor"]>): string {
   if (a.signed_subject_digest !== undefined) {
     parts.push(`"signed_subject_digest":${S(a.signed_subject_digest)}`);
   }
+  if (a.bundle_root_digest !== undefined) {
+    // v0.8 — Rule 17 GATED field. Emitted at the end of the attestor
+    // x-order (after signed_subject_digest) so the canonical-byte
+    // position is stable. Stripping bundle_root_digest before recompute
+    // (Rule 17's verification step) leaves all prior bytes unchanged,
+    // mirroring Rule 16's strip-then-rehash discipline.
+    parts.push(`"bundle_root_digest":${S(a.bundle_root_digest)}`);
+  }
   return `{${parts.join(",")}}`;
 }

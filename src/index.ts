@@ -415,6 +415,53 @@ export type {
 } from "./import-tensorflow.js"
 
 /**
+ * v0.8 — Multi-step observer-mode ingestion entry points. Each
+ * per-framework `import*SidecarStream` wrapper reads a
+ * framework-trace.v0.2.0 JSONL stream (one record per training step)
+ * and produces N observer-mode v0.4.0 receipts bound by
+ * `attestor.bundle_root_digest` (Rule 17). The shared core in
+ * `src/import-observer.ts` does the heavy lifting; per-framework
+ * wrappers preserve the subcommand-discipline contract at the library
+ * layer.
+ *
+ * Same trust model as the single-step path: foreign claims become
+ * canonical fields; backprop-trace engine recomputes per step; Rule 14
+ * enforces agreement within attestor.differential_tolerance.
+ * Cross-record Rules 9 + 10 fire at downstream reconcile time
+ * (`bp verify multi -` or `reconcileMultiStep`). Rule 17 fires when
+ * `attestor.bundle_root_digest` is present.
+ *
+ * Rule 17 is BUNDLE INTEGRITY, not producer-authenticity — combine with
+ * Rule 16 `signed_subject_digest` or external signature for producer
+ * identity binding.
+ */
+export {
+  buildObserverReceiptStreamFromSidecar,
+} from "./import-observer.js"
+export type {
+  ObserverImportStreamResult,
+  ObserverImportStreamStep,
+} from "./import-observer.js"
+
+export { importPytorchSidecarStream } from "./import-pytorch.js"
+export type {
+  ImportPytorchStreamOptions,
+  ImportPytorchStreamResult,
+} from "./import-pytorch.js"
+
+export { importJaxSidecarStream } from "./import-jax.js"
+export type {
+  ImportJaxStreamOptions,
+  ImportJaxStreamResult,
+} from "./import-jax.js"
+
+export { importTensorflowSidecarStream } from "./import-tensorflow.js"
+export type {
+  ImportTensorflowStreamOptions,
+  ImportTensorflowStreamResult,
+} from "./import-tensorflow.js"
+
+/**
  * v0.6 — observer-mode receipt support types. SourceFramework + Attestor
  * (+ AttestorIdentity + ExternalTrustBasis) are the v0.4.0-schema-only
  * fields the importer adds to the receipt; consumers handling imported

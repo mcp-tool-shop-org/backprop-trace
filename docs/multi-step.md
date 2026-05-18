@@ -230,6 +230,108 @@ targeted invariant, expected cascades, and the expected `bp verify
 multi` output. The fixtures are byte-precise mutations of a canonical
 multi-step run; they test the verifier, not the engine.
 
+## Observer-mode multi-step (v0.8+)
+
+v0.8 extends the multi-step path to external framework traces. v0.3–v0.7
+multi-step was engine-authored only (`bp verify multi` on a JSONL stream
+of engine-authored receipts). v0.8 adds **multi-step observer-mode
+ingestion** via `bp import {pytorch,jax,tensorflow} multi <sidecar.jsonl>`.
+
+### Sidecar format
+
+A multi-step observer sidecar is a **framework-trace.v0.2.0** JSONL
+stream — one record per training step, in step order. Each record is
+self-contained (same shape as v0.1.0 single-step) plus optional `trace_id`
++ `step_index` (mirroring the receipt's v0.4.0 schema fields). v0.1.0
+single-step sidecars do NOT validate against v0.2.0: the `format` const
+discriminator distinguishes them, and the importer dispatches on it.
+
+```jsonl
+{"format":"framework-trace.v0.2.0","source_framework":{"name":"pytorch","version":"2.4.0",...},"trace_id":"<hex>","step_index":0,"topology":{...},...}
+{"format":"framework-trace.v0.2.0","source_framework":{"name":"pytorch","version":"2.4.0",...},"trace_id":"<hex>","step_index":1,"topology":{...},...}
+{"format":"framework-trace.v0.2.0","source_framework":{"name":"pytorch","version":"2.4.0",...},"trace_id":"<hex>","step_index":2,"topology":{...},...}
+```
+
+### Intra-stream invariants enforced at ingest
+
+- Every record declares `format: "framework-trace.v0.2.0"` (v0.1.0 records rejected).
+- Every record declares `source_framework.name` matching the subcommand framework (heterogeneous bundles rejected at first divergent record).
+- All records share `source_framework.name + version`.
+- `trace_id` is declared on all records or none (co-presence).
+- `step_index` is dense + monotonic from 0 to N-1 (or all absent, in which case the importer synthesizes 0..N-1).
+- ≥1 record (empty streams rejected).
+
+### What the importer produces
+
+For each step, an observer-mode v0.4.0 receipt. All N receipts share:
+
+- The same `attestor.import_provenance.source_hash` (SHA-256 of the whole sidecar bytes BEFORE parsing — single byte-stream binding).
+- The same `attestor.import_provenance.source_format = "framework-trace.v0.2.0"`.
+- The same `trace_id`.
+- An identical `attestor.bundle_root_digest` computed in a two-pass canonical emit (see Rule 17 below).
+- Dense `step_index` 0..N-1.
+- `fixture_status.authoring_state = "external_imported"` and per-step `verification_state` (matched/disagreed).
+
+### Verification flow
+
+```bash
+bp import pytorch multi train.multi-step.sidecar.jsonl | bp verify multi -
+```
+
+The pipe is the canonical workflow. Stage 1 (`bp import`) runs per-step
+Rule 14 differentials at ingest time. Stage 2 (`bp verify multi`) runs
+the full reconciler: Rules 1-8 per-receipt + Rules 9 (parameter chain)
++ 10 (trace identity) + Rule 17 (bundle binding) across the stream.
+
+### Rule 17 — Trace-bundle binding (GATED) — honest framing
+
+When `attestor.bundle_root_digest` is present on any receipt in a
+multi-record sequence, Rule 17 fires. It asserts three properties:
+
+1. **Co-presence**: every receipt in the bundle declares the field.
+2. **Value consistency**: every receipt's `bundle_root_digest` is the
+   same string.
+3. **Recompute**: the canonical-byte concatenation of all receipts
+   (each emitted with `bundle_root_digest` stripped) hashes to the
+   declared value.
+
+Rule 17 catches **bundle-integrity** failures: accidental splice, post-
+binding mutation of a receipt's bytes, inconsistent bundle roots when
+the digest was not recomputed after the change, receipt reordering after
+binding.
+
+**Rule 17 is NOT a producer-authenticity check.** An attacker who
+controls all receipt bytes AND recomputes the bundle digest passes Rule
+17 trivially — the recomputed value matches the declared value because
+the attacker chose both. For producer-identity binding, combine
+`bundle_root_digest` with Rule 16 `signed_subject_digest` (which fires
+on a per-receipt SolarWinds-style "signed-but-substituted" attack
+signature) or an external cryptographic signature over the bundle root.
+
+Rule 17 is a **tamper-evidence layer**, not an authentication layer.
+This framing is preserved in:
+
+- The schema docstring for `attestor.bundle_root_digest`.
+- The TS doc comment for `Attestor.bundle_root_digest`.
+- The Rule 17 failure-message text (the message itself names the caveat
+  so a CI consumer parsing the diagnostic cannot miss it).
+- The README's "Bring your own training trace" → "Multi-step ingestion
+  (v0.8+)" subsection.
+- `bp import <framework> multi --help`.
+
+### Adversarial fixtures (v0.8 plate, fixtures/bad/)
+
+Five fixtures, each load-bearing for a distinct cross-step attack class:
+
+- `multi-step-external.bad-step-index-gap.jsonl` → Rule 10 (sequence [0, 2] not dense from 0)
+- `multi-step-external.bad-chain-break-cross-step-internally-consistent.jsonl` → Rule 9 (each step internally consistent but chain broken; proves Rule 9 still necessary on the observer path)
+- `multi-step-external.bad-fabricated-mid-step.jsonl` → Rule 9 (step 1 generated from independent random parameters)
+- `multi-step-external.bad-cross-trace-splice.jsonl` → Rule 17 (receipt bytes mutated without recomputing bundle root)
+- `multi-step-external.bad-bundle-digest-tampered.jsonl` → Rule 17 (bundle_root_digest replaced on one receipt; value-consistency violation)
+
+All fixtures honor the anti-circularity ratchet: the reconciler detects
+the violation BEFORE consulting `fixture_status` metadata.
+
 ## Citations
 
 - **Jia, Yu, Iyer, Yaghini, Zhang, Papernot. "Proof-of-Learning: Definitions

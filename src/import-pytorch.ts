@@ -22,6 +22,7 @@
 
 import {
   buildObserverReceiptFromSidecar,
+  buildObserverReceiptStreamFromSidecar,
   type ObserverImportOptions,
   type ObserverImportResult,
   type FrameworkTraceSidecar,
@@ -62,6 +63,34 @@ export function importPytorchSidecar(
     "pytorch",
     "bp-import-pytorch@0.6.0",
     "importPytorchSidecar",
+    opts,
+  )
+}
+
+/**
+ * v0.8 — Import a multi-step PyTorch sidecar JSONL stream and produce N
+ * observer-mode v0.4.0 receipts (one per training step) bound by a
+ * `attestor.bundle_root_digest` (Rule 17). Thin wrapper over the shared
+ * `buildObserverReceiptStreamFromSidecar` core.
+ *
+ * The input sidecar MUST declare `format: "framework-trace.v0.2.0"` on
+ * every record AND `source_framework.name === "pytorch"` on every record.
+ * Mid-stream framework swaps and v0.1.0-format records are rejected with
+ * a loud diagnostic.
+ */
+export type ImportPytorchStreamOptions = ImportPytorchOptions
+export type ImportPytorchStreamResult =
+  import("./import-observer.js").ObserverImportStreamResult
+
+export function importPytorchSidecarStream(
+  sidecarBytes: string,
+  opts?: ImportPytorchStreamOptions,
+): ImportPytorchStreamResult {
+  return buildObserverReceiptStreamFromSidecar(
+    sidecarBytes,
+    "pytorch",
+    "bp-import-pytorch@0.8.0",
+    "importPytorchSidecarStream",
     opts,
   )
 }

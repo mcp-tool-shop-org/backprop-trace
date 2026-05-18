@@ -212,11 +212,13 @@ test("bp import tensorflow --help exits 0 with TF-specific authoring notes", () 
   assert.match(stdout, /GradientTape/)
 })
 
-test("bp import (overview) includes tensorflow row as shipped v0.7.0", () => {
+test("bp import (overview) includes tensorflow row as single-step (v0.7.0)", () => {
   const { status, stdout } = runBp(["import", "--help"])
   assert.strictEqual(status, 0)
   assert.match(stdout, /bp import tensorflow/)
-  assert.match(stdout, /shipped v0\.7\.0/)
+  // v0.8 reformatted: tensorflow row marker changed from "shipped v0.7.0"
+  // to "single-step (v0.7.0)" alongside a new "multi-step (v0.8)" sibling.
+  assert.match(stdout, /single-step \(v0\.7\.0\)/)
 })
 
 test("bp import tensorflow on a PyTorch sidecar exits 2 (per-framework discipline)", () => {

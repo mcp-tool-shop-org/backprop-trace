@@ -326,6 +326,14 @@ export type ExternalTrustBasis = (typeof EXTERNAL_TRUST_BASIS)[number]
  * `import_provenance`: optional bookkeeping for the import event.
  * `skip_basis`: optional; required by Rule 15 only when verification_state demands it.
  * `signed_subject_digest`: optional; Rule 16 fires only when present.
+ * `bundle_root_digest`: optional (v0.8+); Rule 17 fires only when present.
+ *   Binds all receipts in a multi-step observer-mode bundle to a
+ *   recomputed canonical-byte digest. INTEGRITY layer (catches accidental
+ *   splice + post-binding mutation when the digest is not recomputed),
+ *   NOT a producer-authenticity layer — an attacker who controls all
+ *   receipt bytes and recomputes the bundle digest passes Rule 17
+ *   trivially. Combine with `signed_subject_digest` (Rule 16) or an
+ *   external signature for producer-identity binding.
  *
  * computed_by !== verified_by is the load-bearing invariant. Engine-
  * authored receipts have neither (they ARE the producer); observer-mode
@@ -342,6 +350,7 @@ export type Attestor = {
   }
   skip_basis?: ExternalTrustBasis
   signed_subject_digest?: string
+  bundle_root_digest?: string
 }
 
 export type GeneralReceipt = {
@@ -354,7 +363,10 @@ export type GeneralReceipt = {
   // don't need to pass it explicitly.
   schema_version: "0.2.0" | "0.3.0" | "0.4.0"
   fixture: string
-  step: 1
+  // step is integer ≥1 per receipt.v0.4.0 schema. Engine-authored single-step
+  // receipts hardcode step:1. v0.8 multi-step observer-mode receipts set
+  // step = step_index + 1 per record (step_index is 0-indexed).
+  step: number
   fixture_status: FixtureStatus
   /**
    * v0.6: identifies the framework that produced the math. REQUIRED

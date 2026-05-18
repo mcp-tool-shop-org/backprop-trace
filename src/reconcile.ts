@@ -2136,6 +2136,12 @@ export function reconcileMultiStep(
   // Rule 10: full-sequence trace identity + step_index sequencing.
   failures.push(...checkRule10(receipts))
 
+  // Rule 17 (v0.8): trace-bundle binding (GATED on bundle_root_digest).
+  // Bundle-integrity check, NOT producer-authenticity. Silent skip when
+  // no receipt declares the field — preserves backward compat with
+  // v0.6/v0.7 multi-step receipts that pre-date Rule 17.
+  checkRule17BundleBinding(receipts, failures)
+
   return failures.length === 0 ? { ok: true } : { ok: false, failures }
 }
 
@@ -3079,6 +3085,159 @@ function checkRule16AttestationBinding(
         `the digest was bound — SolarWinds-style "signed-but-substituted" attack signature. ` +
         `Signature validity (cosign verification) is out of scope for the reconciler; this ` +
         `check only catches digest-binding integrity within the receipt itself.`,
+    })
+  }
+}
+
+/**
+ * Rule 17 (v0.8): trace-bundle binding (GATED).
+ *
+ * Fires ONLY when any receipt in the multi-record input declares
+ * `attestor.bundle_root_digest`. When fired, asserts three properties:
+ *   (a) Co-presence: every receipt in the bundle declares the field
+ *       (heterogeneous binding is rejected).
+ *   (b) Value consistency: every receipt's bundle_root_digest is the
+ *       same string.
+ *   (c) Recompute: concatenate canonical bytes of every receipt with
+ *       its own bundle_root_digest field stripped, sha256 the stream,
+ *       and assert the result matches the declared value.
+ *
+ * Catches BUNDLE INTEGRITY failures: accidental splice, post-binding
+ * mutation of a receipt's bytes, inconsistent bundle roots when the
+ * digest was not recomputed after the change, receipt reordering after
+ * binding.
+ *
+ * Rule 17 is NOT a producer-authenticity check. An attacker who controls
+ * all receipt bytes AND recomputes the bundle digest passes Rule 17
+ * trivially. For producer-identity binding, combine bundle_root_digest
+ * with Rule 16's signed_subject_digest, an external signature, or an
+ * out-of-band attestation. Rule 17 is a tamper-evidence layer, not an
+ * authentication layer.
+ *
+ * Silently skips when no receipt declares the field — consistent with
+ * Rule 16's GATED behavior. Fires only from `reconcileMultiStep` because
+ * the bundle context (which receipts comprise the trace) is meaningful
+ * only across a multi-record sequence.
+ */
+function checkRule17BundleBinding(
+  rawReceipts: ReadonlyArray<unknown>,
+  failures: ReconciliationFailure[],
+): void {
+  // Collect declared bundle_root_digest from each receipt's attestor.
+  const digests = rawReceipts.map((r) => {
+    if (r === null || typeof r !== "object") return undefined
+    const a = (r as { attestor?: { bundle_root_digest?: unknown } }).attestor
+    if (!a || typeof a !== "object") return undefined
+    const d = (a as { bundle_root_digest?: unknown }).bundle_root_digest
+    return typeof d === "string" ? d : undefined
+  })
+
+  const anyDeclared = digests.some((d) => d !== undefined)
+  if (!anyDeclared) return // GATED — silent skip
+
+  // (a) Co-presence: every receipt must declare the field once any does.
+  const allDeclared = digests.every((d) => d !== undefined)
+  if (!allDeclared) {
+    const firstMissing = digests.findIndex((d) => d === undefined)
+    failures.push({
+      rule: 17,
+      field_path: `receipts[${firstMissing}].attestor.bundle_root_digest`,
+      stored: 0,
+      recomputed: 0,
+      delta: 0,
+      tolerance: 0,
+      message:
+        `Rule 17 (trace-bundle binding): heterogeneous binding — some receipts declare ` +
+        `attestor.bundle_root_digest and others do not. First receipt missing the field: ` +
+        `index ${firstMissing}. Either bind the whole bundle (all receipts carry the same ` +
+        `bundle_root_digest) or none. Rule 17 is a BUNDLE INTEGRITY check, NOT a producer-` +
+        `authenticity check.`,
+    })
+    return
+  }
+
+  // (b) Value consistency: every receipt's digest must be identical.
+  const first = digests[0]!
+  for (let i = 1; i < digests.length; i += 1) {
+    if (digests[i] !== first) {
+      failures.push({
+        rule: 17,
+        field_path: `receipts[${i}].attestor.bundle_root_digest`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 17 (trace-bundle binding): bundle_root_digest mismatch at receipt[${i}]. ` +
+          `Expected ${first} (from receipt[0]); got ${digests[i]}. All receipts in a bundle ` +
+          `MUST declare the same bundle_root_digest value.`,
+      })
+      return
+    }
+  }
+
+  // Validate digest format BEFORE recomputing.
+  const match = first.match(/^sha256:([0-9a-f]{64})$/)
+  if (!match) {
+    failures.push({
+      rule: 17,
+      field_path: "receipts[0].attestor.bundle_root_digest",
+      stored: 0,
+      recomputed: 0,
+      delta: 0,
+      tolerance: 0,
+      message:
+        `Rule 17 (trace-bundle binding): bundle_root_digest ${JSON.stringify(first)} ` +
+        `is not in the expected "sha256:<64-hex>" format.`,
+    })
+    return
+  }
+
+  // (c) Recompute: strip bundle_root_digest from each receipt, re-emit
+  // canonical bytes, concatenate, sha256, compare.
+  let recomputedDigest: string
+  try {
+    const parts: string[] = []
+    for (const r of rawReceipts) {
+      const stripped = JSON.parse(JSON.stringify(r)) as Record<string, unknown>
+      const sAttestor = stripped.attestor as { bundle_root_digest?: unknown } | undefined
+      if (sAttestor && typeof sAttestor === "object") {
+        delete sAttestor.bundle_root_digest
+      }
+      parts.push(emitGeneralReceipt(stripped as unknown as GeneralReceipt))
+    }
+    const pass1Bytes = parts.join("")
+    recomputedDigest = `sha256:${hashReceipt(pass1Bytes)}`
+  } catch (err) {
+    failures.push({
+      rule: 17,
+      field_path: "receipts[*].attestor.bundle_root_digest",
+      stored: 0,
+      recomputed: 0,
+      delta: 0,
+      tolerance: 0,
+      message:
+        `Rule 17 (trace-bundle binding): canonical-emit threw while recomputing the bundle ` +
+        `digest from receipts: ${err instanceof Error ? err.message : String(err)}.`,
+    })
+    return
+  }
+
+  if (recomputedDigest !== first) {
+    failures.push({
+      rule: 17,
+      field_path: "receipts[*].attestor.bundle_root_digest",
+      stored: 0,
+      recomputed: 0,
+      delta: 0,
+      tolerance: 0,
+      message:
+        `Rule 17 (trace-bundle binding): declared bundle_root_digest ${first} does not match ` +
+        `recomputed digest ${recomputedDigest}. Receipt bytes have been mutated, spliced, or ` +
+        `reordered after the bundle digest was bound. NOTE: Rule 17 is a BUNDLE INTEGRITY ` +
+        `check, NOT a producer-authenticity check — an attacker who controls all receipt ` +
+        `bytes and recomputes the bundle digest passes Rule 17 trivially. Combine with Rule 16 ` +
+        `signed_subject_digest or an external signature for producer-identity binding.`,
     })
   }
 }

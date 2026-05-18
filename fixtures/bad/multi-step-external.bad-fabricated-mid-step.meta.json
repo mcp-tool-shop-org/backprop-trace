@@ -1,0 +1,28 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "multi-step-external.bad-fabricated-mid-step.meta",
+  "describes": "fixtures/bad/multi-step-external.bad-fabricated-mid-step.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.softmax-ce.multi-step.golden.jsonl. v0.8 multi-step observer-mode adversarial plate — each fixture surfaces a distinct cross-step attack class with a deterministic mutation.",
+  "mutation": {
+    "kind": "replace_step_with_engine_generated_step_from_independent_parameters",
+    "step_index_mutated": 1,
+    "fabricated_parameters_before": {
+      "w_x1_h1": 0.99,
+      "w_x2_h1": 0.88,
+      "w_x1_h2": 0.77,
+      "w_x2_h2": 0.66,
+      "w_h1_o1": 0.55,
+      "w_h2_o1": 0.44,
+      "w_h1_o2": 0.33,
+      "w_h2_o2": 0.22,
+      "w_h1_o3": 0.11,
+      "w_h2_o3": 0.05,
+      "b_hidden": 0.07,
+      "b_output": 0.17
+    },
+    "note": "Step 1 is internally consistent (engine produced it) but has no lineage to step 0. Rule 9 fires because parameters_before[1] differs from parameters_after[0] in every weight."
+  },
+  "reconciliation_check_targeted_first": "Rule 9: Multi-step parameter chain violation — fabricated step 1 has parameters_before from independent random initialization, not lineage from step 0.",
+  "purpose": "v0.8 multi-step observer-mode anti-circularity fixture. Pressure-tests that the named cross-step rule fires BEFORE the reconciler consults fixture_status metadata. The multi-step bundle is run through reconcileMultiStep, which composes per-receipt Rules 1-8 + cross-record Rules 9, 10, 17.",
+  "v0_8_note": "v0.8 ships multi-step observer-mode ingestion (bp import {pytorch,jax,tensorflow} multi). Rule 17 is a BUNDLE INTEGRITY check (not producer-authenticity): catches accidental splice / post-binding mutation / heterogeneous bundle binding. For producer-identity, combine bundle_root_digest with Rule 16 signed_subject_digest or external signature."
+}

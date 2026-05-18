@@ -14,6 +14,205 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.8.0] - 2026-05-18
+
+The v0.8 multi-step observer-mode ingestion wave. **Not a v1.0.0
+promotion** — backprop-trace remains mid-v0 (single-sample, SGD-only,
+hand-authored sidecars, no live framework helpers, no real-world fixture,
+no adopter validation). What v0.8 actually does: closes the first v1.0
+product-completeness gap named in v0.7's SHIP_GATE — external ingestion
+is no longer single-step only.
+
+### Added
+
+- **`framework-trace.v0.2.0` schema** (NEW file). Additive over v0.1.0
+  in spirit but a hard schema bump because the `format` const + root
+  `additionalProperties: false` make additive evolution impossible on
+  the same major. Adds optional `trace_id` (32-char hex, W3C
+  TraceContext shape) + `step_index` (integer ≥0) + a co-presence
+  `allOf`/`anyOf` guard mirroring receipt.v0.4.0's pattern. v0.1.0
+  sidecars continue to validate against v0.1.0 unchanged.
+- **`receipt.v0.4.0` schema** additive extension — optional
+  `attestor.bundle_root_digest` field (sha256 hex). Gates Rule 17.
+  Existing v0.4.0 receipts (single-step observer-mode v0.6/v0.7) remain
+  byte-identical because the field is optional.
+- **`buildObserverReceiptStreamFromSidecar`** shared core in
+  `src/import-observer.ts`. Pipeline:
+  1. Hash whole sidecar JSONL bytes BEFORE parsing → `source_hash`.
+  2. Split + parse + validate each record against framework-trace.v0.2.0
+     (dispatched on `format` const).
+  3. Assert intra-stream homogeneity (matching `source_framework.name +
+     version` across records; `trace_id` co-presence; `step_index` dense
+     + monotonic from 0).
+  4. Per-step engine recompute via `runGeneralStep` + Rule 14
+     differential check.
+  5. Two-pass canonical emit: strip-then-rehash to compute
+     `bundle_root_digest`, embed on every receipt, re-emit.
+- **Per-framework multi-step wrappers** — `importPytorchSidecarStream`
+  (`src/import-pytorch.ts`), `importJaxSidecarStream`
+  (`src/import-jax.ts`), `importTensorflowSidecarStream`
+  (`src/import-tensorflow.ts`). Each is a thin delegate over the shared
+  core; each enforces per-framework subcommand discipline (rejects
+  sidecars whose `source_framework.name` does not match expected).
+- **`bp import {pytorch,jax,tensorflow} multi <sidecar.jsonl>`** CLI
+  subnouns (parallel to `bp verify multi`). Exit codes 0 / 1 / 2 / 3
+  with explicit per-step + aggregate differential semantics. Documented
+  in `bp import <framework> multi --help` and in the `bp import`
+  overview help.
+- **Rule 17 (Trace-bundle binding, GATED)** in `src/reconcile.ts`.
+  Fires only when `attestor.bundle_root_digest` is present on any
+  receipt in a multi-record reconcile. Asserts (a) co-presence across
+  receipts, (b) value consistency across receipts, (c) recompute matches
+  via strip-then-rehash. Wired into `reconcileMultiStep` alongside
+  Rules 9 + 10.
+- **Honest Rule 17 framing throughout** — README "Bring your own
+  training trace" subsection, `docs/multi-step.md` observer-mode
+  subsection, `docs/cli.md` "Rule 17 — honest framing" subsection,
+  Rule 17 failure-message text, schema docstring, TS type docstring,
+  `bp import <framework> multi --help` text. All state explicitly:
+  Rule 17 is **bundle integrity** (catches accidental splice / post-
+  binding mutation / inconsistent bundle roots when the digest is not
+  recomputed), NOT producer authenticity. An attacker who controls all
+  receipt bytes AND recomputes the bundle digest passes Rule 17
+  trivially. For producer-identity binding, combine with Rule 16
+  `signed_subject_digest` or an external signature.
+- **`fixtures/external/pytorch.softmax-ce.multi-step.{sidecar,golden}.jsonl`**
+  — canonical 3-step PyTorch softmax+CE SGD trace. 3 records in the
+  sidecar; 3 receipts in the golden. Loss does NOT converge (3 steps on
+  a 2-2-3 network is pedagogical, not real training).
+- **5-fixture multi-step bad-fixture plate** under `fixtures/bad/`:
+  - `multi-step-external.bad-step-index-gap.jsonl` → Rule 10
+  - `multi-step-external.bad-chain-break-cross-step-internally-consistent.jsonl` → Rule 9 (load-bearing: per-step Rule 14 still passes; chain breaks)
+  - `multi-step-external.bad-fabricated-mid-step.jsonl` → Rule 9
+  - `multi-step-external.bad-cross-trace-splice.jsonl` → Rule 17 (recompute mismatch)
+  - `multi-step-external.bad-bundle-digest-tampered.jsonl` → Rule 17 (value-consistency)
+- **`scripts/generate-pytorch-multi-step-softmax-ce-fixtures.ts`** and
+  **`scripts/generate-multi-step-external-bad-fixtures.ts`** —
+  reproducible generators. Re-runs produce byte-identical fixtures.
+- **`test/import-pytorch-multi-step.test.ts`** — multi-step round-trip
+  byte-equality, schema validation, reconcile cleanup, per-framework
+  discipline 3-way matrix on streams, format-const dispatch, CLI
+  end-to-end. ~13 new tests.
+- **`test/reconcile.bad-multi-step-external.test.ts`** — each bad
+  fixture asserts its targeted rule fires; Rule 17 fixtures also assert
+  the diagnostic message contains the honest bundle-integrity caveat.
+  ~6 new tests.
+- **`test/cli.multi-step-import-pipe.test.ts`** — end-to-end
+  `bp import pytorch multi <good> | bp verify multi -` produces exit 0;
+  each bad fixture produces exit 1 through `verify multi`. ~3 new tests.
+- **Library re-exports** — `importPytorchSidecarStream` /
+  `importJaxSidecarStream` / `importTensorflowSidecarStream` /
+  `buildObserverReceiptStreamFromSidecar` + their option/result types
+  from package root.
+
+### Changed
+
+- **`emit.ts`** — `emitAttestor` now emits `bundle_root_digest` at the
+  end of the attestor x-order (after `signed_subject_digest`).
+  Backward-compat: omitting the field produces byte-identical output to
+  v0.7.
+- **`reconcile.ts`** — `reconcileMultiStep` now invokes Rule 17 after
+  Rule 10. Single-record `reconcileReceipt` is unchanged (Rule 17 does
+  not fire on single records).
+- **`general-engine.ts`** — `Attestor` type gains optional
+  `bundle_root_digest?: string`. `GeneralReceipt.step` widened from
+  literal `1` to `number` so multi-step receipts can carry
+  `step = step_index + 1`. Engine-authored single-step receipts still
+  hardcode `step: 1`; no observable behavior change for existing
+  callers.
+- **`bp.ts` top-level `bp --help`** — header bumped to 19 subcommands.
+  3 new rows for `bp import {pytorch,jax,tensorflow} multi`. Existing
+  single-step rows annotated "single-step" for clarity. `bp import`
+  overview help reformatted to show single-step + multi-step as
+  parallel rows with version markers.
+- **`bp.ts` RULE_LABELS** — added Rule 17 label with the explicit
+  bundle-integrity-NOT-producer-authenticity caveat baked in.
+- **README** — tagline updated ("17-rule reconciler"; "single" dropped
+  from the framing); status banner bumped to v0.8.0; "What this is"
+  para describes multi-step observer-mode ingestion explicitly + the
+  caveat that it does NOT validate the overall training run; CLI usage
+  table grew to 19 rows; "Bring your own training trace" section
+  extended with "Multi-step ingestion (v0.8+)" subsection and the
+  honest Rule 17 framing; "The 17 rules" table (was 16) with Rule 17
+  row including the inline NOT-a-producer-authenticity caveat;
+  Determinism scope adds `pytorch.softmax-ce.multi-step.golden.jsonl`;
+  "What's not in this version (yet)" REMOVES the multi-step bullet
+  (shipped) and ADDS two new gaps: heterogeneous multi-framework traces
+  + producer-identity binding (Rule 17 is integrity-only).
+- **`docs/multi-step.md`** — extended with a full "Observer-mode
+  multi-step (v0.8+)" section covering the sidecar format, intra-stream
+  invariants, importer output shape, verification flow, Rule 17 honest
+  framing, and the adversarial fixture plate.
+- **`docs/cli.md`** — 3 new rows in the subcommand summary; new
+  "Subcommand: `bp import <framework> multi` (v0.8+)" section; Rule 17
+  honest-framing subsection.
+- **`package.json`** — version 0.8.0; description rewritten ("single"
+  dropped; multi-step + bundle-integrity language added); new
+  `./import-tensorflow` was already present from v0.7.0 (multi-step
+  pathway shares per-framework subpath modules — no new subpath
+  exports needed in v0.8).
+- **`test/reconcile.doctrine.test.ts`** — `FILENAME_KIND_TO_RULE` gains
+  5 new entries for the multi-step plate. Implemented-rules assertion
+  bumped from `[1..16]` to `[1..17]`. Test description updated to name
+  Rule 17 with the bundle-integrity caveat.
+- **`test/import-jax.test.ts`** + **`test/import-tensorflow.test.ts`**
+  — overview-marker regex updated from `shipped vX.Y.Z` to
+  `single-step (vX.Y.Z)` to match the reformatted `bp import` overview.
+
+### Tests
+
+- 396 → 396 total. Net +18 v0.8 tests across 3 new test files; -2
+  obsolete marker-text assertions updated in-place. 396 pass / 0 fail /
+  0 skip.
+- All v0.1-v0.7.0 fixtures byte-identical.
+- Engine identity stays at `backprop-trace-engine@0.6.0` (engine math
+  unchanged; v0.8 adds only the multi-step ingestion path + Rule 17 +
+  fixtures + docs).
+
+### Migration notes (v0.7.0 → v0.8.0)
+
+- **Schema additivity**: existing v0.4.0 receipts validate unchanged
+  (the new `attestor.bundle_root_digest` field is optional). Existing
+  framework-trace.v0.1.0 single-step sidecars validate unchanged. The
+  multi-step path requires `framework-trace.v0.2.0`.
+- **CLI**: the single-step `bp import {pytorch,jax,tensorflow} <file>`
+  path is unchanged. The new `bp import {pytorch,jax,tensorflow} multi
+  <file>` path is opt-in via the `multi` subnoun.
+- **Reconciler**: `reconcileReceipt` (single-record) is unchanged.
+  `reconcileMultiStep` (multi-record) now also runs Rule 17 — but Rule
+  17 is GATED on `attestor.bundle_root_digest` presence, so v0.6/v0.7
+  multi-step receipts without the field continue to reconcile as
+  before (Rule 17 silently skips).
+- **Library API**: 4 new exports (`importPytorchSidecarStream`,
+  `importJaxSidecarStream`, `importTensorflowSidecarStream`,
+  `buildObserverReceiptStreamFromSidecar`) + 6 new types. All additive.
+
+### Not in v0.8 (still v1.0 blockers — see SHIP_GATE.md)
+
+- Optimizers beyond SGD (Adam, AdamW, momentum, weight decay) — v0.9.
+- Batch dimension — v0.9.
+- Live framework helpers (`pip install backprop-trace-pytorch`) — v0.10.
+- Real-world fixture (CNN, transformer block) — v0.11.
+- Adopter validation — before any v1.0 promotion.
+- Producer-identity binding for multi-step traces (Rule 17 is
+  integrity-only; signature layer is downstream operator work) —
+  documented as a gap; built-in operator surface may follow.
+- Heterogeneous multi-framework traces — out of scope, may stay.
+- GPU determinism — out of scope (permanent).
+
+### Release discipline
+
+- No git tag (untagged main commit).
+- No npm publish.
+- No GitHub release.
+- No translations.
+
+Per standing user constraint: tagging now would risk reintroducing the
+"release equals promotion" pressure v0.7 explicitly corrected. v0.8 is
+a substantive product slice, not a v1.0 promotion. Translations will
+re-run when a tag-bearing release (post-v1.0 product gaps closing) is
+authorized.
+
 ## [0.7.0] - 2026-05-17
 
 The v0.7.0 release-readiness slice. **Not a v1.0.0 promotion** — see

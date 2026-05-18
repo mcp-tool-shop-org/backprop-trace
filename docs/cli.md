@@ -40,6 +40,10 @@ the subcommand-specific text.
 | `bp validate <file>` | Schema-only validation of a receipt; auto-detects v0.1.0 / v0.2.0 / v0.3.0 / v0.4.0 | 0 / 1 |
 | `bp import pytorch <sidecar.jsonl> [--out F]` | Convert a framework-trace.v0.1.0 PyTorch sidecar to an observer-mode v0.4.0 receipt (v0.6+) | 0 / 1 / 2 / 4 |
 | `bp import jax <sidecar.jsonl> [--out F]` | Same as `bp import pytorch` but accepts `source_framework.name == "jax"` sidecars (v0.6.1+) | 0 / 1 / 2 / 4 |
+| `bp import tensorflow <sidecar.jsonl> [--out F]` | Same as `bp import pytorch` but accepts `source_framework.name == "tensorflow"` sidecars (v0.7.0+) | 0 / 1 / 2 / 4 |
+| `bp import pytorch multi <sidecar.jsonl> [--out F]` | Convert a framework-trace.v0.2.0 multi-step PyTorch JSONL stream to N observer-mode v0.4.0 receipts (v0.8+) | 0 / 1 / 2 / 3 |
+| `bp import jax multi <sidecar.jsonl> [--out F]` | Same as `bp import pytorch multi` but JAX (v0.8+) | 0 / 1 / 2 / 3 |
+| `bp import tensorflow multi <sidecar.jsonl> [--out F]` | Same as `bp import pytorch multi` but TensorFlow (v0.8+) | 0 / 1 / 2 / 3 |
 
 All subcommands accept `-` as the file argument to read from stdin
 (except `generate mazur / xor / iris`, which write rather than read, and
@@ -113,9 +117,12 @@ bp import pytorch trace.jsonl --json
 
 | Subcommand | Status |
 |---|---|
-| `bp import pytorch <file>` | **Shipped in v0.6.0** |
-| `bp import jax <file>` | **Shipped in v0.6.1** |
-| `bp import tensorflow <file>` | Planned for v0.6.x patch |
+| `bp import pytorch <file>` | **Shipped in v0.6.0** (single-step) |
+| `bp import jax <file>` | **Shipped in v0.6.1** (single-step) |
+| `bp import tensorflow <file>` | **Shipped in v0.7.0** (single-step) |
+| `bp import pytorch multi <file>` | **Shipped in v0.8.0** (multi-step) |
+| `bp import jax multi <file>` | **Shipped in v0.8.0** (multi-step) |
+| `bp import tensorflow multi <file>` | **Shipped in v0.8.0** (multi-step) |
 
 The CLI does **not** auto-detect framework from file contents — name it
 explicitly. This is a deliberate choice per the v0.6 study consolidator
@@ -149,6 +156,93 @@ sidecar):
 - **vmap / scan / pmap**: produce batched values, not single-step
   scalars. Emit one sidecar per step; schema validation rejects extra
   dimensions at the wire layer.
+
+## Subcommand: `bp import <framework> multi` (v0.8+)
+
+```
+bp import {pytorch,jax,tensorflow} multi <sidecar.jsonl> [--out <file>] [--json] [--verbose]
+```
+
+Multi-step observer-mode ingestion. Reads a **framework-trace.v0.2.0**
+JSONL stream (one record per training step, in step order) and emits N
+observer-mode v0.4.0 receipts (one per line on stdout, or to `--out
+<file>`). The output is pipe-ready for `bp verify multi -`.
+
+**End-to-end pattern:**
+
+```bash
+bp import pytorch multi train.multi-step.sidecar.jsonl | bp verify multi -
+# Stage 1: per-step Rule 14 differentials at ingest
+# Stage 2: per-receipt Rules 1-8 + cross-record Rules 9 (parameter chain)
+#          + 10 (trace identity) + Rule 17 (bundle binding)
+```
+
+**Intra-stream invariants enforced at ingest** (any violation → exit 2):
+
+- Every record declares `format: "framework-trace.v0.2.0"` (v0.1.0
+  single-step sidecars are rejected — use the single-step subcommand).
+- Every record's `source_framework.name` matches the subcommand
+  framework (heterogeneous bundles fail fast at the first divergent
+  record).
+- All records share `source_framework.{name, version}`.
+- `trace_id` is declared on all records or none (co-presence). If
+  declared, all values must be identical; if not, the importer
+  synthesizes a `trace_id` from the source hash.
+- `step_index` is dense + monotonic from 0 to N-1, OR all absent (the
+  importer synthesizes 0..N-1).
+- ≥1 record (empty streams rejected).
+
+**Output shape**:
+
+- N observer-mode v0.4.0 receipts, one JSONL record per line.
+- All N receipts share `attestor.import_provenance.source_hash` (SHA-256
+  of the whole sidecar bytes BEFORE parsing — single byte-stream binding).
+- All N receipts carry an identical `attestor.bundle_root_digest`
+  computed by the importer in a two-pass canonical emit:
+  1. Emit each receipt's canonical bytes WITHOUT `bundle_root_digest`.
+  2. SHA-256 the concatenation of all those bytes → `bundle_root_digest`.
+  3. Add `bundle_root_digest` to each receipt's attestor.
+  4. Re-emit the final stream.
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| 0 | All N steps imported AND every per-step Rule 14 differential agreed |
+| 1 | All N steps imported; ≥1 step's differential DISAGREED. All N receipts still emitted (per-step `verification_state` set) for audit |
+| 2 | Usage / I/O / schema-validation error (incl. mid-stream framework swap, trace_id swap, step_index gap, format-const mismatch) |
+| 3 | Invalid CLI argument |
+
+### Rule 17 — Trace-bundle binding — honest framing
+
+`attestor.bundle_root_digest` gates Rule 17. When present on any
+receipt in a multi-record reconcile (e.g., via `bp verify multi`), Rule
+17 fires. It asserts:
+
+1. **Co-presence**: every receipt declares the field.
+2. **Value consistency**: every receipt's `bundle_root_digest` is the
+   same string.
+3. **Recompute**: the canonical-byte concatenation of all receipts (each
+   with `bundle_root_digest` stripped) hashes to the declared value.
+
+**Rule 17 is BUNDLE INTEGRITY, NOT producer-authenticity.** Catches:
+
+- Accidental splice (a receipt was replaced after the digest was bound).
+- Post-binding mutation (any receipt's bytes were changed).
+- Inconsistent bundle roots (receipts from different bundles spliced
+  together).
+- Heterogeneous binding (some receipts declare the field, others don't).
+
+Does NOT catch:
+
+- An attacker who controls all receipt bytes AND recomputes the
+  `bundle_root_digest`. Such an attacker passes Rule 17 trivially.
+
+For producer-identity binding, combine `bundle_root_digest` with Rule
+16 (`signed_subject_digest`) or an external cryptographic signature.
+Rule 17 is a **tamper-evidence layer**, not an authentication layer.
+See [`docs/multi-step.md`](./multi-step.md#observer-mode-multi-step-v08)
+for the full honest-framing prose and the adversarial-fixture plate.
 
 ## Subcommand: `bp reconcile receipt`
 

@@ -154,6 +154,7 @@ const RULE_LABELS: Record<number, string> = {
   14: "engine-recompute differential (observer-mode receipt's foreign claim disagrees with backprop-trace engine recomputation)",
   15: "skip-basis required (engine_recompute_skipped_with_basis verification_state needs attestor.skip_basis from closed enum)",
   16: "attestation digest binding (attestor.signed_subject_digest does not match recomputed canonical-byte digest)",
+  17: "trace-bundle binding (attestor.bundle_root_digest mismatch / heterogeneous bundle binding / post-binding mutation; INTEGRITY check only, not producer-authenticity)",
 };
 
 // =============================================================================
@@ -990,9 +991,18 @@ function importUsageText(): string {
     "  re-run the verification.",
     "",
     "  Frameworks (per-framework subcommands; no auto-detection):",
-    "    bp import pytorch    <sidecar.jsonl>  — shipped v0.6.0",
-    "    bp import jax        <sidecar.jsonl>  — shipped v0.6.1",
-    "    bp import tensorflow <sidecar.jsonl>  — shipped v0.7.0",
+    "    bp import pytorch    <sidecar.jsonl>            — single-step (v0.6.0)",
+    "    bp import jax        <sidecar.jsonl>            — single-step (v0.6.1)",
+    "    bp import tensorflow <sidecar.jsonl>            — single-step (v0.7.0)",
+    "    bp import pytorch    multi <sidecar.jsonl>      — multi-step JSONL stream (v0.8)",
+    "    bp import jax        multi <sidecar.jsonl>      — multi-step JSONL stream (v0.8)",
+    "    bp import tensorflow multi <sidecar.jsonl>      — multi-step JSONL stream (v0.8)",
+    "",
+    "  Multi-step ingestion reads a framework-trace.v0.2.0 JSONL stream and",
+    "  emits N observer-mode v0.4.0 receipts (one per line) suitable for",
+    "  piping into `bp verify multi -` for cross-step Rules 9 + 10.",
+    "  Optional Rule 17 (bundle-integrity binding, NOT producer authenticity)",
+    "  is always added by the multi-step importer.",
     "",
     "  Run `bp import <framework> --help` for framework-specific details.",
     "",
@@ -1035,6 +1045,60 @@ function importJaxUsageText(): string {
     "    1  Import succeeded but differential check DISAGREED.",
     "    2  Usage / I/O / schema-validation error.",
     "    3  Invalid CLI argument.",
+    "",
+  ].join("\n");
+}
+
+function importStreamUsageText(framework: "pytorch" | "jax" | "tensorflow"): string {
+  return [
+    `Usage: bp import ${framework} multi <sidecar.jsonl> [--out <file>] [--json]`,
+    "",
+    `  v0.8 multi-step observer-mode ingestion. Reads a framework-trace.v0.2.0`,
+    `  JSONL stream (one ${framework} sidecar record per line, in step order)`,
+    `  and emits N observer-mode v0.4.0 receipts (one per line on stdout, or`,
+    `  to --out <file>) ready to pipe into 'bp verify multi -' for cross-step`,
+    `  Rules 9 (parameter chain) + 10 (trace identity).`,
+    "",
+    `  Per-step Rule 14 (engine-recompute differential) fires inside the`,
+    `  importer at ingest time. All receipts in the bundle are bound by a`,
+    `  Rule 17 'attestor.bundle_root_digest' (recomputed sha256 over the`,
+    `  canonical-byte concatenation of every receipt with bundle_root_digest`,
+    `  stripped). Rule 17 catches BUNDLE INTEGRITY failures — accidental`,
+    `  splice, post-binding mutation, inconsistent bundle roots — but does`,
+    `  NOT prove producer authenticity (an attacker who controls all receipt`,
+    `  bytes and recomputes the bundle digest passes Rule 17 trivially).`,
+    `  For producer-identity binding, combine with Rule 16 signed_subject_digest`,
+    `  or an external signature.`,
+    "",
+    `  Constraints (rejected at ingest with exit 2):`,
+    `    - Every record must declare format='framework-trace.v0.2.0'`,
+    `    - Every record must declare source_framework.name='${framework}'`,
+    `    - source_framework.name + version must be identical across records`,
+    `    - trace_id must be present on all records or absent on all`,
+    `    - step_index must be dense + monotonic from 0 to N-1`,
+    `    - Mid-stream framework swap, trace_id swap, or step_index gap`,
+    `      fails fast at the offending record`,
+    "",
+    `  <sidecar.jsonl>  Path to a framework-trace.v0.2.0 JSONL stream.`,
+    `                   Use '-' to read from stdin.`,
+    "",
+    "  Options:",
+    `    --out <file>   Write the receipt stream to <file> instead of stdout.`,
+    `    --json         Emit machine-readable JSON summary on stderr (or`,
+    `                    stdout under -- json) with per-step + aggregate`,
+    `                    differential outcome + bundle_root_digest.`,
+    `    --verbose, -V  Diagnostic stderr.`,
+    "",
+    "  Exit codes:",
+    "    0  All N steps imported AND every per-step Rule 14 differential agreed.",
+    "    1  All N steps imported; ≥1 per-step differential DISAGREED. All",
+    "        receipts emitted (verification_state per step) for audit.",
+    "    2  Usage / I/O / schema-validation error (incl. mid-stream framework",
+    "        swap, trace_id swap, step_index gap, format-const mismatch).",
+    "    3  Invalid CLI argument.",
+    "",
+    "  Example end-to-end (PyTorch 3-step trace):",
+    `    bp import ${framework} multi train.multi-step.sidecar.jsonl | bp verify multi -`,
     "",
   ].join("\n");
 }
@@ -2235,6 +2299,182 @@ function runImportTensorflow(file: string): void {
 }
 
 // =============================================================================
+// import <framework> multi (v0.8 — multi-step observer-mode ingestion)
+// =============================================================================
+
+/**
+ * v0.8 — shared CLI runner for `bp import <framework> multi <file>`.
+ * Reads a JSONL stream of framework-trace.v0.2.0 sidecar records,
+ * dispatches to the named library stream-import function, emits N
+ * observer-mode v0.4.0 receipts (one per line on stdout, or to --out
+ * file), and reports per-step + aggregate differential outcome.
+ *
+ * Exit codes:
+ *   0  — All N steps imported AND every step's Rule 14 differential
+ *         agreed within tolerance.
+ *   1  — All N steps imported but ≥1 step's differential DISAGREED.
+ *         All N receipts still emitted (verification_state on each
+ *         disagreed step is 'engine_recompute_disagreed') for audit.
+ *   2  — Usage / I/O / schema-validation error (also covers partial
+ *         mid-stream failures: malformed JSONL line, schema-invalid
+ *         record, mid-stream framework swap, mid-stream trace_id swap,
+ *         non-sequential step_index).
+ *   3  — Invalid CLI argument.
+ */
+function runImportFrameworkStream(
+  file: string,
+  libExportName:
+    | "importPytorchSidecarStream"
+    | "importJaxSidecarStream"
+    | "importTensorflowSidecarStream",
+  callerLabel: string,
+): void {
+  const outPath = valueFlag("--out");
+
+  const importStream = requireLibExport<
+    (
+      sidecarBytes: string,
+      opts?: {
+        differentialTolerance?: { atol: number; rtol: number };
+        extractorIdentity?: string;
+        importTimestamp?: string;
+        fixtureLabel?: string;
+      },
+    ) => {
+      emittedBytes: string;
+      allDifferentialsPassed: boolean;
+      bundleRootDigest: string;
+      steps: Array<{
+        differentialPassed: boolean;
+        differentialDisagreements: Array<{
+          fieldPath: string;
+          delta: number;
+          appliedTolerance: number;
+        }>;
+      }>;
+    }
+  >(libExportName);
+
+  verboseLog(`importing multi-step ${file === "-" ? "<stdin>" : file} via ${callerLabel}`);
+
+  const sidecarBytes = readInputConfigText(file);
+
+  let result: ReturnType<typeof importStream>;
+  try {
+    result = importStream(sidecarBytes);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (jsonMode) {
+      process.stdout.write(
+        `${JSON.stringify({
+          ok: false,
+          error: { kind: "IMPORT_STREAM_FAILED", message },
+        })}\n`,
+      );
+      process.exit(2);
+    }
+    const useColor = shouldUseColor(process.stderr);
+    process.stderr.write(
+      `${color("multi-step import failed", `${BOLD}${RED}`, useColor)}\n\n`,
+    );
+    process.stderr.write(`  ${message}\n\n`);
+    process.exit(2);
+  }
+
+  if (outPath !== undefined && outPath.length > 0) {
+    const { writeFileSync } = require("node:fs") as typeof import("node:fs");
+    writeFileSync(outPath, result.emittedBytes);
+    verboseLog(
+      `wrote ${outPath} (${result.steps.length} receipts, bundle_root_digest=${result.bundleRootDigest})`,
+    );
+  } else {
+    process.stdout.write(result.emittedBytes);
+  }
+
+  if (result.allDifferentialsPassed) {
+    if (jsonMode) {
+      process.stderr.write(
+        `${JSON.stringify({
+          ok: true,
+          steps: result.steps.length,
+          bundle_root_digest: result.bundleRootDigest,
+          differential: { all_passed: true },
+        })}\n`,
+      );
+    } else if (outPath !== undefined) {
+      const useColor = shouldUseColor(process.stderr);
+      process.stderr.write(
+        `${color(
+          "multi-step import ok",
+          GREEN,
+          useColor,
+        )}: ${result.steps.length} receipts; all per-step differentials passed; bundle_root_digest=${result.bundleRootDigest}; wrote ${outPath}\n`,
+      );
+    }
+    process.exit(0);
+  }
+
+  // ≥1 step disagreed.
+  const disagreedStepIndices = result.steps
+    .map((s, i) => ({ s, i }))
+    .filter((x) => !x.s.differentialPassed)
+    .map((x) => x.i);
+  if (jsonMode) {
+    process.stdout.write(
+      `${JSON.stringify({
+        ok: false,
+        steps: result.steps.length,
+        bundle_root_digest: result.bundleRootDigest,
+        differential: {
+          all_passed: false,
+          disagreed_step_indices: disagreedStepIndices,
+          disagreements: result.steps.map((s, i) => ({
+            step_index: i,
+            passed: s.differentialPassed,
+            disagreements: s.differentialDisagreements,
+          })),
+        },
+      })}\n`,
+    );
+    process.exit(1);
+  }
+  const useColor = shouldUseColor(process.stderr);
+  process.stderr.write(
+    `${color(
+      "multi-step import warning",
+      `${BOLD}${RED}`,
+      useColor,
+    )}: engine-recompute differential DISAGREED on ${disagreedStepIndices.length} of ${result.steps.length} step(s) (indices: ${disagreedStepIndices.join(", ")}).\n`,
+  );
+  process.stderr.write(
+    "  All receipts emitted with per-step verification_state for audit.\n",
+  );
+  for (const idx of disagreedStepIndices.slice(0, 5)) {
+    const s = result.steps[idx]!;
+    process.stderr.write(`  step ${idx}: ${s.differentialDisagreements.length} field(s) disagreed\n`);
+    for (const d of s.differentialDisagreements.slice(0, 5)) {
+      process.stderr.write(
+        `    ${color("disagree", RED, useColor)} ${d.fieldPath}: delta=${d.delta} (tolerance=${d.appliedTolerance})\n`,
+      );
+    }
+  }
+  process.stderr.write("\n");
+  process.exit(1);
+}
+
+function runImportPytorchStream(file: string): void {
+  runImportFrameworkStream(file, "importPytorchSidecarStream", "bp import pytorch multi");
+}
+
+function runImportJaxStream(file: string): void {
+  runImportFrameworkStream(file, "importJaxSidecarStream", "bp import jax multi");
+}
+
+function runImportTensorflowStream(file: string): void {
+  runImportFrameworkStream(file, "importTensorflowSidecarStream", "bp import tensorflow multi");
+}
+
+// =============================================================================
 // verify general (v0.3, FT-C-005)
 // =============================================================================
 
@@ -3103,6 +3343,34 @@ if (argv[0] === "import") {
   }
 
   if (framework === "pytorch") {
+    // v0.8 multi-step subnoun. Same per-framework subcommand discipline
+    // as single-step; the `multi` subnoun selects the JSONL-stream path.
+    if (argv[2] === "multi") {
+      const file = argv[3];
+      if (typeof file !== "string" || file.length === 0) {
+        if (jsonMode) {
+          exitWithUsageError(
+            "missing required argument <sidecar.jsonl> for 'import pytorch multi'. Run 'bp import pytorch multi --help' for usage.",
+            "MISSING_FILE_ARG",
+          );
+        }
+        process.stderr.write(importStreamUsageText("pytorch"));
+        process.exit(2);
+      }
+      if (file === "--help" || file === "-h") {
+        process.stdout.write(importStreamUsageText("pytorch"));
+        process.exit(0);
+      }
+      if (file.startsWith("-") && file !== "-" && file !== "--") {
+        exitWithUsageError(
+          `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
+            `Use 'bp import pytorch multi --help' for usage.`,
+          "INVALID_FILE_ARG",
+          3,
+        );
+      }
+      runImportPytorchStream(file);
+    }
     const file = argv[2];
     if (typeof file !== "string" || file.length === 0) {
       if (jsonMode) {
@@ -3134,6 +3402,32 @@ if (argv[0] === "import") {
   // observer-mode v0.4.0 receipt; only the source_framework name +
   // extractor identity differ.
   if (framework === "jax") {
+    if (argv[2] === "multi") {
+      const file = argv[3];
+      if (typeof file !== "string" || file.length === 0) {
+        if (jsonMode) {
+          exitWithUsageError(
+            "missing required argument <sidecar.jsonl> for 'import jax multi'. Run 'bp import jax multi --help' for usage.",
+            "MISSING_FILE_ARG",
+          );
+        }
+        process.stderr.write(importStreamUsageText("jax"));
+        process.exit(2);
+      }
+      if (file === "--help" || file === "-h") {
+        process.stdout.write(importStreamUsageText("jax"));
+        process.exit(0);
+      }
+      if (file.startsWith("-") && file !== "-" && file !== "--") {
+        exitWithUsageError(
+          `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
+            `Use 'bp import jax multi --help' for usage.`,
+          "INVALID_FILE_ARG",
+          3,
+        );
+      }
+      runImportJaxStream(file);
+    }
     const file = argv[2];
     if (typeof file !== "string" || file.length === 0) {
       if (jsonMode) {
@@ -3164,6 +3458,32 @@ if (argv[0] === "import") {
   // trace pattern. Same dispatch shape as pytorch and jax above; only the
   // source_framework name + extractor identity + library export differ.
   if (framework === "tensorflow") {
+    if (argv[2] === "multi") {
+      const file = argv[3];
+      if (typeof file !== "string" || file.length === 0) {
+        if (jsonMode) {
+          exitWithUsageError(
+            "missing required argument <sidecar.jsonl> for 'import tensorflow multi'. Run 'bp import tensorflow multi --help' for usage.",
+            "MISSING_FILE_ARG",
+          );
+        }
+        process.stderr.write(importStreamUsageText("tensorflow"));
+        process.exit(2);
+      }
+      if (file === "--help" || file === "-h") {
+        process.stdout.write(importStreamUsageText("tensorflow"));
+        process.exit(0);
+      }
+      if (file.startsWith("-") && file !== "-" && file !== "--") {
+        exitWithUsageError(
+          `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
+            `Use 'bp import tensorflow multi --help' for usage.`,
+          "INVALID_FILE_ARG",
+          3,
+        );
+      }
+      runImportTensorflowStream(file);
+    }
     const file = argv[2];
     if (typeof file !== "string" || file.length === 0) {
       if (jsonMode) {
