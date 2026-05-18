@@ -62,6 +62,8 @@ jobs:
           node-version: '22.x'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      # v0.10.2: build before test, same reason as the test job above.
+      - run: pnpm build
       - run: pnpm test
         env:
           NO_COLOR: '1'
