@@ -7,14 +7,12 @@ export const config: SiteConfig = {
   logoBadge: 'BT',
   brandName: 'backprop-trace',
   repoUrl: 'https://github.com/mcp-tool-shop-org/backprop-trace',
-  // No npmUrl — package is not yet published (local v0.10.x stretch). Adding
-  // a broken npm badge would lie about distribution. Re-enable when v0.11+
-  // actually ships to the registry.
+  npmUrl: 'https://www.npmjs.com/package/@mcptoolshop/backprop-trace',
   footerText:
     'MIT Licensed — built by <a href="https://github.com/mcp-tool-shop-org" style="color:var(--color-muted);text-decoration:underline">mcp-tool-shop-org</a>',
 
   hero: {
-    badge: 'Mid-v0 · CPU-only · open source',
+    badge: 'v0.11.0 · Mid-v0 · CPU-only',
     headline: 'backprop-trace',
     headlineAccent: 'verifies one training step.',
     description:

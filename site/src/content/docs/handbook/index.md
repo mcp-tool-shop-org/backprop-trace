@@ -21,8 +21,8 @@ The doctrinal anchor is [Csmith (Yang/Chen/Eide/Regehr, PLDI 2011)](https://user
 
 ## Status
 
-**Mid-v0 (v0.10.3)**. CPU-only. The 26-rule reconciler, canonical-emission contract, external ingestion path, and PyTorch live helper are real and stable.
+**v0.11.0 — first npm-published release**, still mid-v0. CPU-only. The 26-rule reconciler, canonical-emission contract, external ingestion path, and PyTorch live helper are real and stable.
 
-Not v1.0 yet — see the [README's "What's not in this version (yet)" section](https://github.com/mcp-tool-shop-org/backprop-trace#whats-not-in-this-version-yet) for the gaps that block promotion. The verifier surface is strong; the distribution surface now ships correctly (pack-install smoke is CI-gated across ubuntu + macos + windows); the live helper covers the same optimizer matrix the verifier supports. What's missing is adopter validation, a real-world (CNN / transformer) fixture, multi-framework live helpers, and SGD coupled-L2 weight decay.
+Not v1.0 yet — see the [README's "What's not in this version (yet)" section](https://github.com/mcp-tool-shop-org/backprop-trace#whats-not-in-this-version-yet) for the gaps that block promotion. The verifier surface is strong; the distribution surface ships correctly (pack-install smoke is CI-gated across ubuntu + macos + windows); the live helper covers the same optimizer matrix the verifier supports. What's missing for v1.0: adopter validation, a real-world (CNN / transformer) fixture, multi-framework live helpers (JAX/TF), and SGD coupled-L2 weight decay.
 
-No tag. No npm publish. No GitHub release. We will revisit publishing when those gaps close.
+`pnpm add @mcptoolshop/backprop-trace` or `npm install @mcptoolshop/backprop-trace` — released to npm as v0.11.0.

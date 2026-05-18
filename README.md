@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="README.zh.md">中文</a> | <a href="README.es.md">Español</a> | <a href="README.fr.md">Français</a> | <a href="README.hi.md">हिन्दी</a> | <a href="README.it.md">Italiano</a> | <a href="README.pt-BR.md">Português (BR)</a>
+  <a href="README.ja.md">日本語</a> | <a href="README.zh.md">中文</a> | <a href="README.es.md">Español</a> | <a href="README.fr.md">Français</a> | <a href="README.hi.md">हिन्दी</a> | <a href="README.it.md">Italiano</a> | <a href="README.pt-BR.md">Português (BR)</a>
 </p>
 
 <p align="center">
@@ -9,14 +9,15 @@
 <p align="center">
   <a href="https://github.com/mcp-tool-shop-org/backprop-trace/actions"><img alt="CI" src="https://github.com/mcp-tool-shop-org/backprop-trace/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <a href="https://www.npmjs.com/package/@mcptoolshop/backprop-trace"><img alt="npm" src="https://img.shields.io/npm/v/@mcptoolshop/backprop-trace.svg"></a>
   <a href="https://mcp-tool-shop-org.github.io/backprop-trace/"><img alt="Landing Page" src="https://img.shields.io/badge/landing-page-blue.svg"></a>
 </p>
 
 A deterministic 26-rule verifier for neural-network training steps. You hand it a receipt naming every factor that contributed to one gradient update; the reconciler re-derives every claim and rejects on disagreement. In the Csmith/CompCert lineage of *"the oracle must not consult the artifact it judges."*
 
-> **Status: mid-v0 (v0.10.3).** CPU-only. Verifier covers SGD + Adam + AdamW + PyTorch-style SGD momentum (classical + Nesterov + dampening).
+> **Status: mid-v0 (v0.11.0) — first publishable version.** CPU-only. Verifier covers SGD + Adam + AdamW + PyTorch-style SGD momentum (classical + Nesterov + dampening).
 > Live PyTorch helper (`scripts/extract/pytorch.py`) covers the same optimizer matrix. Observer-only — [Rule 14](./docs/reconciliation.md) is the authority.
-> No tag · no npm publish · no v1 framing until the [v1.0 gaps](#whats-not-in-this-version-yet) close. See [`docs/live-helpers.md`](./docs/live-helpers.md) before production use.
+> v0.11 is the first npm-published release; v1.0 still gated on [real-world fixture + adopter validation + multi-framework live helpers](#whats-not-in-this-version-yet). See [`docs/live-helpers.md`](./docs/live-helpers.md) before production use.
 
 ## 30-second quickstart
 
@@ -160,7 +161,7 @@ NOT contractual: cross-engine (Bun, Deno, browsers); cross-Node-major (24.x+); a
 
 ## What's not in this version (yet)
 
-backprop-trace v0.10.3 is mid-v0. The engine, reconciler, canonical-emission contract, external ingestion path, and PyTorch live helper are real and stable. v1.0 requires these to close:
+backprop-trace v0.11.0 is the first npm-published version but **still mid-v0**. The engine, reconciler, canonical-emission contract, external ingestion path, and PyTorch live helper are real and stable. v1.0 requires these to close:
 
 - **Heterogeneous multi-framework traces** — single-framework bundles only; mixed-framework streams not supported. *May stay out of scope.*
 - **Producer-identity binding on multi-step traces** — Rule 17 catches bundle-integrity failures, not producer authenticity. Combine with Rule 16 / Sigstore / out-of-band attestation. Operator surface, not a built-in.

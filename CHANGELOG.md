@@ -14,6 +14,119 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.11.0] - 2026-05-18
+
+**First npm-published release.** **NOT a v1.0.0 promotion** — backprop-trace
+remains mid-v0. v1.0 still gated on: real-world fixture (CNN/transformer),
+adopter validation, multi-framework live helpers (JAX/TF), SGD coupled-L2
+weight decay.
+
+v0.11.0 promotes the v0.10.x stretch to a publishable artifact. Everything
+the v0.10.x slices built — the helper optimizer matrix (v0.10.1), the
+pack-install distribution-integrity gate (v0.10.2), the README compression +
+landing page + Starlight handbook (v0.10.3) — comes out as the first
+@mcptoolshop/backprop-trace tarball on npm.
+
+Honest framing preserved across all surfaces:
+- README status block: "Mid-v0 (v0.11.0) — first publishable version"
+- Landing page hero badge: "v0.11.0 · Mid-v0 · CPU-only"
+- Handbook index: "v0.11.0 — first npm-published release, still mid-v0"
+- SHIP_GATE: v1.0 product-completeness gaps still listed as OPEN
+- This CHANGELOG entry says "NOT a v1.0.0 promotion" verbatim
+
+### Added
+
+- **npm publish**: `@mcptoolshop/backprop-trace@0.11.0` on the public
+  registry. First-time package publication, scoped public access. The
+  `publishConfig.access = "public"` + `publishConfig.provenance = true`
+  remain configured for v0.11.x patches to gain Sigstore provenance via
+  CI OIDC; v0.11.0 itself was published locally (see Notes below).
+- **GitHub release `v0.11.0`** at the commit that carries this CHANGELOG
+  entry. Annotated tag. Release notes excerpt the "Why v0.11 not v1.0"
+  framing from this entry.
+- **README npm badge** restored — was removed in v0.10.3 because the
+  package wasn't published yet ("a broken npm badge would lie about
+  distribution"). Re-enabled now that the package is actually live.
+- **`site/src/site-config.ts` npmUrl** restored — same reason.
+- **Translations refreshed** — README.{ja,zh,es,fr,hi,it,pt-BR}.md
+  regenerated via TranslateGemma 12B BEFORE the release commit. Per the
+  canonical release-ordering doctrine (memory/full-treatment.md +
+  global memory translation rule): translations must run before
+  `npm publish` and before `gh release create`, not after. The GitHub
+  release tag is pinned to the commit carrying the translation-refresh.
+
+### Changed
+
+- **`package.json` version 0.10.3 → 0.11.0**. SemVer minor bump
+  reflecting first publishable release; the package surface is
+  additive over v0.10.3 (no breaking changes).
+- **`scripts/extract/pytorch.py` `HELPER_VERSION` 0.10.3 → 0.11.0**
+  (lockstep policy; smoke-gated + unit-test-gated).
+- **`scripts/build-pytorch-helper-fixtures.mjs`
+  `FIXTURE_HELPER_BLOCK.version` 0.10.3 → 0.11.0**. 9 bad-helper
+  fixtures + 3 good helper-emitted goldens regenerated (single-character
+  version-string change inside the `helper` block).
+- **`test/import-pytorch-helper.test.ts`** expected `helper.version`
+  bumped to `"0.11.0"`.
+- **README status block** rewritten: drops "no tag · no npm publish"
+  line; adds "first publishable version" framing; preserves mid-v0
+  truth + v1.0-gaps link.
+- **README "What's not in this version (yet)" opener** rewritten:
+  "v0.11.0 is the first npm-published version but **still mid-v0**".
+- **`site/src/site-config.ts` hero badge** "Mid-v0 · CPU-only · open
+  source" → "v0.11.0 · Mid-v0 · CPU-only" (version-specific framing
+  for the first published surface).
+- **`site/src/content/docs/handbook/index.md` status block** rewritten:
+  "v0.11.0 — first npm-published release, still mid-v0" with the
+  `pnpm add` / `npm install` command now actually working.
+- **SHIP_GATE.md "Version in manifest matches git tag"** transitions
+  from N/A to PASS (annotated tag `v0.11.0` created at the commit
+  whose `package.json.version` is `0.11.0`).
+- **SHIP_GATE.md Product-completeness gaps** remain OPEN — v0.11.0
+  publishing does NOT close them. The release is not a v1.0 promotion.
+
+### Notes (Sigstore provenance + first-publish caveat)
+
+- **v0.11.0 published locally**, without Sigstore provenance signing.
+  Reason: first publish + the documented release.yml 409 race risk
+  (per `memory/feedback_npm_publish_409_first_publish_race.md` —
+  v0.11.x via CI release.yml will gain Sigstore provenance via OIDC;
+  v0.11.0 itself ships without provenance attestation).
+- **v0.11.x patches will be CI-published** to regain provenance.
+
+### Numbers
+
+- 502 tests pass (unchanged from v0.10.3 — purely a publish-prep slice)
+- typecheck + build green
+- pnpm pack-smoke 6/6 steps pass locally (Windows)
+- Translations: 7/7 README files refreshed via TranslateGemma 12B
+  (Ollama, zero API cost, ~2-4 min/README)
+- Tarball: 0.64 MB (same as v0.10.3; site/ + translations not in npm
+  files[])
+- First-publish artifact on npm: shasum + size will be confirmed in
+  the release notes after publish
+- v0.11.0 git tag: annotated, against the release commit
+
+### What v0.11.0 does NOT do
+
+- Does **not** promote to v1.0.0 — v1.0 product-completeness gaps
+  remain open
+- Does **not** close the adopter-validation gap (no external researcher
+  case study, no course adoption, no compliance bundle in the wild)
+- Does **not** add a real-world (CNN / transformer) fixture
+- Does **not** add multi-framework live helpers (JAX live helper
+  pending v0.12+ adopter-pull; TF live helper v0.13+ gated on JAX)
+- Does **not** add SGD coupled-L2 weight decay (Rule 7 third branch
+  remains v0.12+)
+- Does **not** ship a pip distribution for the PyTorch helper
+  (repo-script-only via `bp examples pytorch --print > pytorch_trace_
+  helper.py`; flip-signal contract in docs/live-helpers.md unchanged)
+- Does **not** add new helper / verifier features (purely the
+  publish-prep transition from local v0.10.x to first-on-registry)
+- Does **not** change schema family (receipt v0.7.0 +
+  framework-trace v0.7.0 remain latest)
+- Does **not** change the 26-rule reconciler
+
 ## [0.10.3] - 2026-05-18
 
 The v0.10.3 cold-read compression + landing page + handbook wave —

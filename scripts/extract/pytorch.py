@@ -1,5 +1,5 @@
 """
-backprop-trace PyTorch live helper (v0.10.3)
+backprop-trace PyTorch live helper (v0.11.0)
 =============================================
 
 MIT License — Copyright (c) 2026 mcp-tool-shop. See LICENSE in the
@@ -141,7 +141,7 @@ except ImportError:  # pragma: no cover
     nn = None  # type: ignore
 
 
-HELPER_VERSION = "0.10.3"
+HELPER_VERSION = "0.11.0"
 HELPER_NAME = "backprop-trace-pytorch-helper"
 SCHEMA_FORMAT = "framework-trace.v0.7.0"
 DEFAULT_TOLERANCE_ATOL = 1e-6

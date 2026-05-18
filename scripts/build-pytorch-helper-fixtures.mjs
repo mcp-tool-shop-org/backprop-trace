@@ -44,7 +44,7 @@ const FIXTURES_BAD = resolve(REPO_ROOT, "fixtures", "bad")
 // these constants so `git diff --exit-code` works in CI.
 const FIXTURE_HELPER_BLOCK = {
   name: "backprop-trace-pytorch-helper",
-  version: "0.10.3",
+  version: "0.11.0",
   distribution: "repo-script",
   // Pinned source_hash — represents the hash of scripts/extract/pytorch.py
   // at the time of fixture generation. The real helper computes its own
@@ -110,7 +110,7 @@ function deriveHelperEmittedSidecar(sourcePath) {
       ...source.source_framework,
       extractor: {
         name: "backprop-trace-pytorch-helper",
-        version: "0.10.3",
+        version: "0.11.0",
       },
     },
     helper: FIXTURE_HELPER_BLOCK,
