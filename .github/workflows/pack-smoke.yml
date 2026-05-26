@@ -30,7 +30,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@d15e628ca66d93ee5f352c71671a7bc6a97af5c9 # v6.0.8
         # pnpm version comes from package.json `packageManager` field; do
         # NOT also pass `version:` here — pnpm/action-setup rejects the
         # duplicate spec with ERR_PNPM_BAD_PM_VERSION.
