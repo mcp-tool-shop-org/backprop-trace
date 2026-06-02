@@ -6,10 +6,15 @@ name: Release
 # tag was first pushed). Two jobs: verify on a fresh runner, ship only
 # if verify passes AND the tag-vs-package.json version equality holds.
 #
-# Required repo secrets:
-#   NPM_TOKEN — npm automation token with publish rights on
-#   @mcptoolshop/backprop-trace. Provenance is generated via OIDC, but
-#   NPM_TOKEN is still needed for the publish call itself.
+# Authentication: npm Trusted Publishing (OIDC) — NO secret/token required.
+#   The package has a trusted publisher configured on npmjs.com bound to
+#   THIS workflow (mcp-tool-shop-org/backprop-trace · release.yml). The
+#   ship job's `id-token: write` permission lets npm exchange the GitHub
+#   OIDC token for a short-lived, single-use registry credential, and the
+#   same exchange generates Sigstore provenance automatically.
+#   (History: v0.11.0 published via an NPM_TOKEN secret; that token expired
+#   in 2026-06 and was replaced by OIDC trusted publishing — no rotating
+#   secret to leak or expire. Requires npm >= 11.5.1, installed below.)
 #
 # Triggering:
 #   - Push a `v*` tag: `git tag v0.11.1 && git push --tags`
@@ -120,9 +125,16 @@ jobs:
           fi
           echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
 
+      # OIDC trusted publishing requires npm >= 11.5.1; Node 22 bundles
+      # npm 10.9.x, so upgrade the global npm before the publish call.
+      - name: Upgrade npm for OIDC trusted publishing (>= 11.5.1)
+        run: npm install -g npm@latest
+
       - name: Publish to npm with Sigstore provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # Auth via npm Trusted Publishing (OIDC) — intentionally NO
+        # NODE_AUTH_TOKEN. With id-token:write + a configured trusted
+        # publisher, npm mints a short-lived registry credential from the
+        # GitHub OIDC token and generates Sigstore provenance in one step.
         run: npm publish --provenance --access public
 
       # Extract the CHANGELOG section for this version (Keep-a-Changelog
