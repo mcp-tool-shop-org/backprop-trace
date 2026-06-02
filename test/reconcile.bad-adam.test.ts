@@ -19,6 +19,7 @@ import { readFileSync, readdirSync, existsSync } from "node:fs"
 import { resolve } from "node:path"
 import { reconcileReceipt, reconcileMultiStep } from "../src/reconcile.js"
 import { parseReceiptJsonl } from "../src/parse.js"
+import { detectMultiStep } from "./_fixture-utils.js"
 
 const FIXTURES_DIR = resolve("fixtures/bad")
 
@@ -54,7 +55,10 @@ function discoverAdamFixtures(): AdamFixture[] {
     // LOUDLY (an untagged adversarial fixture must break the build, not vanish).
     const path = resolve(FIXTURES_DIR, file)
     const bytes = readFileSync(path, "utf-8").trim()
-    const isMultiStep = bytes.split("\n").length > 1
+    // Robust multi-record detection: a pretty-printed single receipt spans many
+    // physical lines but is ONE JSON object, so counting newlines misclassifies
+    // it. detectMultiStep requires EVERY non-empty line to parse independently.
+    const isMultiStep = detectMultiStep(bytes)
     fixtures.push({ filename: file, primaryRule, isMultiStep })
   }
   return fixtures

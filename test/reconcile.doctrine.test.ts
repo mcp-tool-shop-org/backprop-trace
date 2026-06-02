@@ -55,6 +55,7 @@ import {
   reconcileMultiStep,
 } from "../src/reconcile.js";
 import { parseReceipt } from "../src/parse.js";
+import { detectMultiStep } from "./_fixture-utils.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
@@ -616,27 +617,9 @@ function isPytorchHelperFixture(filename: string): boolean {
   return filename.startsWith("pytorch-helper.bad-");
 }
 
-/**
- * Robust multi-step detection. A fixture is multi-record iff EVERY non-empty
- * physical line independently parses as JSON AND there is more than one such
- * line. A PRETTY-PRINTED single receipt (e.g. mazur.bad-gradient.jsonl spans
- * ~136 physical lines but is one JSON object) fails the "every line parses"
- * test — its first line is a bare "{" — so it is correctly classified as a
- * single receipt. Counting physical lines alone (the v0.9.1 bad-adam heuristic)
- * misclassifies pretty-printed single receipts; this discriminator does not.
- */
-function detectMultiStep(trimmedBytes: string): boolean {
-  const lines = trimmedBytes.split("\n").filter((l) => l.trim().length > 0);
-  if (lines.length <= 1) return false;
-  for (const line of lines) {
-    try {
-      JSON.parse(line);
-    } catch {
-      return false; // a line that doesn't parse alone => pretty-printed single receipt
-    }
-  }
-  return true;
-}
+// detectMultiStep moved to ./_fixture-utils.ts (shared, single source of truth)
+// with the bad-adam / bad-momentum adversarial plates, which previously used a
+// naive newline-count heuristic that misclassified pretty-printed receipts.
 
 /**
  * Resolve the PRIMARY rule a fixture targets, mirroring the multi-source
