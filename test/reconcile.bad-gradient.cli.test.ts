@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -166,5 +166,106 @@ test(
       /JSON|parse|invalid|syntax|bp-cli-malformed\.json/i,
       `stderr must hint at the parse failure; got: ${JSON.stringify(stderr)}`,
     );
+  },
+);
+
+// =============================================================================
+// G-006 — the engine-recompute skip signal must NOT be dead at the CLI.
+//
+// reconcileReceipt() (src/reconcile.ts) flags math_gate_skipped:true +
+// skipped_rules:[14] when a receipt self-declares
+// fixture_status.verification_state === "engine_recompute_skipped_with_basis"
+// (Rule 14, the ONLY math gate on observer-mode imports, returns early). Such a
+// receipt can still reconcile ok:true — its math was NEVER independently
+// verified; it is trusted on its declared skip-basis alone.
+//
+// Before the fix, `bp reconcile receipt --json` emitted {"ok":true} and exit 0
+// on exactly this receipt — dropping the skip signal and reporting a clean PASS
+// for a self-declared "I skipped the math gate" receipt. For an inverted threat
+// model (a FALSE PASS is the worst defect) that is unacceptable.
+//
+// The receipt under test is built from a known-good engine-validated observer
+// golden (fixtures/external/jax.softmax-ce.golden.jsonl) by flipping only its
+// verification_state to the skip-with-basis state and adding a valid skip_basis
+// so Rule 15 (skip-basis required) passes — isolating the self-declared-skip
+// false-PASS class without depending on a fixture outside this domain's scope.
+//
+// Mutation that makes this RED: revert bp.ts's runReconcileReceipt to emit
+// {ok:true} / exit 0 ignoring result.math_gate_skipped.
+const jaxObserverGolden = resolve(
+  repoRoot,
+  "fixtures/external/jax.softmax-ce.golden.jsonl",
+);
+
+function writeSkipWithBasisReceipt(filename: string): string | null {
+  if (!existsSync(jaxObserverGolden)) return null;
+  const r = JSON.parse(readFileSync(jaxObserverGolden, "utf-8").trim()) as Record<
+    string,
+    unknown
+  >;
+  r.fixture_status = {
+    ...(r.fixture_status as Record<string, unknown> | undefined),
+    verification_state: "engine_recompute_skipped_with_basis",
+  };
+  r.attestor = {
+    ...(r.attestor as Record<string, unknown> | undefined),
+    skip_basis: "hardware_nondeterminism",
+  };
+  mkdirSync(tmpDir, { recursive: true });
+  const out = resolve(tmpDir, filename);
+  writeFileSync(out, JSON.stringify(r) + "\n", { encoding: "utf-8" });
+  return out;
+}
+
+test(
+  "G-006: bp reconcile receipt --json on a self-skipped math-gate receipt surfaces math_gate_skipped AND exits nonzero",
+  {
+    skip: !existsSync(jaxObserverGolden),
+  },
+  () => {
+    const receiptPath = writeSkipWithBasisReceipt("g006-skip-with-basis.jsonl");
+    assert.ok(receiptPath, "test fixture could not be built");
+    try {
+      const { status, stdout, stderr } = runBp([
+        "reconcile",
+        "receipt",
+        receiptPath,
+        "--json",
+      ]);
+
+      // (1) Must NOT be a silent clean PASS (exit 0). A receipt that
+      //     self-declares it skipped the only math gate is not verified.
+      assert.notStrictEqual(
+        status,
+        0,
+        `self-skipped math-gate receipt must NOT exit 0; got ${status}\nstdout: ${stdout}\nstderr: ${stderr}`,
+      );
+
+      // (2) The JSON output must carry the machine-readable skip signal so a
+      //     downstream consumer can SEE the gate was skipped.
+      const parsed = JSON.parse(stdout) as {
+        ok?: boolean;
+        math_gate_skipped?: boolean;
+        skipped_rules?: number[];
+      };
+      assert.strictEqual(
+        parsed.math_gate_skipped,
+        true,
+        `--json output must report math_gate_skipped:true; got: ${stdout}`,
+      );
+      assert.deepStrictEqual(
+        parsed.skipped_rules,
+        [14],
+        `--json output must enumerate skipped_rules [14]; got: ${stdout}`,
+      );
+      // ok MUST NOT be a bare true — the skip is not a clean pass.
+      assert.notStrictEqual(
+        parsed.ok,
+        true,
+        `--json 'ok' must not be true for a self-skipped math gate; got: ${stdout}`,
+      );
+    } finally {
+      rmSync(receiptPath!, { force: true });
+    }
   },
 );

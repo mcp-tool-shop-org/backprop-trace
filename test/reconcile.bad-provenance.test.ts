@@ -66,17 +66,20 @@ function loadGoldenMutated(): { receipt: GoldenLike; expectedFrom: string } {
   return { receipt, expectedFrom };
 }
 
-test("reconciler reports Rule 8 failure when a factor.value disagrees with its 'from' source", (t) => {
+test("reconciler reports Rule 8 failure when a factor.value disagrees with its 'from' source", () => {
   const { receipt, expectedFrom } = loadGoldenMutated();
   const result = reconcileReceipt(receipt);
 
-  if (result.ok) {
-    t.skip(
-      `TODO upstream: engine agent has not implemented Rule 8 ` +
-        `(factor.from provenance check). Reconciler accepted in-memory mutation silently.`,
-    );
-    return;
-  }
+  // G-012: Rule 8 is implemented. A silent accept of a factor.value that no
+  // longer matches its 'from' source IS the soundness failure this test guards
+  // — assert rejection rather than skipping it into a green pass.
+  assert.strictEqual(
+    result.ok,
+    false,
+    "factor.value diverging from its 'from' source must be rejected — " +
+      "silent accept is the soundness failure this test guards",
+  );
+  if (result.ok) return; // type narrowing
 
   const rule8 = result.failures.find(
     (f: ReconciliationFailure) =>

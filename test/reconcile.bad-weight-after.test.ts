@@ -44,17 +44,20 @@ function loadGoldenMutated(): GoldenLike {
   return receipt;
 }
 
-test("reconciler reports standalone Rule 6 failure on mutated weight_after", (t) => {
+test("reconciler reports standalone Rule 6 failure on mutated weight_after", () => {
   const receipt = loadGoldenMutated();
   const result = reconcileReceipt(receipt);
 
-  if (result.ok) {
-    t.skip(
-      `TODO upstream: engine agent has not implemented Rule 6 ` +
-        `(weight_after == weight_before + update). Reconciler accepted in-memory mutation silently.`,
-    );
-    return;
-  }
+  // G-012: Rule 6 is implemented. A silent accept of a 1e-6 weight_after
+  // mutation (above the 1e-9 tolerance) IS the soundness failure this test
+  // guards — assert rejection rather than skipping it into a green pass.
+  assert.strictEqual(
+    result.ok,
+    false,
+    "weight_after mutation (1e-6, above tolerance) must be rejected — " +
+      "silent accept is the soundness failure this test guards",
+  );
+  if (result.ok) return; // type narrowing
 
   const rule6 = result.failures.find(
     (f: ReconciliationFailure) =>

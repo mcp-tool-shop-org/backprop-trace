@@ -719,9 +719,16 @@ function verifyGeneralUsageText(): string {
     "  Generalized verify gate for v0.2+ receipts (XOR, iris, softmax+CE,",
     "  observer-mode imports). Composes:",
     "    1. Schema validation (auto-detects v0.2.0 / v0.3.0 / v0.4.0)",
-    "    2. Reconciliation against Rules 1-16 as applicable",
-    "    3. Engine reproduction (engine-authored) or Rule 14 differential",
-    "       (observer-mode imported) via verifyGeneralEngineReproduces",
+    "    2. Reconciliation against Rules 1-16 as applicable. For observer-mode",
+    "       receipts (fixture_status.authoring_state=\"external_imported\") this",
+    "       is where Rule 14 (engine-recompute differential within",
+    "       attestor.differential_tolerance) fires — the governing soundness",
+    "       gate for imported foreign-framework math.",
+    "    3. Engine reproduction (byte-equality recompute). RUN only for",
+    "       engine-authored receipts. SKIPPED for observer-mode receipts:",
+    "       their canonical bytes carry foreign framework math that the engine",
+    "       will not byte-match by design, so Rule 14 (step 2) is the gate",
+    "       instead. The SKIP line names the reconcile/Rule-14 outcome.",
     "",
     "  This subcommand intentionally skips Mazur-specific checks:",
     "    - No byte-equal vs a Mazur golden fixture",
@@ -1451,10 +1458,36 @@ type VerifyCheck = {
   status: VerifyCheckStatus;
   message?: string;
   evidence?: unknown;
+  /**
+   * LOW (--strict over-rejection): a SKIP that is CORRECT-by-design and must
+   * NOT be counted as a failure under `--strict`. The canonical case is the
+   * engine-reproduce SKIP for observer-mode (external_imported) receipts —
+   * the byte-equality recompute is N/A on foreign framework math by design,
+   * and Rule 14 (the engine-recompute differential) is the real gate that
+   * already ran during reconcile. Other skips remain strict-failing.
+   *
+   * Only meaningful on `status === "skip"`; ignored otherwise. Absent (not
+   * `false`) on the normal path so the JSON report stays unchanged for every
+   * check that is not deliberately strict-exempt.
+   */
+  strictExempt?: boolean;
 };
 type VerifyReport = {
   overall: "pass" | "fail" | "warn";
   checks: VerifyCheck[];
+  /**
+   * G-006: machine-readable signal that a self-declared math-gate skip was
+   * detected (reconcileReceipt returned math_gate_skipped). Present only when
+   * a receipt self-asserted
+   * fixture_status.verification_state === "engine_recompute_skipped_with_basis"
+   * (Rule 14, the only math gate on observer-mode imports, returned early).
+   * A consumer MUST NOT treat such a report as fully verified — the strongest
+   * math gate did not run; the receipt is trusted on its declared basis only.
+   * Absent on the normal fully-verified path.
+   */
+  math_gate_skipped?: boolean;
+  /** G-006: the concrete rule numbers skipped via self-assertion (e.g. [14]). */
+  skipped_rules?: number[];
 };
 
 const VALID_AUTHORING_STATES = new Set([
@@ -1774,15 +1807,19 @@ function finalizeReport(
 ): VerifyReport {
   let hasFail = false;
   let hasWarn = false;
-  let hasSkip = false;
+  // LOW: only NON-strict-exempt skips arm the --strict gate. A correct-by-design
+  // observer-mode engine-reproduce SKIP (strictExempt) must not flip --strict to
+  // fail — that skip means "Rule 14 is the gate and it ran," not "a check was
+  // dodged." Every other skip still counts.
+  let hasStrictFailingSkip = false;
   for (const c of checks) {
     if (c.status === "fail") hasFail = true;
     else if (c.status === "warn") hasWarn = true;
-    else if (c.status === "skip") hasSkip = true;
+    else if (c.status === "skip" && c.strictExempt !== true) hasStrictFailingSkip = true;
   }
   let overall: VerifyReport["overall"];
   if (hasFail) overall = "fail";
-  else if (opts.strict && (hasWarn || hasSkip)) overall = "fail";
+  else if (opts.strict && (hasWarn || hasStrictFailingSkip)) overall = "fail";
   else if (opts.warnAsFail && hasWarn) overall = "fail";
   else if (hasWarn) overall = "warn";
   else overall = "pass";
@@ -2728,45 +2765,146 @@ function runVerifyGeneral(opts: {
     });
   }
 
-  // 4. Engine reproduction via the generalized engine path. Library
-  // agent exposes verifyGeneralEngineReproduces; it consumes the
-  // receipt's topology declaration (unit_order + parameter_order +
-  // activation choices) to drive the engine, then compares the emitted
-  // bytes against the receipt's canonical form.
-  type GeneralEngineRepro = {
-    matches: boolean;
-    firstDifferingByte: number;
-    ourBytes: { length: number };
-    theirBytes: { length: number };
-  };
-  const verifyGeneralEngineReproduces = requireLibExport<
-    (r: unknown) => GeneralEngineRepro
-  >("verifyGeneralEngineReproduces");
-  try {
-    const engineRepro = verifyGeneralEngineReproduces(typedReceipt);
-    if (engineRepro.matches) {
-      checks.push({ name: "engine-reproduce", status: "pass" });
-    } else {
-      checks.push({
-        name: "engine-reproduce",
-        status: "fail",
-        message: `engine output diverges from receipt at byte ${engineRepro.firstDifferingByte}`,
-        evidence: {
-          first_differing_byte: engineRepro.firstDifferingByte,
-          our_length: engineRepro.ourBytes?.length,
-          their_length: engineRepro.theirBytes?.length,
-        },
-      });
-    }
-  } catch (err) {
+  // 3b. G-006 — math-gate self-skip downgrade (NON-PASS by default).
+  //
+  // reconcileReceipt flags math_gate_skipped:true + skipped_rules:[14] when the
+  // receipt self-declares fixture_status.verification_state ===
+  // "engine_recompute_skipped_with_basis" — Rule 14 (the ONLY independent math
+  // gate on observer-mode imports) returned early, so the receipt's foreign math
+  // was NEVER recomputed. reconcile can still be ok:true (the per-receipt rules
+  // hold internally), but for a verifier with an inverted threat model that is
+  // NOT a clean PASS: the strongest gate was skipped on the receipt's own say-so.
+  //
+  // Emit a DISTINCT, visible math-gate check with status "fail" so the default
+  // outcome is overall:"fail" / exit 1, naming the skipped rule(s). No shipped
+  // golden uses this verification_state (the observer goldens all declare
+  // "engine_recompute_matched_within_tolerance"), so this never breaks a golden.
+  const mathGateSkipped = reconciliation.math_gate_skipped === true;
+  const mathGateSkippedRules = reconciliation.skipped_rules;
+  if (mathGateSkipped) {
+    const ruleList =
+      mathGateSkippedRules && mathGateSkippedRules.length > 0
+        ? mathGateSkippedRules.join(", ")
+        : "14";
     checks.push({
-      name: "engine-reproduce",
+      name: "math-gate",
       status: "fail",
-      message: err instanceof Error ? err.message : String(err),
+      message:
+        `receipt self-declares fixture_status.verification_state=` +
+        `"engine_recompute_skipped_with_basis" — the engine-recompute differential ` +
+        `(Rule ${ruleList}), the only independent math gate on observer-mode imports, ` +
+        `was SKIPPED on the receipt's own say-so. This is NOT a verified PASS: the ` +
+        `foreign framework math was never recomputed. The receipt is trusted on its ` +
+        `declared attestor.skip_basis alone. Re-import without the skip (let Rule 14 ` +
+        `run) to obtain a verified result, or treat this receipt as unverified.`,
+      evidence: { math_gate_skipped: true, skipped_rules: mathGateSkippedRules ?? [14] },
     });
   }
 
-  return finalizeReport(checks, opts);
+  // 4. Engine reproduction — gated on authoring_state (G-011).
+  //
+  // The byte-equality engine-reproduce check (verifyGeneralEngineReproduces)
+  // re-runs the backprop-trace engine and asserts the produced canonical bytes
+  // are byte-identical to the receipt's. That is the correct soundness gate for
+  // ENGINE-AUTHORED receipts (fixture_status.authoring_state in
+  // {engine_generated, engine_generated_general, ...}) — those receipts ARE the
+  // engine's own canonical output, so byte-equality is the strongest possible
+  // check.
+  //
+  // For OBSERVER-MODE receipts (authoring_state === "external_imported") the
+  // canonical bytes carry FOREIGN framework math (PyTorch / JAX / TensorFlow):
+  // different FP rounding, optimizer-state representation, etc. The engine
+  // recompute will, BY DESIGN, not byte-match those bytes — so running
+  // verifyGeneralEngineReproduces here produces a guaranteed false FAIL on every
+  // legitimate import (it fails SAFE — never accepts a broken receipt — but
+  // makes the shipped observer-mode goldens unverifiable via this command).
+  //
+  // The correct gate for observer-mode is Rule 14 (engine-recompute
+  // *differential* within attestor.differential_tolerance), which fires inside
+  // reconcileReceipt above (step 3) — exactly mirroring Rule 14's own
+  // authoring_state !== "external_imported" no-op gating at
+  // reconcile.ts:checkRule14EngineRecomputeDifferential. So here we SKIP the
+  // byte-equality recompute for observer-mode and surface the Rule 14 outcome
+  // (carried by the `reconcile` check) rather than emitting a misleading FAIL.
+  const fixtureStatus = (typedReceipt as {
+    fixture_status?: { authoring_state?: unknown; verification_state?: unknown };
+  } | null)?.fixture_status;
+  const authoringState =
+    typeof fixtureStatus?.authoring_state === "string"
+      ? fixtureStatus.authoring_state
+      : undefined;
+
+  if (authoringState === "external_imported") {
+    // Observer-mode: byte-equality engine-reproduce is N/A (foreign math).
+    // Rule 14 — the engine-recompute differential — is the governing gate and
+    // was already evaluated in step 3 (reconcile). Surface that outcome so the
+    // report is honest about WHY byte-equality was skipped.
+    const verificationState =
+      typeof fixtureStatus?.verification_state === "string"
+        ? fixtureStatus.verification_state
+        : undefined;
+    checks.push({
+      name: "engine-reproduce",
+      status: "skip",
+      // LOW: this SKIP is correct-by-design for observer-mode receipts (foreign
+      // framework math never byte-matches the engine; Rule 14 is the real gate
+      // and ran during reconcile). Mark it strict-exempt so `--strict` does NOT
+      // over-reject a legitimate observer-mode golden. Other skips still fail
+      // under --strict.
+      strictExempt: true,
+      message:
+        `observer-mode receipt (authoring_state="external_imported"): byte-equality ` +
+        `engine-reproduce is N/A — canonical bytes carry foreign framework math. ` +
+        `Soundness gate is Rule 14 (engine-recompute differential within ` +
+        `attestor.differential_tolerance), evaluated under the 'reconcile' check ` +
+        `above (reconcile=${reconciliation.ok ? "pass" : "fail"}` +
+        `${verificationState ? `, verification_state="${verificationState}"` : ""}).`,
+    });
+  } else {
+    // Engine-authored receipt: byte-equality is the correct, strongest gate.
+    type GeneralEngineRepro = {
+      matches: boolean;
+      firstDifferingByte: number;
+      ourBytes: { length: number };
+      theirBytes: { length: number };
+    };
+    const verifyGeneralEngineReproduces = requireLibExport<
+      (r: unknown) => GeneralEngineRepro
+    >("verifyGeneralEngineReproduces");
+    try {
+      const engineRepro = verifyGeneralEngineReproduces(typedReceipt);
+      if (engineRepro.matches) {
+        checks.push({ name: "engine-reproduce", status: "pass" });
+      } else {
+        checks.push({
+          name: "engine-reproduce",
+          status: "fail",
+          message: `engine output diverges from receipt at byte ${engineRepro.firstDifferingByte}`,
+          evidence: {
+            first_differing_byte: engineRepro.firstDifferingByte,
+            our_length: engineRepro.ourBytes?.length,
+            their_length: engineRepro.theirBytes?.length,
+          },
+        });
+      }
+    } catch (err) {
+      checks.push({
+        name: "engine-reproduce",
+        status: "fail",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  const report = finalizeReport(checks, opts);
+  // G-006: surface the machine-readable math-gate-skip signal on the report so a
+  // --json consumer can SEE the gate was skipped (in addition to the distinct
+  // failing math-gate check + the non-PASS overall).
+  if (mathGateSkipped) {
+    report.math_gate_skipped = true;
+    report.skipped_rules = mathGateSkippedRules ?? [14];
+  }
+  return report;
 }
 
 // =============================================================================
@@ -3063,18 +3201,80 @@ function runReconcileReceipt(file: string): void {
   // (Schema-only validation lives in `bp validate`; `bp verify mazur`
   // composes schema + reconcile + engine-reproduce + byte-equal.)
   const result = reconcileReceipt(receipt);
-  if (result.ok) {
+
+  // G-006: a receipt can self-declare that the engine-recompute differential
+  // (Rule 14 — the ONLY independent math gate on observer-mode imports) was
+  // skipped, via fixture_status.verification_state ===
+  // "engine_recompute_skipped_with_basis". reconcileReceipt honors the skip
+  // (by design) but flags math_gate_skipped:true + skipped_rules:[14]. The
+  // per-receipt rules can still hold (result.ok === true), but the foreign math
+  // was NEVER recomputed — for a verifier with an inverted threat model that is
+  // NOT a clean PASS. So a skipped math gate is NON-PASS by DEFAULT here:
+  //   - the --json envelope carries math_gate_skipped + skipped_rules and
+  //     ok:false (the skip is not a verified pass),
+  //   - the exit code is 1 (not 0).
+  // No shipped golden uses this verification_state, so nothing breaks.
+  const mathGateSkipped = result.math_gate_skipped === true;
+  const skippedRules = result.skipped_rules ?? (mathGateSkipped ? [14] : undefined);
+
+  if (result.ok && !mathGateSkipped) {
     if (jsonMode) {
       process.stdout.write(`${JSON.stringify({ ok: true })}\n`);
     }
     process.exit(0);
   }
+
+  if (result.ok && mathGateSkipped) {
+    // Reconciled clean per-receipt, BUT the math gate was self-skipped — not a
+    // verified PASS. Distinct, visible NON-PASS outcome (exit 1).
+    if (jsonMode) {
+      process.stdout.write(
+        `${JSON.stringify({
+          ok: false,
+          math_gate_skipped: true,
+          skipped_rules: skippedRules,
+          failures: [],
+        })}\n`,
+      );
+    } else {
+      const useColor = shouldUseColor(process.stderr);
+      process.stderr.write(
+        `${color("not verified: math gate skipped", `${BOLD}${RED}`, useColor)}\n\n`,
+      );
+      process.stderr.write(
+        `  The receipt self-declares fixture_status.verification_state=\n` +
+          `  "engine_recompute_skipped_with_basis": the engine-recompute differential\n` +
+          `  (Rule ${(skippedRules ?? [14]).join(", ")}), the only independent math gate on observer-mode\n` +
+          `  imports, was SKIPPED on the receipt's own say-so. The per-receipt rules\n` +
+          `  reconcile, but the foreign framework math was never recomputed — this is\n` +
+          `  NOT a verified PASS. The receipt is trusted on its declared\n` +
+          `  attestor.skip_basis alone.\n\n`,
+      );
+    }
+    process.exit(1);
+  }
+
+  // result.ok === false from here. TypeScript cannot combine the two compound
+  // `result.ok && ...` guards above into a clean narrowing, so assert it
+  // explicitly — this branch is logically unreachable (both result.ok === true
+  // cases process.exit above).
+  if (result.ok) process.exit(1);
   if (jsonMode) {
     // Failures envelope — keep ReconciliationFailure shape as-is so
     // downstream consumers see the same field names as the reconciler.
-    process.stdout.write(
-      `${JSON.stringify({ ok: false, failures: result.failures })}\n`,
-    );
+    // G-006: also carry the skip signal when a failing receipt ALSO self-skipped
+    // the math gate (additive; consumers that ignore it are unaffected).
+    const envelope: {
+      ok: false;
+      failures: ReconciliationFailure[];
+      math_gate_skipped?: boolean;
+      skipped_rules?: number[];
+    } = { ok: false, failures: result.failures };
+    if (mathGateSkipped) {
+      envelope.math_gate_skipped = true;
+      envelope.skipped_rules = skippedRules;
+    }
+    process.stdout.write(`${JSON.stringify(envelope)}\n`);
     process.exit(1);
   }
   const useColor = shouldUseColor(process.stderr);

@@ -79,6 +79,132 @@ test("importPytorchSidecar produces byte-equal output to shipped golden", () => 
   )
 })
 
+// =============================================================================
+// G-008 — importer's OWN differential must cover the SAME field set as Rule 14.
+//
+// Before the fix, buildObserverReceiptFromSidecar compared ONLY forward.{net,
+// out} + loss.per_output[*] + loss.total. A sidecar with FORGED
+// updates[*].{gradient,weight_after} + parameters_after[*] (forward + loss left
+// correct) still produced differentialPassed===true / verification_state=
+// 'engine_recompute_matched_within_tolerance' baked into the emitted receipt.
+// It failed SAFE only because reconcileReceipt re-checks at the gate (Rule 14).
+// This test pins that the IMPORTER itself now disagrees on the full field set.
+// =============================================================================
+test("G-008: forged updates[*].gradient/weight_after + parameters_after make the importer's differential FAIL (forward+loss left correct)", () => {
+  if (!existsSync(sidecarPath)) return
+  const sidecar = JSON.parse(loadSidecarBytes().trim()) as {
+    updates: Array<{
+      parameter_id: string
+      gradient: number
+      update: number
+      weight_after: number
+    }>
+    parameters_after: Record<string, number>
+    forward: Record<string, { net: number; out: number }>
+    loss: { per_output: Record<string, number>; total: number }
+  }
+
+  // Sanity: the unmodified sidecar must currently pass the importer's
+  // differential (guards against a vacuous test — if the canonical fixture
+  // already disagreed, asserting "false below" would pass for the wrong reason).
+  const clean = importPytorchSidecar(loadSidecarBytes(), {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: PINNED_FIXTURE_LABEL,
+  })
+  assert.strictEqual(
+    clean.differentialPassed,
+    true,
+    "precondition: canonical sidecar must pass the importer differential",
+  )
+
+  // FORGE: corrupt the FIRST update's gradient + weight_after, and the matching
+  // parameters_after entry, by a delta far beyond differential_tolerance
+  // (default atol=1e-6, rtol=1e-4). Leave forward + loss UNTOUCHED so the OLD
+  // (forward+loss-only) differential would still report PASS.
+  const target = sidecar.updates[0]!
+  const pid = target.parameter_id
+  target.gradient = target.gradient + 5.0
+  target.weight_after = target.weight_after + 5.0
+  sidecar.parameters_after[pid] = sidecar.parameters_after[pid]! + 5.0
+
+  // forward + loss are deliberately left at their correct engine-matching values.
+
+  const result = importPytorchSidecar(JSON.stringify(sidecar) + "\n", {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: PINNED_FIXTURE_LABEL,
+  })
+
+  assert.strictEqual(
+    result.differentialPassed,
+    false,
+    "importer's OWN differential must REJECT a forged gradient/weight_after/" +
+      "parameters_after even though forward+loss are correct (G-008). It must " +
+      "cover the same field set as reconciler Rule 14, not just forward+loss.",
+  )
+  assert.ok(
+    result.differentialDisagreements.length > 0,
+    `expected >0 disagreements; got ${JSON.stringify(result.differentialDisagreements)}`,
+  )
+  // The forged fields must be among the reported disagreements (field-path
+  // coverage check — proves it is the gradient/weight_after/parameters_after
+  // probes firing, not some unrelated drift).
+  const paths = result.differentialDisagreements.map((d) => d.fieldPath)
+  assert.ok(
+    paths.some((p) => p === `updates[${pid}].gradient`),
+    `expected updates[${pid}].gradient in disagreements; got ${JSON.stringify(paths)}`,
+  )
+  assert.ok(
+    paths.some((p) => p === `updates[${pid}].weight_after`),
+    `expected updates[${pid}].weight_after in disagreements; got ${JSON.stringify(paths)}`,
+  )
+  assert.ok(
+    paths.some((p) => p === `parameters_after.${pid}`),
+    `expected parameters_after.${pid} in disagreements; got ${JSON.stringify(paths)}`,
+  )
+
+  // And the receipt baked the HONEST verification_state (disagreed), not the
+  // false-assurance 'matched' state.
+  assert.strictEqual(
+    result.receipt.fixture_status.verification_state,
+    "engine_recompute_disagreed",
+    "emitted receipt must carry engine_recompute_disagreed when the importer's " +
+      "full-field differential finds disagreement",
+  )
+})
+
+// G-008 — backward.* signals are also part of the full field set. Forge a
+// hidden_error_signal's signal_value (forward+loss+updates left correct) and
+// confirm the importer's differential now catches it.
+test("G-008: forged backward.hidden_error_signals[*].signal_value makes the importer's differential FAIL", () => {
+  if (!existsSync(sidecarPath)) return
+  const sidecar = JSON.parse(loadSidecarBytes().trim()) as {
+    backward: {
+      hidden_error_signals: Record<
+        string,
+        { backpropagated_sum: number; activation_derivative: number; signal_value: number }
+      >
+    }
+  }
+  const hid = Object.keys(sidecar.backward.hidden_error_signals)[0]!
+  sidecar.backward.hidden_error_signals[hid]!.signal_value =
+    sidecar.backward.hidden_error_signals[hid]!.signal_value + 3.0
+
+  const result = importPytorchSidecar(JSON.stringify(sidecar) + "\n", {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: PINNED_FIXTURE_LABEL,
+  })
+  assert.strictEqual(
+    result.differentialPassed,
+    false,
+    "importer differential must cover backward.hidden_error_signals[*].signal_value (G-008)",
+  )
+  const paths = result.differentialDisagreements.map((d) => d.fieldPath)
+  assert.ok(
+    paths.some((p) => p === `backward.hidden_error_signals.${hid}.signal_value`),
+    `expected backward.hidden_error_signals.${hid}.signal_value in disagreements; got ${JSON.stringify(paths)}`,
+  )
+})
+
 test("imported v0.4.0 receipt schema-validates", () => {
   if (!existsSync(goldenPath)) return
   const r = JSON.parse(loadGoldenBytes().trim())

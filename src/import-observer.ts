@@ -235,8 +235,19 @@ export type ObserverImportOptions = {
 /**
  * Result of an observer-mode import. The receipt is always produced even
  * when the differential check fires (so the operator can persist it for
- * audit); `differentialPassed` summarizes whether downstream Rule 14
- * will pass.
+ * audit).
+ *
+ * `differentialPassed` is the IMPORTER's own engine-recompute verdict. As of
+ * v0.12.0 (G-008) it covers the SAME field set as reconciler Rule 14
+ * (forward + loss + backward + updates + optimizer.state_after +
+ * parameters_after), so a producer-side `differentialPassed === true` is no
+ * longer a weaker claim than the gate. BUT it is still NOT a substitute for
+ * the gate: per Reproducible-Builds discipline ("the producer's claim is not
+ * the verifier's truth"), every imported receipt is independently re-checked
+ * by `bp verify` (Rule 14) before it is trusted. Treat this flag as the
+ * importer's self-report for operator triage / persistence decisions, not as
+ * the verification verdict. `verification_state` on the emitted receipt is
+ * derived from this same self-report and is likewise re-derived at the gate.
  */
 export type ObserverImportResult = {
   receipt: GeneralReceipt
@@ -405,6 +416,10 @@ export function buildObserverReceiptFromSidecar(
       compare(`loss.per_output.${uId}`, eVal, cVal)
     }
     compare("loss.total", engineReceipt.loss.total, sidecar.loss.total)
+    // G-008 — reduced (top-level) backward + updates + parameters_after.
+    // Rule 14 recomputes against these top-level fields on a batched receipt;
+    // the importer's differential must do the same or it is a weaker claim.
+    compareReducedFullFieldSet(compare, engineReceipt, sidecar)
   } else {
     // UNBATCHED path (v0.6/v0.7/v0.8 behavior + v0.9.1 Adam/AdamW).
     // Preserves byte-identical emission for v0.1.0/v0.2.0 sidecars when
@@ -465,20 +480,12 @@ export function buildObserverReceiptFromSidecar(
     }
     engineReceipt = runGeneralStep(engineInput)
 
-    for (const uId of Object.keys(engineReceipt.forward)) {
-      const e = engineReceipt.forward[uId]!
-      const c = sidecar.forward[uId]
-      if (!c) continue
-      compare(`forward.${uId}.net`, e.net, c.net)
-      compare(`forward.${uId}.out`, e.out, c.out)
-    }
-    for (const uId of Object.keys(engineReceipt.loss.per_output)) {
-      const eVal = engineReceipt.loss.per_output[uId]!
-      const cVal = sidecar.loss.per_output[uId]
-      if (typeof cVal !== "number") continue
-      compare(`loss.per_output.${uId}`, eVal, cVal)
-    }
-    compare("loss.total", engineReceipt.loss.total, sidecar.loss.total)
+    // G-008 — FULL field-set differential. Mirrors reconciler Rule 14
+    // (checkRule14EngineRecomputeDifferential, reconcile.ts) so the importer's
+    // own differentialPassed / verification_state is NOT a weaker claim than
+    // the gate. Covers forward + loss + backward + updates (+ optimizer
+    // state_after) + parameters_after.
+    compareUnbatchedFullFieldSet(compare, engineReceipt, sidecar)
   }
 
   const differentialPassed = disagreements.length === 0
@@ -666,6 +673,192 @@ const DEFAULT_BIAS_POLICY_FOR_OBSERVER: GeneralInput["bias_policy"] = {
   updated_in_step: false,
   reconciliation:
     "parameters_after[bias_id] === parameters_before[bias_id] for every bias parameter",
+}
+
+// ---------------------------------------------------------------------------
+// G-008 — full-field-set differential helpers.
+//
+// PURPOSE: the importer's OWN differential (the value it bakes into
+// `differentialPassed` and `verification_state`) MUST cover the SAME field set
+// as reconciler Rule 14 (checkRule14EngineRecomputeDifferential in
+// reconcile.ts). Before v0.12.0 the importer compared ONLY forward.{net,out} +
+// loss.per_output[*] + loss.total, so a sidecar with forged backward / updates
+// / parameters_after still emitted
+// verification_state='engine_recompute_matched_within_tolerance' — active false
+// assurance baked into the receipt. (It still failed SAFE at the gate because
+// `bp verify` re-runs Rule 14; but the producer-side claim must not be weaker
+// than the verifier's.)
+//
+// `compare` is the per-path tolerance closure from the calling scope; its
+// claimed-value argument is `number`, so these helpers guard non-number claims
+// (e.g. a sidecar that omits a field) the same way Rule 14's compareScalar does
+// — a missing claim is a schema-level concern, not a differential disagreement.
+// ---------------------------------------------------------------------------
+
+type ObserverCompareFn = (
+  fieldPath: string,
+  engineVal: number,
+  claimedVal: number,
+) => void
+
+/**
+ * Compare engine-recomputed backward + updates (+ optimizer state_after) +
+ * parameters_after against the sidecar's claimed values. Shared by the
+ * unbatched and reduced(batched) full-field-set helpers — these fields live at
+ * the receipt's TOP level for both unbatched and batched receipts (a batched
+ * receipt carries the REDUCED backward/updates/parameters_after at top level).
+ *
+ * Mirrors reconcile.ts checkRule14EngineRecomputeDifferential lines for
+ * backward.output_error_signals / backward.hidden_error_signals /
+ * updates[*].{gradient,update,weight_after} + optimizer.state_after /
+ * parameters_after EXACTLY (same field paths, same guards).
+ */
+function compareBackwardUpdatesParamsFullFieldSet(
+  compare: ObserverCompareFn,
+  engineReceipt: GeneralReceipt,
+  sidecar: FrameworkTraceSidecar,
+): void {
+  // backward.output_error_signals[*].signal_value
+  for (const uId of Object.keys(engineReceipt.backward.output_error_signals)) {
+    const eSig = engineReceipt.backward.output_error_signals[uId]!
+    const cSig = sidecar.backward?.output_error_signals?.[uId]
+    if (!cSig) continue
+    if (typeof cSig.signal_value === "number") {
+      compare(
+        `backward.output_error_signals.${uId}.signal_value`,
+        eSig.signal_value,
+        cSig.signal_value,
+      )
+    }
+  }
+
+  // backward.hidden_error_signals[*].{backpropagated_sum, activation_derivative, signal_value}
+  for (const uId of Object.keys(engineReceipt.backward.hidden_error_signals)) {
+    const eSig = engineReceipt.backward.hidden_error_signals[uId]!
+    const cSig = sidecar.backward?.hidden_error_signals?.[uId]
+    if (!cSig) continue
+    if (typeof cSig.backpropagated_sum === "number") {
+      compare(
+        `backward.hidden_error_signals.${uId}.backpropagated_sum`,
+        eSig.backpropagated_sum,
+        cSig.backpropagated_sum,
+      )
+    }
+    if (typeof cSig.activation_derivative === "number") {
+      compare(
+        `backward.hidden_error_signals.${uId}.activation_derivative`,
+        eSig.activation_derivative,
+        cSig.activation_derivative,
+      )
+    }
+    if (typeof cSig.signal_value === "number") {
+      compare(
+        `backward.hidden_error_signals.${uId}.signal_value`,
+        eSig.signal_value,
+        cSig.signal_value,
+      )
+    }
+  }
+
+  // updates[*].{gradient, update, weight_after} (+ optimizer.state_after.{m,v}/{buffer})
+  const cUpdatesByParam = new Map<string, FrameworkTraceSidecar["updates"][number]>()
+  for (const u of sidecar.updates) cUpdatesByParam.set(u.parameter_id, u)
+  for (const eUpdate of engineReceipt.updates) {
+    const cUpdate = cUpdatesByParam.get(eUpdate.parameter_id)
+    if (!cUpdate) continue
+    if (typeof cUpdate.gradient === "number") {
+      compare(`updates[${eUpdate.parameter_id}].gradient`, eUpdate.gradient, cUpdate.gradient)
+    }
+    if (typeof cUpdate.update === "number") {
+      compare(`updates[${eUpdate.parameter_id}].update`, eUpdate.update, cUpdate.update)
+    }
+    if (typeof cUpdate.weight_after === "number") {
+      compare(
+        `updates[${eUpdate.parameter_id}].weight_after`,
+        eUpdate.weight_after,
+        cUpdate.weight_after,
+      )
+    }
+    // optimizer.state_after differential (Adam/AdamW: {m,v}; sgd_momentum:
+    // {buffer}). Only when both sides declare state_after AND names agree —
+    // mirrors reconcile.ts so a missing/SGD state block is a no-op, not a
+    // false disagreement.
+    const eOpt = (eUpdate as { optimizer?: { name?: unknown; state_after?: unknown } }).optimizer
+    const cOpt = (cUpdate as { optimizer?: { name?: unknown; state_after?: unknown } }).optimizer
+    if (eOpt?.state_after && cOpt?.state_after && eOpt.name === cOpt.name) {
+      const eName = eOpt.name as string
+      if (eName === "adam" || eName === "adamw") {
+        const ea = eOpt.state_after as AdamState
+        const ca = cOpt.state_after as AdamState
+        if (typeof ca.m === "number") {
+          compare(`updates[${eUpdate.parameter_id}].optimizer.state_after.m`, ea.m, ca.m)
+        }
+        if (typeof ca.v === "number") {
+          compare(`updates[${eUpdate.parameter_id}].optimizer.state_after.v`, ea.v, ca.v)
+        }
+      } else if (eName === "sgd_momentum") {
+        const ea = eOpt.state_after as MomentumState
+        const ca = cOpt.state_after as MomentumState
+        if (typeof ca.buffer === "number") {
+          compare(
+            `updates[${eUpdate.parameter_id}].optimizer.state_after.buffer`,
+            ea.buffer,
+            ca.buffer,
+          )
+        }
+      }
+    }
+  }
+
+  // parameters_after[*]
+  for (const pid of Object.keys(engineReceipt.parameters_after)) {
+    const cVal = sidecar.parameters_after?.[pid]
+    if (typeof cVal !== "number") continue
+    compare(`parameters_after.${pid}`, engineReceipt.parameters_after[pid]!, cVal)
+  }
+}
+
+/**
+ * UNBATCHED full-field-set differential: forward + loss + backward + updates +
+ * parameters_after. (loss is compared by the caller right before this for the
+ * single-step path, but the multi-step path also relies on the caller's loss
+ * compares; this helper deliberately covers forward + the
+ * backward/updates/params tail to keep the four call sites uniform without
+ * double-comparing loss.)
+ *
+ * NOTE: callers compare loss BEFORE invoking this helper (preserving the exact
+ * pre-existing loss field paths). This helper adds forward + backward + updates
+ * + parameters_after.
+ */
+function compareUnbatchedFullFieldSet(
+  compare: ObserverCompareFn,
+  engineReceipt: GeneralReceipt,
+  sidecar: FrameworkTraceSidecar,
+): void {
+  // forward[*].{net, out}
+  for (const uId of Object.keys(engineReceipt.forward)) {
+    const e = engineReceipt.forward[uId]!
+    const c = sidecar.forward[uId]
+    if (!c) continue
+    if (typeof c.net === "number") compare(`forward.${uId}.net`, e.net, c.net)
+    if (typeof c.out === "number") compare(`forward.${uId}.out`, e.out, c.out)
+  }
+  compareBackwardUpdatesParamsFullFieldSet(compare, engineReceipt, sidecar)
+}
+
+/**
+ * REDUCED (batched) full-field-set differential: the reduced backward +
+ * updates + parameters_after at the receipt's top level. Forward + loss are
+ * compared PER-SAMPLE by the batched caller (plus reduced loss at top level),
+ * so this helper covers only the reduced backward/updates/params tail that the
+ * batched paths previously omitted — the exact gap Rule 14 still recomputes.
+ */
+function compareReducedFullFieldSet(
+  compare: ObserverCompareFn,
+  engineReceipt: GeneralReceipt,
+  sidecar: FrameworkTraceSidecar,
+): void {
+  compareBackwardUpdatesParamsFullFieldSet(compare, engineReceipt, sidecar)
 }
 
 // ---------------------------------------------------------------------------
@@ -995,6 +1188,9 @@ export function buildObserverReceiptStreamFromSidecar(
         compare(`loss.per_output.${uId}`, eVal, cVal)
       }
       compare("loss.total", engineReceipt.loss.total, sidecar.loss.total)
+      // G-008 — reduced (top-level) backward + updates + parameters_after.
+      // See compareReducedFullFieldSet. Per-record (multi-step) batched path.
+      compareReducedFullFieldSet(compare, engineReceipt, sidecar)
     } else {
       // UNBATCHED record (v0.6/v0.7/v0.8 path + v0.9.1 Adam/AdamW path).
       const engineInputBase: GeneralInput = {
@@ -1048,20 +1244,9 @@ export function buildObserverReceiptStreamFromSidecar(
       }
       engineReceipt = runGeneralStep(engineInput)
 
-      for (const uId of Object.keys(engineReceipt.forward)) {
-        const e = engineReceipt.forward[uId]!
-        const c = sidecar.forward[uId]
-        if (!c) continue
-        compare(`forward.${uId}.net`, e.net, c.net)
-        compare(`forward.${uId}.out`, e.out, c.out)
-      }
-      for (const uId of Object.keys(engineReceipt.loss.per_output)) {
-        const eVal = engineReceipt.loss.per_output[uId]!
-        const cVal = sidecar.loss.per_output[uId]
-        if (typeof cVal !== "number") continue
-        compare(`loss.per_output.${uId}`, eVal, cVal)
-      }
-      compare("loss.total", engineReceipt.loss.total, sidecar.loss.total)
+      // G-008 — FULL field-set differential (same coverage as Rule 14). See
+      // compareUnbatchedFullFieldSet. Per-record (multi-step) unbatched path.
+      compareUnbatchedFullFieldSet(compare, engineReceipt, sidecar)
     }
 
     const differentialPassed = disagreements.length === 0

@@ -161,6 +161,68 @@ test("batch.bad-reduced-gradient-wrong fires Rule 14 (existing engine-recompute 
 })
 
 // ============================================================================
+// Fixture 5 (G-S1): bad-per-sample-forward-tamper → Rule 14 (per-sample)
+//
+// THREAT (residual false-PASS): a batched observer receipt's TOP-LEVEL
+// forward/loss are batch-reduced (or first-sample-only by canonical
+// convention). Rule 14 originally compared only those top-level fields, never
+// the per_sample[*] forward/loss. So forging a SINGLE per_sample forward value
+// survived: the reduced gradient/update/weight_after/parameters_after are
+// recomputed by the engine from per_sample[*].inputs (not from the forged
+// forward), so they stayed consistent, and nothing inspected per_sample —
+// ok:true. Rule 14 now mirrors the importer's stricter per-sample check.
+//
+// MUTATION THAT MAKES THIS RED: delete the per-sample comparison block in
+// checkRule14EngineRecomputeDifferential. The forged per_sample.s1.forward.h1.out
+// is then never compared against the engine recompute, no other rule catches it
+// (reduced state is engine-consistent), and reconcileReceipt returns ok:true.
+// ============================================================================
+
+test("batch.bad-per-sample-forward-tamper fires Rule 14 (per-sample forward differential — reduced state stays consistent)", () => {
+  const r = loadFixture("batch.bad-per-sample-forward-tamper")
+  // Schema validation should PASS — only a numeric value changed; Rule 14
+  // (not schema) is the load-bearing gate for the forged per-sample forward.
+  const v = validateReceiptSchema(r)
+  assert.strictEqual(
+    v.ok,
+    true,
+    `bad-per-sample-forward-tamper must schema-validate (Rule 14 catches at reconcile, not schema); errors: ${
+      v.ok ? "[]" : JSON.stringify(v.errors)
+    }`,
+  )
+  const result = reconcileReceipt(r)
+  assert.strictEqual(
+    result.ok,
+    false,
+    "a forged per_sample forward value must be REJECTED — the engine recomputes per-sample " +
+      "state from per_sample[*].inputs and the forged value diverges (Rule 14 per-sample differential)",
+  )
+  if (result.ok) return
+  const rule14 = result.failures.filter((f) => f.rule === 14)
+  assert.ok(
+    rule14.length >= 1,
+    `expected Rule 14 to fire on the per-sample forward tamper; got rules: ${[
+      ...new Set(result.failures.map((f) => f.rule)),
+    ]
+      .sort((a, b) => a - b)
+      .join(", ")}`,
+  )
+  // The forged field is per_sample.s1.forward.h1.out — Rule 14 must name a
+  // per_sample forward path (proving it inspected per-sample state, not just
+  // the top-level reduced forward).
+  const perSampleFailure = rule14.find((f) =>
+    /^per_sample\..+\.forward\..+\.(net|out)$/.test(f.field_path),
+  )
+  assert.ok(
+    perSampleFailure,
+    `Rule 14 must report a per_sample.*.forward.*.{net,out} field_path (the per-sample loop is the ` +
+      `sole defense; a top-level-only failure would not prove G-S1 is closed). Got Rule 14 paths: ${JSON.stringify(
+        rule14.map((f) => f.field_path),
+      )}`,
+  )
+})
+
+// ============================================================================
 // Counter-positive sanity: canonical batched golden reconciles cleanly
 // ============================================================================
 

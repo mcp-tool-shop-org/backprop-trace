@@ -684,6 +684,51 @@ function assertFiniteGeneralInput(input: GeneralInput): void {
 }
 
 /**
+ * v0.12 (G-009) — for cross_entropy_softmax, assert the targets form a valid
+ * probability distribution (sum to 1) over the output units.
+ *
+ * WHY THIS IS A SOUNDNESS GATE, NOT A CONVENIENCE CHECK:
+ * The collapsed CE+softmax output error signal emitted by runGeneralStep is
+ * signal_u = y_u - p_u. The TRUE descent gradient is y_u - p_u * sum_j(y_j);
+ * the collapsed form equals it ONLY when sum_j(y_j) === 1. If a caller passes
+ * non-normalized targets (e.g. summing to 0.9), the engine would emit a WRONG
+ * collapsed gradient — and because Rule 14 (reconciler engine-recompute) runs
+ * the SAME code, the receipt and the re-derivation AGREE on the wrong number,
+ * producing a FALSE PASS (the worst defect class for this verifier). The
+ * dual_form (y_u - p_u*sum_j y_j) would catch it via Rule 13, but Rule 13
+ * silently skips when an externally-authored receipt omits dual_form.
+ *
+ * Closing the latent false-PASS surface means rejecting non-normalized
+ * classification targets at the engine boundary — they are themselves a defect.
+ *
+ * Tolerance: 1e-9 absolute. Targets are user-supplied (typically the exact
+ * integer 1 for one-hot, or exact fractions for soft labels); 1e-9 admits
+ * benign FP representation error while rejecting genuine non-normalization
+ * like 0.9 or 2.0. assertFiniteGeneralInput has already guaranteed every
+ * output-unit target is present and finite, so the sum is well-defined.
+ */
+function assertTargetsNormalizedForSoftmaxCE(input: GeneralInput): void {
+  if (input.topology.loss !== "cross_entropy_softmax") return
+  let targetSum = 0
+  for (const uid of input.topology.unit_order.output) {
+    targetSum = targetSum + input.targets[uid]!
+  }
+  const NORMALIZATION_ATOL = 1e-9
+  if (Math.abs(targetSum - 1) > NORMALIZATION_ATOL) {
+    throw new Error(
+      `runGeneralStep: cross_entropy_softmax targets must sum to 1 over ` +
+        `topology.unit_order.output (got sum=${targetSum}, tolerance=${NORMALIZATION_ATOL}). ` +
+        `Hint: the collapsed CE+softmax error signal y_u - p_u is the correct ` +
+        `descent gradient ONLY when targets form a probability distribution ` +
+        `(sum_j y_j === 1). Non-normalized targets would emit a wrong collapsed ` +
+        `gradient that the reconciler's engine-recompute (Rule 14) reproduces ` +
+        `byte-for-byte — a false PASS. Normalize the targets (one-hot, or soft ` +
+        `labels summing to 1) before running the step.`,
+    )
+  }
+}
+
+/**
  * v0.9.1 — boundary validation for Adam/AdamW optimizer config + state.
  *
  * Fail-loud at the engine boundary so misconfigured callers get a clear
@@ -1067,6 +1112,9 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
   assertTopologyValid(input.topology)
   assertSupportedPolicy(input)
   assertFiniteGeneralInput(input)
+  // G-009: reject non-normalized CE+softmax targets (latent false-PASS surface).
+  // MUST run after assertFiniteGeneralInput so every output target is present + finite.
+  assertTargetsNormalizedForSoftmaxCE(input)
   assertOptimizerConfig(input)
 
   const t = input.topology
@@ -2012,6 +2060,31 @@ export function runBatchedGeneralStep(input: BatchedGeneralInput): GeneralReceip
           `not declared in batch.sample_order`,
       )
     }
+  }
+  // G-010: reject reduction:'none' for multi-sample batches.
+  //
+  // The reduce() helper below handles reduction:'none' by returning vals[0]
+  // (the first sample's value) for BOTH the reduced gradient and the reduced
+  // loss. For a size>1 batch that SILENTLY DISCARDS every sample after the
+  // first: a 3-sample 'none' batch yields parameters_after byte-identical to a
+  // 1-sample batch on s0. Rule 14 (reconciler engine-recompute) runs this same
+  // code and agrees; Rule 18 (loss reduction check) skips for non-mean/sum —
+  // so the receipt falsely asserts an N-sample update occurred when only one
+  // sample contributed. That is a false PASS (active false assurance).
+  //
+  // 'none' is retained in the schema enum for size===1 echo (a single-sample
+  // batch where "no reduction" is well-defined and lossless). Anything larger
+  // must declare 'mean' or 'sum'.
+  if (input.batch.reduction === "none" && input.batch.size > 1) {
+    throw new Error(
+      `runBatchedGeneralStep: batch.reduction 'none' is invalid for batch.size > 1 ` +
+        `(got size=${input.batch.size}). ` +
+        `Hint: reduction 'none' returns only the FIRST sample's gradient and loss, ` +
+        `silently discarding samples 2..N — the reduced receipt would claim an ` +
+        `N-sample update while reproducing a 1-sample result (a false PASS the ` +
+        `reconciler's engine-recompute cannot catch). Use 'mean' or 'sum' to ` +
+        `reduce across all samples, or set batch.size to 1.`,
+    )
   }
 
   // 2. Run engine per sample with shared parameters_before.

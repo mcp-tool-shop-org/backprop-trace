@@ -48,17 +48,20 @@ function loadGoldenMutated(): GoldenLike {
   return receipt;
 }
 
-test("reconciler reports standalone Rule 5 failure on mutated update value", (t) => {
+test("reconciler reports standalone Rule 5 failure on mutated update value", () => {
   const receipt = loadGoldenMutated();
   const result = reconcileReceipt(receipt);
 
-  if (result.ok) {
-    t.skip(
-      `TODO upstream: engine agent has not implemented Rule 5 ` +
-        `(update == learning_rate * gradient). Reconciler accepted in-memory mutation silently.`,
-    );
-    return;
-  }
+  // G-012: Rule 5 is implemented. A silent accept of a 1e-6 update mutation
+  // (above the 1e-9 tolerance) IS the soundness failure this test guards —
+  // assert rejection rather than skipping it into a green pass.
+  assert.strictEqual(
+    result.ok,
+    false,
+    "update mutation (1e-6, above tolerance) must be rejected — " +
+      "silent accept is the soundness failure this test guards",
+  );
+  if (result.ok) return; // type narrowing
 
   const rule5 = result.failures.find(
     (f: ReconciliationFailure) =>

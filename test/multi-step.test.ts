@@ -182,3 +182,73 @@ test("reconcileMultiStep — receipts without trace_id skip Rule 10 entirely (si
     `Rule 10 must be exempt when first receipt has no trace_id; got: ${JSON.stringify(r10)}`,
   )
 })
+
+// =============================================================================
+// FIX-4: the verifier-owned tolerance clamp is enforced at the MULTI-STEP Rule 9
+// site, not only inside single-record reconcileReceipt.
+//
+// THREAT: Rule 9 (parameters_before[i] == parameters_after[i-1]) reads the
+// CURRENT receipt's numeric_policy.tolerance to gate the chain check. If that
+// raw, receipt-supplied tolerance were honored, a chain-break could be laundered
+// by declaring a loose tolerance — the same anti-circularity hole the numeric
+// ceiling closes for single records, but at the cross-record site. reconcileMultiStep
+// must clamp the per-record tolerance to NUMERIC_TOLERANCE_CEILING before it
+// gates Rule 9.
+//
+// This test plants a chain-break of RELATIVE ~1e-4 (well above the numeric
+// ceiling's rtol 1e-6) and sets each record's tolerance LOOSE ({atol:1e-3,
+// rtol:1e-2}, above the ceiling). The clamp brings the effective tolerance down
+// to {atol:1e-8, rtol:1e-6}, so Rule 9 fires.
+//
+// MUTATION THAT MAKES THIS RED: in reconcileMultiStep, pass the raw `curPolicy`
+// to checkRule9 instead of the clamped `curPolicyEffective`. Then the loose
+// {atol:1e-3, rtol:1e-2} tolerance is honored at the Rule 9 site, its applied
+// tolerance (~1e-3 on an O(0.1) parameter) SWALLOWS the ~1e-4 chain-break, and
+// no Rule 9 failure is produced (the laundered PASS this clamp prevents).
+//
+// (Phase 1's per-record reconcileReceipt will ALSO reject each record with a
+// Rule 0 tolerance-ceiling failure because the declared tolerance exceeds the
+// ceiling — that is expected and orthogonal; this test isolates Rule 9.)
+test("FIX-4: reconcileMultiStep clamps a loose per-record tolerance so a ~1e-4 chain-break still fires Rule 9", () => {
+  const { step0, step1 } = buildTwoStepChain()
+
+  // Plant a chain-break: step 1's parameters_before for an O(0.1)-magnitude
+  // parameter disagrees with step 0's parameters_after by relative ~1e-4
+  // (absolute ~3.2e-5), which is FAR above the ceiling's clamped applied
+  // tolerance (~3.2e-7) but BELOW a loose receipt-declared tolerance (~1e-3).
+  const targetParam = "w_h1_y"
+  const honest = step0.parameters_after[targetParam]!
+  step1.parameters_before[targetParam] = honest * (1 + 1e-4)
+
+  // Declare a LOOSE tolerance on every record (above the verifier ceiling).
+  // Without the clamp at the Rule 9 site this would swallow the chain-break.
+  const looseTolerance = { atol: 1e-3, rtol: 1e-2 }
+  step0.numeric_policy.tolerance = looseTolerance as unknown as typeof step0.numeric_policy.tolerance
+  step1.numeric_policy.tolerance = looseTolerance as unknown as typeof step1.numeric_policy.tolerance
+
+  const result = reconcileMultiStep([step0, step1])
+  const r9 = failuresFor(result, 9)
+  assert.ok(
+    r9.length >= 1,
+    `Rule 9 must fire on the ~1e-4 chain-break — the multi-step site must CLAMP the loose ` +
+      `receipt-declared tolerance ({atol:1e-3,rtol:1e-2}) down to the verifier ceiling so the ` +
+      `chain-break is not laundered. got 0 Rule 9 failures; all rules: ${
+        result.ok ? "[] (ok:true — FALSE PASS!)" : [...new Set(result.failures.map((f) => f.rule))].sort((a, b) => a - b).join(",")
+      }`,
+  )
+  const f = r9.find((x) => x.parameter_id === targetParam)
+  assert.ok(
+    f !== undefined,
+    `Rule 9 failure must name parameter_id='${targetParam}'; got: ${JSON.stringify(r9)}`,
+  )
+  // The applied tolerance on the failure must reflect the CLAMP (≈ ceiling),
+  // not the loose receipt-declared value — proving the clamp, not just that
+  // some failure fired. (failuresFor narrows away the numeric quartet fields;
+  // read `tolerance` through a local cast.)
+  const appliedTolerance = (f as unknown as { tolerance?: number }).tolerance
+  assert.ok(
+    typeof appliedTolerance === "number" && appliedTolerance < 1e-5,
+    `Rule 9's applied tolerance must reflect the clamped ceiling (≈ rtol 1e-6 * magnitude ≈ 3e-7), ` +
+      `not the loose declared rtol 1e-2 (which would apply ≈ 1e-3); got tolerance=${appliedTolerance}`,
+  )
+})

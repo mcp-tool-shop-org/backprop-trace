@@ -439,9 +439,20 @@ pipeline (sigstore-go pattern):
 
 1. **Schema validation** against `schemas/receipt.v0.2.0.json`.
 2. **Reconciliation** against Rules 1-8 (Rules 9, 10 only fire on the
-   multi-record path).
+   multi-record path), plus the gated rules (11-16) as applicable. For
+   observer-mode imports (`fixture_status.authoring_state ===
+   "external_imported"`), **Rule 14** (engine-recompute differential,
+   within `attestor.differential_tolerance`) fires here — it is the
+   governing soundness gate for imported foreign-framework math.
 3. **Engine reproduction** — re-runs `runGeneralStep` with the receipt's
-   declared topology + inputs and confirms byte-equality.
+   declared topology + inputs and confirms byte-equality. This runs **only
+   for engine-authored receipts**. For observer-mode (`external_imported`)
+   receipts it is **skipped**: their canonical bytes carry foreign
+   framework math (different FP rounding, optimizer-state representation)
+   that the engine will not byte-match by design, so a byte-equality check
+   would always false-FAIL. Rule 14 (step 2) is the soundness gate
+   instead — the report shows a `[SKIP] engine-reproduce` line naming the
+   `reconcile`/Rule-14 outcome.
 4. **Byte equality** against the bundled fixture corresponding to the
    receipt's `fixture` id (e.g. `fixtures/xor.golden.jsonl` for
    `fixture: "xor-sigmoid-engine-first-run"`) when one is known.

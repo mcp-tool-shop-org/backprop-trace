@@ -28,11 +28,17 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { runMazurStep } from "../src/engine.js"
-import { runGeneralStep, type GeneralInput } from "../src/general-engine.js"
+import {
+  runGeneralStep,
+  runBatchedGeneralStep,
+  type GeneralInput,
+  type BatchedGeneralInput,
+} from "../src/general-engine.js"
 import {
   IRIS_INPUT,
   MAZUR_INPUT,
   MAZUR_TOPOLOGY,
+  SOFTMAX_CE_INPUT,
   XOR_INPUT,
 } from "../src/mazur.js"
 
@@ -279,5 +285,125 @@ test("runGeneralStep(IRIS_INPUT) — 4 inputs, 3 hidden, 3 outputs", () => {
     r.parameters_after.b_output,
     r.parameters_before.b_output,
     "iris b_output unchanged",
+  )
+})
+
+// ===========================================================================
+// G-009 — CE+softmax targets must sum to 1 (latent false-PASS surface)
+//
+// The collapsed output error signal y_u - p_u is the correct descent gradient
+// ONLY when targets sum to 1. Non-normalized targets emit a WRONG collapsed
+// gradient that Rule 14 (engine-recompute) reproduces byte-for-byte → false
+// PASS. runGeneralStep must reject non-normalized CE+softmax targets at the
+// boundary.
+//
+// Non-vacuity / mutation that turns this RED again: delete the
+// `assertTargetsNormalizedForSoftmaxCE(input)` call in runGeneralStep (or
+// change the `if (Math.abs(targetSum - 1) > NORMALIZATION_ATOL)` guard to a
+// no-op). With the gate removed the engine accepts the 0.9-sum input and emits
+// a receipt instead of throwing, so `assert.throws` fails.
+// ===========================================================================
+
+test("G-009: runGeneralStep throws on CE+softmax targets summing to 0.9", () => {
+  // Build a non-normalized CE+softmax input inline by overriding the targets of
+  // the shipped softmax-ce fixture so they sum to 0.9 (a one-hot 1 demoted to
+  // 0.9, the other two left at 0). Every other field stays valid so the ONLY
+  // defect under test is non-normalized targets.
+  const badInput: GeneralInput = {
+    ...SOFTMAX_CE_INPUT,
+    targets: { o1: 0.9, o2: 0, o3: 0 }, // sum = 0.9, NOT a probability distribution
+  }
+  // Sanity: confirm the construction actually sums to 0.9 (guards the fixture
+  // against silent drift if SOFTMAX_CE_INPUT's output unit order ever changes).
+  const sum = badInput.targets.o1! + badInput.targets.o2! + badInput.targets.o3!
+  assert.strictEqual(sum, 0.9, "test fixture must have targets summing to 0.9")
+
+  assert.throws(
+    () => runGeneralStep(badInput),
+    /cross_entropy_softmax targets must sum to 1/,
+    "runGeneralStep must reject non-normalized CE+softmax targets (sum=0.9) at the boundary",
+  )
+})
+
+test("G-009: runGeneralStep accepts normalized CE+softmax golden (targets sum to 1)", () => {
+  // Regression-safety: the shipped softmax-ce fixture has one-hot targets
+  // summing to exactly 1.0 and MUST still pass the normalization gate.
+  const sum =
+    SOFTMAX_CE_INPUT.targets.o1! +
+    SOFTMAX_CE_INPUT.targets.o2! +
+    SOFTMAX_CE_INPUT.targets.o3!
+  assert.strictEqual(sum, 1, "SOFTMAX_CE_INPUT targets must sum to exactly 1")
+  assert.doesNotThrow(
+    () => runGeneralStep(SOFTMAX_CE_INPUT),
+    "the normalized softmax-ce golden input must still run without throwing",
+  )
+})
+
+// ===========================================================================
+// G-010 — batched reduction:'none' must reject size > 1
+//
+// reduce() handles reduction:'none' by returning vals[0], silently discarding
+// every sample after the first for BOTH the reduced gradient and loss. A
+// 3-sample 'none' batch yields parameters_after byte-identical to a 1-sample
+// batch on s0; Rule 14 reproduces it and Rule 18 skips for non-mean/sum →
+// false assurance an N-sample update occurred. runBatchedGeneralStep must
+// reject reduction:'none' with size > 1.
+//
+// Non-vacuity / mutation that turns this RED again: delete the
+// `if (input.batch.reduction === "none" && input.batch.size > 1) throw ...`
+// guard in runBatchedGeneralStep. Without it the 3-sample 'none' batch returns
+// a receipt (silently using only s0) instead of throwing, so `assert.throws`
+// fails.
+// ===========================================================================
+
+test("G-010: runBatchedGeneralStep throws on a 3-sample reduction:'none' batch", () => {
+  // Build a 3-sample batch over the XOR topology (real, validated). Three
+  // DISTINCT samples so that "only the first survives" is observably wrong:
+  // if reduction silently kept s0 the other two inputs would be discarded.
+  const badBatch: BatchedGeneralInput = {
+    topology: XOR_INPUT.topology,
+    learning_rate: XOR_INPUT.learning_rate,
+    parameters_before: { ...XOR_INPUT.parameters_before },
+    numeric_policy: XOR_INPUT.numeric_policy,
+    bias_policy: XOR_INPUT.bias_policy,
+    batch: {
+      size: 3,
+      sample_order: ["s0", "s1", "s2"],
+      reduction: "none",
+    },
+    per_sample: {
+      s0: { inputs: { x1: 1, x2: 0 }, targets: { y: 1 } },
+      s1: { inputs: { x1: 0, x2: 1 }, targets: { y: 1 } },
+      s2: { inputs: { x1: 1, x2: 1 }, targets: { y: 0 } },
+    },
+  }
+  assert.throws(
+    () => runBatchedGeneralStep(badBatch),
+    /batch\.reduction 'none' is invalid for batch\.size > 1/,
+    "runBatchedGeneralStep must reject reduction:'none' for a multi-sample batch (size=3)",
+  )
+})
+
+test("G-010: runBatchedGeneralStep accepts a single-sample reduction:'none' batch", () => {
+  // Regression-safety: reduction:'none' is well-defined and lossless when
+  // size === 1, so it MUST still be accepted (kept in the schema enum for echo).
+  const okBatch: BatchedGeneralInput = {
+    topology: XOR_INPUT.topology,
+    learning_rate: XOR_INPUT.learning_rate,
+    parameters_before: { ...XOR_INPUT.parameters_before },
+    numeric_policy: XOR_INPUT.numeric_policy,
+    bias_policy: XOR_INPUT.bias_policy,
+    batch: {
+      size: 1,
+      sample_order: ["s0"],
+      reduction: "none",
+    },
+    per_sample: {
+      s0: { inputs: { x1: 1, x2: 0 }, targets: { y: 1 } },
+    },
+  }
+  assert.doesNotThrow(
+    () => runBatchedGeneralStep(okBatch),
+    "single-sample reduction:'none' is lossless and must still be accepted",
   )
 })

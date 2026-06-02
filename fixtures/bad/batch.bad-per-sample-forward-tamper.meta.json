@@ -1,0 +1,20 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "batch.bad-per-sample-forward-tamper.meta",
+  "describes": "fixtures/bad/batch.bad-per-sample-forward-tamper.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.softmax-ce.batched.golden.jsonl. G-S1 residual-false-PASS fixture: closes the gap where Rule 14 inspected only the top-level (batch-reduced) forward/loss and never the per-sample forward/loss of a batched observer receipt.",
+  "mutation": {
+    "kind": "forge_single_per_sample_forward_value_leaving_reduced_state_engine_consistent",
+    "field_path": "per_sample.s1.forward.h1.out",
+    "original_value": 0.554779235,
+    "mutated_value": 0.604779235,
+    "perturbation": 0.05,
+    "note": "Exactly ONE per_sample forward value is forged (+0.05). per_sample.s1.inputs/targets are untouched, and the reduced gradient / update / weight_after / parameters_after are LEFT engine-consistent (the engine recomputes them from per_sample[*].inputs, not from the forged per_sample.forward, so they still match). Before this fixture's defense, Rule 14 only compared the TOP-LEVEL reduced forward/loss and skipped per_sample entirely, so this forge produced a clean PASS (ok:true) — a residual false-PASS for the inverted threat model. Rule 14 now mirrors the importer's stricter per-sample check (import-observer.ts): it recomputes per-sample state via runBatchedGeneralStep and compares per_sample[*].forward.{net,out} and per_sample[*].loss.{per_output,total}, so the engine recompute of s1.forward.h1.out (0.554779235) disagrees with the forged 0.604779235 and Rule 14 fires."
+  },
+  "reconciliation_check_targeted_first": "Rule 14: Engine-recompute differential (per-sample) — per_sample.s1.forward.h1.out claim does not match the engine-recomputed per-sample forward value.",
+  "expected_rules_fired": [14],
+  "expected_field_path": "per_sample.s1.forward.h1.out",
+  "non_vacuity": "Removing the per-sample comparison block added to checkRule14EngineRecomputeDifferential makes the reconciler return ok:true on this fixture (RED). The reduced fields stay engine-consistent, so no other rule catches the forged per-sample forward value — the per-sample loop is the sole defense.",
+  "purpose": "G-S1 anti-circularity fixture. Pressure-tests that Rule 14's engine-recompute differential generalizes to PER-SAMPLE forward/loss for batched observer receipts, not just the batch-reduced top-level fields.",
+  "v0_9_note": "v0.9 ships batched SGD softmax+CE observer-mode ingestion. The per-sample differential mirrors the importer's load-bearing per-sample check; this fixture proves reconcileReceipt() does not silently skip it."
+}

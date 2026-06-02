@@ -215,9 +215,9 @@
           "oneOf": [
             {
               "type": "object", "required": ["atol", "rtol"], "additionalProperties": false,
-              "properties": { "atol": { "type": "number", "minimum": 0 }, "rtol": { "type": "number", "minimum": 0 } }
+              "properties": { "atol": { "type": "number", "minimum": 0, "maximum": 1e-8 }, "rtol": { "type": "number", "minimum": 0, "maximum": 1e-6 } }
             },
-            { "type": "number", "minimum": 0 }
+            { "type": "number", "minimum": 0, "maximum": 1e-8 }
           ]
         },
         "computation_order": { "const": "schema_defined" },
