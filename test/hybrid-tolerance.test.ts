@@ -511,3 +511,119 @@ test("DIFFERENTIAL/NUMERIC ceilings are exported and ordered as documented", () 
   assert.strictEqual(DIFFERENTIAL_TOLERANCE_CEILING.atol, 1e-5)
   assert.strictEqual(DIFFERENTIAL_TOLERANCE_CEILING.rtol, 1e-3)
 })
+
+// =============================================================================
+// FIX-3a: AUTHORING-STATE-AWARE numeric_policy.tolerance ceiling.
+//
+// CROSS-WAVE SEAM: the numeric ceiling {atol:1e-8, rtol:1e-6} was set for
+// ENGINE-authored receipts (deterministic same-engine: tiny FP drift only). But
+// a FOREIGN float32 observer trace drifts ~2.3e-5 RELATIVE — well above the
+// engine rtol 1e-6 ceiling — so a perfectly honest float32 import gets REJECTED
+// up front by Rule 0's numeric ceiling (a false-FAIL). That is WRONG: the
+// observer receipt's internal-consistency rules (5/6/7) only need to confirm the
+// foreign numbers agree WITH EACH OTHER at float32 grade; the REAL observer
+// authority is Rule 14 (the engine-recompute differential, ceiling {atol:1e-5,
+// rtol:1e-3}), which independently re-derives the math and catches any true
+// divergence regardless of the receipt's declared numeric_policy.tolerance.
+//
+// THE CONTRACT (shared verbatim across reconciler + importer + schema):
+//   - ENGINE-authored receipts: numeric ceiling stays {atol:1e-8, rtol:1e-6}.
+//   - OBSERVER (authoring_state==='external_imported') receipts: numeric ceiling
+//     {atol:1e-5, rtol:1e-3} (the observer bound).
+//
+// The reconciler's authoring-aware clamp selects the ceiling by
+// fixture_status.authoring_state at the clamp choke-point.
+//
+// SAFETY: relaxing the observer numeric ceiling does NOT weaken the verifier —
+// Rule 14's differential ceiling is the load-bearing observer authority and it is
+// UNCHANGED. A foreign receipt with fabricated math still fails Rule 14.
+// =============================================================================
+
+import { OBSERVER_NUMERIC_TOLERANCE_CEILING } from "../src/reconcile.js"
+
+test("FIX-3a: the OBSERVER numeric ceiling is exported as the float32-grade observer bound {atol:1e-5,rtol:1e-3}", () => {
+  // Pin the observer ceiling so a silent tightening (re-introducing the
+  // float32 false-FAIL) or loosening (laundering room) surfaces in CI.
+  assert.strictEqual(OBSERVER_NUMERIC_TOLERANCE_CEILING.atol, 1e-5)
+  assert.strictEqual(OBSERVER_NUMERIC_TOLERANCE_CEILING.rtol, 1e-3)
+})
+
+test("FIX-3a: an OBSERVER receipt with float32-grade numeric_policy.tolerance {atol:1e-6,rtol:1e-4} is ACCEPTED (not clamped to the engine-tight ceiling)", () => {
+  // The pytorch observer golden is internally consistent at float32 grade and its
+  // engine recompute agrees within the (unchanged) differential ceiling. Set its
+  // numeric_policy.tolerance to a float32-appropriate value that EXCEEDS the
+  // ENGINE ceiling (rtol 1e-4 > 1e-6) but sits AT/UNDER the OBSERVER ceiling
+  // (rtol 1e-4 < 1e-3). With the authoring-aware ceiling it must reconcile ok:true;
+  // with the old single engine ceiling it was rejected up front by Rule 0 — the
+  // float32 false-FAIL this fix closes.
+  const goldenPath = resolve(
+    __repoRoot,
+    "fixtures/external/pytorch.softmax-ce.golden.jsonl",
+  )
+  if (!existsSync(goldenPath)) return
+  const golden = JSON.parse(readFileSync(goldenPath, "utf-8").trim()) as {
+    fixture_status: { authoring_state?: string }
+    numeric_policy: { tolerance: unknown }
+  }
+  // Sanity: this IS an observer receipt.
+  assert.strictEqual(
+    golden.fixture_status.authoring_state,
+    "external_imported",
+    "fixture precondition: pytorch golden must be an observer receipt",
+  )
+  golden.numeric_policy.tolerance = { atol: 1e-6, rtol: 1e-4 }
+  const result = reconcileReceipt(golden)
+  assert.strictEqual(
+    result.ok,
+    true,
+    `an OBSERVER receipt's float32-grade numeric_policy.tolerance {atol:1e-6,rtol:1e-4} must be ` +
+      `ACCEPTED under the authoring-aware observer ceiling {atol:1e-5,rtol:1e-3} — Rule 14 ` +
+      `(differential ceiling, UNCHANGED) is the load-bearing observer authority, so the looser ` +
+      `internal-consistency numeric tolerance is SAFE. got: ${
+        result.ok === false
+          ? JSON.stringify(result.failures.map((f) => ({ rule: f.rule, field_path: f.field_path })))
+          : "ok"
+      }`,
+  )
+})
+
+test("FIX-3a: an ENGINE-authored receipt with the SAME float32-grade tolerance {atol:1e-6,rtol:1e-4} is STILL clamped/rejected at the engine ceiling", () => {
+  // The mirror assertion: the relaxation is authoring-state-gated. An
+  // engine-authored receipt (no external_imported state) declaring the same
+  // {atol:1e-6,rtol:1e-4} EXCEEDS the engine ceiling {atol:1e-8,rtol:1e-6} and
+  // must be rejected by Rule 0 — deterministic same-engine math has no business
+  // claiming float32-grade slack. This proves the fix did NOT globally loosen the
+  // numeric ceiling.
+  const goldenPath = resolve(__repoRoot, "fixtures/mazur.golden.jsonl")
+  const golden = JSON.parse(readFileSync(goldenPath, "utf-8").trim()) as {
+    fixture_status?: { authoring_state?: string }
+    numeric_policy: { tolerance: unknown }
+  }
+  // Sanity: this is NOT an observer receipt.
+  assert.notStrictEqual(
+    golden.fixture_status?.authoring_state,
+    "external_imported",
+    "fixture precondition: mazur golden must be engine-authored",
+  )
+  golden.numeric_policy.tolerance = { atol: 1e-6, rtol: 1e-4 }
+  const result = reconcileReceipt(golden)
+  assert.strictEqual(
+    result.ok,
+    false,
+    "an ENGINE-authored receipt declaring float32-grade {atol:1e-6,rtol:1e-4} must STILL be " +
+      "rejected at the engine ceiling {atol:1e-8,rtol:1e-6} — the observer relaxation is " +
+      "authoring-state-gated, not global",
+  )
+  if (result.ok) return
+  assert.ok(
+    result.failures.some(
+      (f) =>
+        f.rule === 0 &&
+        f.field_path === "numeric_policy.tolerance" &&
+        /verifier maximum|ceiling|exceeds/i.test(f.message ?? ""),
+    ),
+    `expected a Rule 0 tolerance-ceiling failure on the engine-authored receipt; got: ${JSON.stringify(
+      result.failures.map((f) => ({ rule: f.rule, field_path: f.field_path })),
+    )}`,
+  )
+})

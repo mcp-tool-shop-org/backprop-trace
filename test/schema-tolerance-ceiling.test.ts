@@ -13,28 +13,34 @@
  * DEFENSE: the reconciler clamp (reconciler agent) is the load-bearing gate.
  * THIS file pins the defense-in-depth SCHEMA maximum that rejects an absurd
  * tolerance early on every schema-validated path. The ceilings are pinned
- * (verifier-owned, NOT receipt-owned) and MUST match the FINAL reconciler
- * constants NUMERIC_TOLERANCE_CEILING / DIFFERENTIAL_TOLERANCE_CEILING:
+ * (verifier-owned, NOT receipt-owned).
  *
- *   numeric_policy.tolerance:           atol <= 1e-8, rtol <= 1e-6
- *                                       scalar form (number) <= 1e-8
+ *   numeric_policy.tolerance:           atol <= 1e-5, rtol <= 1e-3
+ *                                       scalar form (number) <= 1e-5
  *   attestor.differential_tolerance:    atol <= 1e-5, rtol <= 1e-3
  *
- * These are TIGHTER than the Wave A1-core values (numeric rtol 1e-3, diff
- * rtol 1e-2) because an at-ceiling tolerance under the loose bounds laundered
- * real corruption: canonical corruptions land ~1e-5, which is 1+ orders ABOVE
- * the numeric ceiling and now caught. The legit-corpus maxes are exactly one
- * order under these (tol scalar 1e-9 / object atol 1e-11, rtol 1e-7; diff atol
- * 1e-6 / rtol 1e-4) — deliberate one-order headroom for framework FP drift,
- * blocks gaming.
+ * FIX-3c — the SCHEMA numeric_policy.tolerance maximum is the OBSERVER bound
+ * {atol 1e-5, rtol 1e-3}, NOT the tighter ENGINE bound. Rationale: the schema
+ * is defense-in-depth (it rejects absurd tolerances on every validated path);
+ * the LOAD-BEARING numeric gate is the RECONCILER's authoring-aware clamp,
+ * which enforces the TIGHTER engine bound ({atol 1e-8, rtol 1e-6},
+ * NUMERIC_TOLERANCE_CEILING) on engine-authored receipts and the looser
+ * OBSERVER_NUMERIC_TOLERANCE_CEILING {atol 1e-5, rtol 1e-3} on
+ * external_imported receipts. If the SCHEMA kept the engine bound it would
+ * reject a legitimate float32-grade observer receipt (declaring up to {1e-5,
+ * 1e-3}) before the reconciler ever saw it — the false-FAIL FIX-3b/FIX-3c
+ * close. So the schema relaxes to the observer bound and lets the reconciler
+ * be the strict, authoring-aware authority. attestor.differential_tolerance
+ * keeps its {atol 1e-5, rtol 1e-3} maximum (UNCHANGED) — that is already the
+ * observer bound and Rule 14 is the real differential authority.
  *
  * NON-VACUITY: each rejection test asserts ok:false. The mutation that
  * makes it go RED again is "delete the `maximum` keyword from atol/rtol/the
  * scalar branch in the corresponding schema" — without the maximum, Ajv
  * accepts {atol:1e9, rtol:1e9} (minimum:0 only) and the test fails. The
  * boundary tests further pin the EXACT ceiling: at-ceiling accepts,
- * just-over rejects, so a wrong maximum value (e.g. the old 1e-6/1e-3 instead
- * of the new 1e-8/1e-6) also makes the suite go red.
+ * just-over rejects, so a wrong maximum value (e.g. a too-tight 1e-8/1e-6
+ * instead of the relaxed 1e-5/1e-3) also makes the suite go red.
  */
 
 import { test } from "node:test";
@@ -100,33 +106,33 @@ test("REJECT receipt with numeric_policy.tolerance {atol:1e9,rtol:1e9} (object f
   );
 });
 
-test("REJECT receipt with numeric_policy.tolerance.atol over 1e-8 ceiling", () => {
+test("REJECT receipt with numeric_policy.tolerance.atol over 1e-5 ceiling", () => {
   const r = clone(loadJsonl(XOR));
-  // atol just over the 1e-8 ceiling, rtol legit — isolates the atol bound.
+  // atol just over the 1e-5 ceiling, rtol legit — isolates the atol bound.
   (r.numeric_policy as { tolerance: unknown }).tolerance = {
-    atol: 1e-7,
-    rtol: 1e-7,
+    atol: 1e-4,
+    rtol: 1e-4,
   };
   const result = validateReceiptSchema(r);
-  assert.strictEqual(result.ok, false, "atol 1e-7 > 1e-8 ceiling must reject");
+  assert.strictEqual(result.ok, false, "atol 1e-4 > 1e-5 ceiling must reject");
 });
 
-test("REJECT receipt with numeric_policy.tolerance.rtol over 1e-6 ceiling", () => {
+test("REJECT receipt with numeric_policy.tolerance.rtol over 1e-3 ceiling", () => {
   const r = clone(loadJsonl(XOR));
-  // rtol just over the 1e-6 ceiling, atol legit — isolates the rtol bound.
+  // rtol just over the 1e-3 ceiling, atol legit — isolates the rtol bound.
   (r.numeric_policy as { tolerance: unknown }).tolerance = {
     atol: 1e-12,
-    rtol: 1e-5,
+    rtol: 1e-2,
   };
   const result = validateReceiptSchema(r);
-  assert.strictEqual(result.ok, false, "rtol 1e-5 > 1e-6 ceiling must reject");
+  assert.strictEqual(result.ok, false, "rtol 1e-2 > 1e-3 ceiling must reject");
 });
 
-test("ACCEPT receipt with numeric_policy.tolerance exactly at ceiling (atol 1e-8, rtol 1e-6)", () => {
+test("ACCEPT receipt with numeric_policy.tolerance exactly at ceiling (atol 1e-5, rtol 1e-3)", () => {
   const r = clone(loadJsonl(XOR));
   (r.numeric_policy as { tolerance: unknown }).tolerance = {
-    atol: 1e-8,
-    rtol: 1e-6,
+    atol: 1e-5,
+    rtol: 1e-3,
   };
   const result = validateReceiptSchema(r);
   assert.strictEqual(
@@ -158,20 +164,20 @@ test("REJECT receipt with scalar numeric_policy.tolerance 1e9", () => {
   );
 });
 
-test("REJECT receipt with scalar numeric_policy.tolerance just over 1e-8", () => {
+test("REJECT receipt with scalar numeric_policy.tolerance just over 1e-5", () => {
   const r = clone(loadJsonl(XOR));
-  (r.numeric_policy as { tolerance: unknown }).tolerance = 1e-7;
+  (r.numeric_policy as { tolerance: unknown }).tolerance = 1e-4;
   const result = validateReceiptSchema(r, { version: "0.2.0" });
   assert.strictEqual(
     result.ok,
     false,
-    "scalar tolerance 1e-7 > 1e-8 ceiling must reject",
+    "scalar tolerance 1e-4 > 1e-5 ceiling must reject",
   );
 });
 
-test("ACCEPT receipt with scalar numeric_policy.tolerance exactly at 1e-8", () => {
+test("ACCEPT receipt with scalar numeric_policy.tolerance exactly at 1e-5", () => {
   const r = clone(loadJsonl(XOR));
-  (r.numeric_policy as { tolerance: unknown }).tolerance = 1e-8;
+  (r.numeric_policy as { tolerance: unknown }).tolerance = 1e-5;
   const result = validateReceiptSchema(r, { version: "0.2.0" });
   assert.strictEqual(
     result.ok,
@@ -438,7 +444,7 @@ test("REJECT topology-input scalar numeric_policy.tolerance 1e9", () => {
   assert.strictEqual(
     result.ok,
     false,
-    "topology-input scalar tolerance 1e9 MUST be rejected (scalar ceiling 1e-6)",
+    "topology-input scalar tolerance 1e9 MUST be rejected (scalar ceiling 1e-5)",
   );
 });
 

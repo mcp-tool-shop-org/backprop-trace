@@ -667,7 +667,18 @@ const DEFAULT_NUMERIC_POLICY_FOR_OBSERVER: GeneralInput["numeric_policy"] = {
   number_encoding: "decimal",
   precision_significant_digits: 9,
   rounding: "round_half_to_even",
-  tolerance: { atol: 1e-11, rtol: 1e-7 },
+  // FIX-3b — FLOAT32-grade observer default. The live PyTorch/JAX/TF helpers
+  // emit sidecars that OMIT numeric_policy, so imported receipts inherit this
+  // value. A real DEFAULT-float32 framework step drifts ~1e-8..2.3e-5 from the
+  // engine's float64 recompute; the old float64-grade {atol:1e-11, rtol:1e-7}
+  // was far tighter than that drift, so a VALID imported step failed Rule 5/6/7
+  // internal-consistency at the gate (a false FAIL). {atol:1e-6, rtol:1e-4} is
+  // float32-appropriate and sits one order UNDER the reconciler's
+  // OBSERVER_NUMERIC_TOLERANCE_CEILING {1e-5, 1e-3} (the bound the
+  // authoring-aware clamp enforces on external_imported receipts). This governs
+  // ONLY internal-consistency; Rule 14 (the engine-recompute differential,
+  // ceiling {1e-5, 1e-3}) is the real authority and catches any TRUE divergence.
+  tolerance: { atol: 1e-6, rtol: 1e-4 },
   computation_order: "schema_defined",
   byte_output: {
     format: "jsonl",

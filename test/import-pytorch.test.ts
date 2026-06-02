@@ -339,3 +339,77 @@ test("bp import unknown-framework exits 2", () => {
   assert.strictEqual(status, 2)
   assert.match(stderr, /unknown framework/)
 })
+
+// =============================================================================
+// FIX-3b — DEFAULT_NUMERIC_POLICY_FOR_OBSERVER must be the FLOAT32-grade
+// tolerance {atol:1e-6, rtol:1e-4}, NOT the old float64-grade {atol:1e-11,
+// rtol:1e-7}.
+//
+// THE BUG (false-FAIL): the live PyTorch helper (scripts/extract/pytorch.py)
+// emits a sidecar that OMITS numeric_policy, so the importer falls back to
+// DEFAULT_NUMERIC_POLICY_FOR_OBSERVER. A real DEFAULT-float32 PyTorch step
+// drifts ~1e-8..2.3e-5 from the engine's float64 recompute. The old default
+// {1e-11,1e-7} is FLOAT64-grade — far tighter than float32 drift — so the
+// emitted observer receipt failed Rule 5/6/7 internal-consistency at the gate
+// and a VALID imported step was REJECTED. The float32-appropriate default
+// {1e-6,1e-4} (one order under the OBSERVER_NUMERIC_TOLERANCE_CEILING {1e-5,
+// 1e-3} the reconciler clamps observer receipts to) lets the honest step pass
+// while staying inside the verifier ceiling. Rule 14 (engine-recompute
+// differential) remains the real authority on every external_imported receipt.
+//
+// NON-VACUITY: the canonical softmax-ce sidecar carries an explicit
+// numeric_policy block; we STRIP it so the default path is exercised. The
+// assertion is the exact float32-grade pair. MUTATION that makes it RED:
+// revert DEFAULT_NUMERIC_POLICY_FOR_OBSERVER.tolerance to {atol:1e-11,
+// rtol:1e-7} (or any non-{1e-6,1e-4} value) in src/import-observer.ts.
+// =============================================================================
+test("FIX-3b: a sidecar that OMITS numeric_policy gets the float32-grade observer default {atol:1e-6,rtol:1e-4}", () => {
+  if (!existsSync(sidecarPath)) return
+  const sidecar = JSON.parse(loadSidecarBytes().trim()) as Record<string, unknown>
+  // Sanity: the canonical sidecar carries numeric_policy — strip it so the
+  // importer falls through to DEFAULT_NUMERIC_POLICY_FOR_OBSERVER.
+  assert.ok(
+    sidecar.numeric_policy !== undefined,
+    "precondition: canonical sidecar carries numeric_policy (we strip it to exercise the default)",
+  )
+  delete sidecar.numeric_policy
+
+  const result = importPytorchSidecar(JSON.stringify(sidecar) + "\n", {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: PINNED_FIXTURE_LABEL,
+  })
+
+  assert.deepStrictEqual(
+    result.receipt.numeric_policy.tolerance,
+    { atol: 1e-6, rtol: 1e-4 },
+    "importer must emit the FLOAT32-grade observer default {atol:1e-6,rtol:1e-4} when the " +
+      "sidecar omits numeric_policy (FIX-3b). The old float64-grade {1e-11,1e-7} rejected real " +
+      "float32 PyTorch steps at Rule 5/6/7 internal-consistency — a false FAIL.",
+  )
+})
+
+test("FIX-3b: an observer receipt emitted with the default float32 tolerance reconciles ok (internal consistency holds at the observer ceiling)", () => {
+  if (!existsSync(sidecarPath)) return
+  const sidecar = JSON.parse(loadSidecarBytes().trim()) as Record<string, unknown>
+  delete sidecar.numeric_policy
+
+  const result = importPytorchSidecar(JSON.stringify(sidecar) + "\n", {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: PINNED_FIXTURE_LABEL,
+  })
+  // The emitted receipt declares the float32-grade default; the reconciler's
+  // authoring-aware clamp (observer ceiling {1e-5,1e-3}) must accept it and the
+  // canonical softmax-ce math (float64-authored, drift well under the bound)
+  // reconciles cleanly. This is the end-to-end "valid step no longer rejected"
+  // assertion at the unit level (the live-torch case is in the seam validation).
+  const rec = reconcileReceipt(result.receipt)
+  assert.strictEqual(
+    rec.ok,
+    true,
+    `observer receipt with float32-grade default tolerance must reconcile ok; got: ${
+      rec.ok === false
+        ? JSON.stringify(rec.failures.map((f) => ({ rule: f.rule, field_path: f.field_path, delta: f.delta, tolerance: f.tolerance })))
+        : "ok"
+    }`,
+  )
+})

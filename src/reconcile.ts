@@ -252,14 +252,20 @@ export type ReconciliationFailure = {
  *   - `skipped_rules` — the concrete rule numbers skipped via self-assertion
  *     (currently always `[14]` when `math_gate_skipped` is set). Present so
  *     future self-declared skips can be enumerated uniformly.
+ *   - `math_gate_skipped_records` — FIX-1, MULTI-STEP ONLY. The 0-based record
+ *     indices whose per-receipt reconcile self-declared the skip. Single-record
+ *     `reconcileReceipt` never sets this (there is exactly one record); only
+ *     `reconcileMultiStep` populates it so a CLI can name WHICH step in a bundle
+ *     skipped the math gate. Absent when no record skipped.
  *
- * Both fields are absent (not `false` / not `[]`) on the normal fully-verified
+ * All fields are absent (not `false` / not `[]`) on the normal fully-verified
  * path so existing consumers that ignore them are unaffected (additive,
  * backward-compatible — no index.ts change required).
  */
 type ReconciliationDiagnostics = {
   math_gate_skipped?: boolean
   skipped_rules?: number[]
+  math_gate_skipped_records?: number[]
 }
 
 export type ReconciliationResult =
@@ -734,6 +740,65 @@ export const NUMERIC_TOLERANCE_CEILING = { atol: 1e-8, rtol: 1e-6 } as const
 export const DIFFERENTIAL_TOLERANCE_CEILING = { atol: 1e-5, rtol: 1e-3 } as const
 
 /**
+ * AUTHORING-STATE-AWARE numeric ceiling for OBSERVER receipts (FIX-3a).
+ *
+ * Cross-wave seam: {@link NUMERIC_TOLERANCE_CEILING} ({atol:1e-8, rtol:1e-6}) is
+ * calibrated for ENGINE-authored receipts — deterministic same-engine math whose
+ * only legitimate drift is sub-ULP. But a FOREIGN float32 observer trace drifts
+ * ~2.3e-5 RELATIVE (float32 has ~7 significant decimal digits), which is one-plus
+ * orders ABOVE the engine rtol 1e-6. Under a single engine ceiling, an honest
+ * float32 import is REJECTED up front by Rule 0's numeric ceiling — a false-FAIL.
+ *
+ * For OBSERVER receipts (fixture_status.authoring_state === "external_imported")
+ * the numeric ceiling is therefore the FLOAT32-GRADE observer bound below. This
+ * only governs the INTERNAL-CONSISTENCY rules (5/6/7 et al.: do the foreign
+ * numbers agree WITH EACH OTHER). It is SAFE because the load-bearing observer
+ * authority is Rule 14 — the engine-recompute differential, ceiling
+ * {@link DIFFERENTIAL_TOLERANCE_CEILING} (UNCHANGED) — which independently
+ * re-derives the math and catches any TRUE divergence regardless of the receipt's
+ * declared numeric_policy.tolerance.
+ *
+ * Engine-authored receipts keep the tighter {@link NUMERIC_TOLERANCE_CEILING};
+ * the relaxation is gated on authoring_state at the clamp choke-point
+ * ({@link numericCeilingForReceipt}) so it is not a global loosening.
+ *
+ * Exported so tests can pin the value (a silent tighten re-opens the float32
+ * false-FAIL; a silent loosen widens laundering room — both are regressions).
+ */
+export const OBSERVER_NUMERIC_TOLERANCE_CEILING = { atol: 1e-5, rtol: 1e-3 } as const
+
+/**
+ * Select the verifier-owned NUMERIC tolerance ceiling for a receipt by its
+ * authoring state (FIX-3a — the authoring-aware clamp choke-point).
+ *
+ * The SINGLE place that decides engine-vs-observer numeric ceiling. Both
+ * `reconcileReceipt` (single-record Rule 0 gate) and `reconcileMultiStep`
+ * (cross-record Rule 9 clamp) route through this so the two sites can never
+ * drift apart.
+ *
+ *   - OBSERVER (fixture_status.authoring_state === "external_imported") →
+ *     {@link OBSERVER_NUMERIC_TOLERANCE_CEILING} (float32-grade {1e-5,1e-3}).
+ *   - everything else (engine-authored) → {@link NUMERIC_TOLERANCE_CEILING}
+ *     ({1e-8,1e-6}).
+ *
+ * NOTE: this keys ONLY on the self-declared authoring_state — that is correct
+ * here because relaxing the INTERNAL-CONSISTENCY numeric ceiling cannot launder
+ * fabricated math: a relabel toward "external_imported" merely loosens the
+ * rules-agree-with-each-other check while SUBJECTING the receipt to Rule 14's
+ * independent engine recompute (the import markers + Rule 0 observer-provenance
+ * guard handle the OPPOSITE relabel — denying external origin to dodge Rule 14).
+ * The receipt cannot both claim external_imported (to get the looser numeric
+ * ceiling) AND escape Rule 14, so this self-label read is not a circularity hole.
+ */
+export function numericCeilingForReceipt(r: {
+  fixture_status?: { authoring_state?: string }
+}): { atol: number; rtol: number } {
+  return r.fixture_status?.authoring_state === "external_imported"
+    ? OBSERVER_NUMERIC_TOLERANCE_CEILING
+    : NUMERIC_TOLERANCE_CEILING
+}
+
+/**
  * Result of {@link clampTolerancePolicy}.
  *
  * `effective` is the tolerance the verifier will actually apply (input clamped
@@ -951,10 +1016,15 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
   // (isValidTolerancePolicy guaranteed a valid policy above, so the cast is
   // sound here.)
   const declaredTolerance = r.numeric_policy.tolerance as TolerancePolicy
-  const clampedNumeric = clampTolerancePolicy(
-    declaredTolerance,
-    NUMERIC_TOLERANCE_CEILING,
-  )
+  // FIX-3a: select the numeric ceiling by authoring state. OBSERVER
+  // (external_imported) receipts get the float32-grade observer bound
+  // {atol:1e-5,rtol:1e-3}; engine-authored receipts keep the tight
+  // {atol:1e-8,rtol:1e-6}. The relaxation governs ONLY the internal-consistency
+  // rules — Rule 14's differential ceiling (the real observer authority) is
+  // unchanged, so an honest float32 import no longer false-FAILs here while a
+  // fabricated foreign trace is still caught by the engine recompute.
+  const numericCeiling = numericCeilingForReceipt(r)
+  const clampedNumeric = clampTolerancePolicy(declaredTolerance, numericCeiling)
   if (clampedNumeric.exceeded) {
     const { atol, rtol } = normalizeTolerance(declaredTolerance)
     return {
@@ -970,7 +1040,8 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
           message:
             `numeric_policy.tolerance exceeds verifier maximum. ` +
             `Declared atol=${atol}, rtol=${rtol}; verifier ceiling is ` +
-            `atol<=${NUMERIC_TOLERANCE_CEILING.atol}, rtol<=${NUMERIC_TOLERANCE_CEILING.rtol}. ` +
+            `atol<=${numericCeiling.atol}, rtol<=${numericCeiling.rtol} ` +
+            `(${r.fixture_status?.authoring_state === "external_imported" ? "observer/external_imported" : "engine-authored"} authoring state). ` +
             `The receipt under judgement may NOT widen the check that judges it ` +
             `(Csmith/CompCert anti-circularity). Re-emit with a tolerance at or below the ceiling.`,
         },
@@ -2737,6 +2808,16 @@ export function reconcileMultiStep(
   receipts: ReadonlyArray<unknown>,
 ): ReconciliationResult {
   const failures: ReconciliationFailure[] = []
+  // FIX-1: aggregate the per-record math-gate-skip signal across the bundle.
+  // reconcileReceipt returns math_gate_skipped/skipped_rules when a record
+  // self-declares engine_recompute_skipped_with_basis (Rule 14, the only math
+  // gate on imported math, no-ops). Pre-fix, reconcileMultiStep copied ONLY
+  // ok/failures and DROPPED this signal — so a fabricated record that self-
+  // declares the skip laundered to a clean bundle ok:true with NO skip
+  // qualification visible to the CLI. Collect the skip here and surface it on
+  // the bundle result so the skip is never silently lost in composition.
+  const skippedRecordIndices: number[] = []
+  const skippedRuleSet = new Set<number>()
 
   // Phase 1: per-receipt rules (1-8) on every step.
   for (let i = 0; i < receipts.length; i++) {
@@ -2746,6 +2827,13 @@ export function reconcileMultiStep(
       for (const f of result.failures) {
         failures.push({ ...f, field_path: `receipts[${i}].${f.field_path}` })
       }
+    }
+    // Thread the per-record skip signal into the bundle aggregate regardless of
+    // this record's ok/failure status — a skipped math gate is information the
+    // bundle must surface even when other rules also fired.
+    if (result.math_gate_skipped) {
+      skippedRecordIndices.push(i)
+      for (const ruleNum of result.skipped_rules ?? []) skippedRuleSet.add(ruleNum)
     }
   }
 
@@ -2762,9 +2850,12 @@ export function reconcileMultiStep(
     // rejected over-ceiling receipts via reconcileReceipt's Rule 0, but Rule 9
     // reads the raw value independently — clamp here so the chain check is never
     // loosened by a receipt's own claim.
+    // FIX-3a: select the ceiling by THIS record's authoring state (same
+    // choke-point helper as the single-record path) so an observer record's
+    // float32-grade chain check is not over-tightened to the engine bound.
     const curPolicyEffective = clampTolerancePolicy(
       curPolicy,
-      NUMERIC_TOLERANCE_CEILING,
+      numericCeilingForReceipt(cur as { fixture_status?: { authoring_state?: string } }),
     ).effective
     failures.push(...checkRule9(cur, receipts[i - 1], curPolicyEffective))
   }
@@ -2793,7 +2884,24 @@ export function reconcileMultiStep(
   // fixture: adam-multi-step.bad-hyperparameter-inconstancy.
   checkRule26OptimizerConfigConstancy(receipts, failures)
 
-  return failures.length === 0 ? { ok: true } : { ok: false, failures }
+  // FIX-1: attach the aggregated math-gate-skip diagnostics to BOTH result
+  // branches (mirrors the single-record reconcileReceipt G-006 contract). When
+  // ANY record self-declared the skip, the bundle carries math_gate_skipped:true,
+  // the union of skipped rule numbers, and the record indices that skipped — so a
+  // consumer MUST NOT read the bundle ok:true as full verification. Absent when
+  // no record skipped (backward-compatible with consumers that ignore them).
+  const diagnostics: ReconciliationDiagnostics =
+    skippedRecordIndices.length > 0
+      ? {
+          math_gate_skipped: true,
+          skipped_rules: [...skippedRuleSet].sort((a, b) => a - b),
+          math_gate_skipped_records: skippedRecordIndices,
+        }
+      : {}
+
+  return failures.length === 0
+    ? { ok: true, ...diagnostics }
+    : { ok: false, failures, ...diagnostics }
 }
 
 /**
@@ -3822,7 +3930,32 @@ function checkRule14EngineRecomputeDifferential(
   for (const u of r.updates) rUpdatesByParam.set(u.parameter_id, u)
   for (const eUpdate of engineReceipt.updates) {
     const rUpdate = rUpdatesByParam.get(eUpdate.parameter_id)
-    if (!rUpdate) continue
+    if (!rUpdate) {
+      // FIX-2 (COMPLETENESS): the engine produced an update for this parameter
+      // but the receipt has NO counterpart. Pre-fix this `continue` silently
+      // skipped the parameter, so a receipt could launder fabricated math by
+      // simply DROPPING a weight's update entry (selective omission) — its
+      // gradient / update / final-state were never checked. AGREEMENT-on-present
+      // is not enough; the receipt's update key set must COVER every engine-
+      // updated parameter. Raise a Rule 14 failure rather than skipping.
+      failures.push({
+        rule: 14,
+        parameter_id: eUpdate.parameter_id,
+        field_path: `updates[${eUpdate.parameter_id}]`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 14 (engine-recompute COMPLETENESS): the engine produced an update for parameter ` +
+          `${JSON.stringify(eUpdate.parameter_id)} (gradient=${eUpdate.gradient}, update=${eUpdate.update}) ` +
+          `but the receipt's updates[] has NO entry for it. A dropped update entry is a SELECTIVE-` +
+          `OMISSION laundering attempt — the receipt's updates key set must COVER every engine-updated ` +
+          `parameter so no gradient/update/final-state escapes the differential by omission ` +
+          `(generalizes the G-018 / Rule-19 key-set-EQUAL discipline to the parameter dimension).`,
+      })
+      continue
+    }
     compareScalar(
       `updates[${eUpdate.parameter_id}].gradient`,
       eUpdate.gradient,
@@ -3878,6 +4011,61 @@ function checkRule14EngineRecomputeDifferential(
       engineReceipt.parameters_after[pid]!,
       r.parameters_after?.[pid],
     )
+  }
+
+  // FIX-2 (COMPLETENESS): parameters_after key set must EQUAL
+  // topology.parameter_order. The per-key loop above only VISITS keys the engine
+  // produced, and compareScalar early-returns when the receipt's value is
+  // undefined — so a DROPPED parameters_after value (the parameter still declared
+  // in parameter_order + parameters_before) escaped the differential entirely
+  // (false PASS by selective omission). Mirror the G-018 / Rule-19 key-set-EQUAL
+  // discipline on the parameter dimension: every declared parameter MUST have a
+  // final-state value, and no extra/undeclared key may smuggle in.
+  // `topo` + `topo.parameter_order` were validated non-null above (the early
+  // schema-shape guards returned mathGateSkipped:false otherwise).
+  const declaredParamOrder = topo.parameter_order!
+  const declaredParamSet = new Set<string>(declaredParamOrder)
+  const receiptParamsAfter = r.parameters_after ?? {}
+  const observedParamKeys = Object.keys(receiptParamsAfter)
+  const observedParamSet = new Set<string>(observedParamKeys)
+  // Missing: declared in parameter_order but absent from parameters_after. Emit
+  // in declared order for a deterministic failure stream.
+  for (const pid of declaredParamOrder) {
+    if (!observedParamSet.has(pid)) {
+      failures.push({
+        rule: 14,
+        parameter_id: pid,
+        field_path: `parameters_after.${pid}`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 14 (engine-recompute COMPLETENESS): parameter ${JSON.stringify(pid)} is declared in ` +
+          `topology.parameter_order but ABSENT from parameters_after. A dropped final-state value ` +
+          `escapes the engine-recompute differential by omission — parameters_after's key set must ` +
+          `EQUAL topology.parameter_order (G-018 / Rule-19 key-set-EQUAL discipline, parameter dimension).`,
+      })
+    }
+  }
+  // Extra: present in parameters_after but not declared in parameter_order. Emit
+  // in observed insertion order for determinism.
+  for (const pid of observedParamKeys) {
+    if (!declaredParamSet.has(pid)) {
+      failures.push({
+        rule: 14,
+        parameter_id: pid,
+        field_path: `parameters_after.${pid}`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 14 (engine-recompute COMPLETENESS): parameters_after contains parameter ${JSON.stringify(pid)} ` +
+          `NOT declared in topology.parameter_order. parameters_after's key set must EQUAL ` +
+          `topology.parameter_order (no extra/undeclared final-state keys).`,
+      })
+    }
   }
 
   // The gate RAN to completion (any disagreements are already in `failures`).

@@ -2965,6 +2965,21 @@ type VerifyMultiReport = {
   record_count: number;
   per_record: MultiSubReport[];
   cross_record_checks: VerifyCheck[];
+  /**
+   * FIX-1: machine-readable signal that at least one record in the bundle
+   * self-declared the engine-recompute math gate was skipped
+   * (reconcileReceipt / reconcileMultiStep returned math_gate_skipped). Present
+   * only when a record self-asserted fixture_status.verification_state ===
+   * "engine_recompute_skipped_with_basis" — Rule 14, the only math gate on
+   * observer-mode imports, returned early. A consumer MUST NOT treat such a
+   * report as fully verified: the strongest gate was skipped on the bundle's own
+   * say-so. Absent (not false / not []) on the normal fully-verified path, so
+   * existing --json consumers that ignore these fields are unaffected. Mirrors
+   * the same fields on the single-receipt VerifyReport.
+   */
+  math_gate_skipped?: boolean;
+  /** Concrete rule numbers skipped via self-assertion (currently [14]). */
+  skipped_rules?: number[];
 };
 
 /**
@@ -2998,6 +3013,18 @@ function runVerifyMulti(opts: {
   const perRecord: MultiSubReport[] = [];
   const typedReceipts: unknown[] = [];
 
+  // FIX-1 (cross-wave seam): step indices whose per-record reconcile reported a
+  // self-declared math-gate skip (reconcileReceipt returned math_gate_skipped:
+  // true because the record self-asserted fixture_status.verification_state ===
+  // "engine_recompute_skipped_with_basis", so Rule 14 — the ONLY independent
+  // math gate on observer-mode imports — returned early). A record can still
+  // reconcile ok:true with this flag set; for a verifier with an inverted threat
+  // model that is NOT a clean PASS, exactly as for the single-receipt
+  // `verify general` path. We collect the skipped steps here and emit a distinct
+  // NON-PASS math-gate check below so a self-skipped bundle does not exit 0.
+  const mathGateSkippedSteps: number[] = [];
+  const mathGateSkippedRulesSet = new Set<number>();
+
   // 2. Per-record schema + reconcile loop. Collect typed receipts for
   // the cross-record pass; if a record fails schema, skip its reconcile
   // step (it's already failed; running reconcile would crash on missing
@@ -3020,6 +3047,17 @@ function runVerifyMulti(opts: {
     let reconcileCheck: VerifyCheck;
     if (validation.ok) {
       const r = reconcileReceipt(validation.receipt);
+      // Capture the self-declared math-gate skip per record (additive, optional
+      // field on the reconcile result; absent on the normal fully-verified
+      // path). This is detected directly off the per-record reconcile so the
+      // multi-step gate does NOT depend on reconcileMultiStep aggregating the
+      // signal — we ALSO read the aggregated flag below when present.
+      if (r.math_gate_skipped === true) {
+        mathGateSkippedSteps.push(i);
+        for (const rule of r.skipped_rules ?? [14]) {
+          mathGateSkippedRulesSet.add(rule);
+        }
+      }
       reconcileCheck = r.ok
         ? { name: `reconcile[${i}]`, status: "pass" }
         : {
@@ -3060,14 +3098,40 @@ function runVerifyMulti(opts: {
         "skipped — at least one record failed schema validation; multi-step rules require all records to be structurally valid",
     });
   } else {
+    // FIX-1: the result type carries OPTIONAL math-gate-skip diagnostics
+    // (math_gate_skipped / skipped_rules). reconcileMultiStep aggregates the
+    // self-declared skip across its per-receipt phase; reading it here keeps the
+    // multi-step gate in lockstep with the cross-record helper. Absent on the
+    // normal path, so older helper builds that don't set it are handled too (the
+    // per-record detection above is the independent floor).
     type MultiStepResult =
-      | { ok: true }
-      | { ok: false; failures: ReconciliationFailure[] };
+      | { ok: true; math_gate_skipped?: boolean; skipped_rules?: number[] }
+      | {
+          ok: false;
+          failures: ReconciliationFailure[];
+          math_gate_skipped?: boolean;
+          skipped_rules?: number[];
+        };
     const reconcileMultiStep = requireLibExport<
       (receipts: unknown[]) => MultiStepResult
     >("reconcileMultiStep");
     try {
       const multi = reconcileMultiStep(typedReceipts);
+      // Fold the aggregated skip signal into the same accumulators the
+      // per-record loop populated (Set/array de-dupe handle the overlap).
+      if (multi.math_gate_skipped === true) {
+        for (const rule of multi.skipped_rules ?? [14]) {
+          mathGateSkippedRulesSet.add(rule);
+        }
+        // No per-step index from the aggregate; the per-record loop already
+        // recorded the concrete step(s). If only the aggregate fired (a future
+        // helper that detects a skip the per-record path missed), ensure the
+        // math-gate check below still fires by seeding a sentinel-free flag.
+        if (mathGateSkippedSteps.length === 0 && mathGateSkippedRulesSet.size > 0) {
+          // mark "bundle-level" skip with no specific step index
+          mathGateSkippedSteps.push(-1);
+        }
+      }
       if (multi.ok) {
         crossChecks.push({ name: "multi-step-rules-9-10", status: "pass" });
       } else {
@@ -3093,15 +3157,65 @@ function runVerifyMulti(opts: {
     }
   }
 
+  // 3b. FIX-1 — math-gate self-skip downgrade (NON-PASS by default), mirroring
+  // the single-receipt `verify general` path (see runVerifyGeneral step 3b /
+  // G-006). If ANY record self-declared the engine-recompute skip
+  // (math_gate_skipped, detected per-record above and/or aggregated by
+  // reconcileMultiStep), the bundle's foreign math was NEVER recomputed on at
+  // least one step. reconcile can still be ok per record (the internal rules
+  // hold), but for a verifier with an inverted threat model that is NOT a clean
+  // PASS: the strongest gate was skipped on the bundle's own say-so. Emit a
+  // DISTINCT, visible math-gate check with status "fail" so the default outcome
+  // is overall:"fail" / exit 1, naming the skipped step(s) and rule(s). No
+  // shipped multi-step golden uses this verification_state (the observer goldens
+  // all declare "engine_recompute_matched_within_tolerance"), so this never
+  // breaks a golden.
+  const mathGateSkipped = mathGateSkippedSteps.length > 0;
+  const mathGateSkippedRules =
+    mathGateSkippedRulesSet.size > 0
+      ? Array.from(mathGateSkippedRulesSet).sort((a, b) => a - b)
+      : [14];
+  const mathGateCheck: VerifyCheck | null = mathGateSkipped
+    ? {
+        name: "math-gate",
+        status: "fail",
+        message:
+          `${mathGateSkippedSteps.length} record(s) in the bundle self-declare ` +
+          `fixture_status.verification_state=` +
+          `"engine_recompute_skipped_with_basis" — the engine-recompute ` +
+          `differential (Rule ${mathGateSkippedRules.join(", ")}), the only ` +
+          `independent math gate on observer-mode imports, was SKIPPED on the ` +
+          `bundle's own say-so. This is NOT a verified PASS: the foreign ` +
+          `framework math was never recomputed for those step(s). Re-import ` +
+          `without the skip (let Rule 14 run) to obtain a verified result, or ` +
+          `treat this bundle as unverified.`,
+        evidence: {
+          math_gate_skipped: true,
+          // step -1 is the bundle-level sentinel (aggregate fired without a
+          // concrete per-record index); filter it from the human-facing list.
+          skipped_steps: mathGateSkippedSteps.filter((s) => s >= 0),
+          skipped_rules: mathGateSkippedRules,
+        },
+      }
+    : null;
+
   // 4. Compute overall verdict using the same gating logic as verify
   // mazur / verify general — but over the union of all per-record +
-  // cross-record checks.
+  // cross-record checks (plus the math-gate downgrade, when it fired).
   const allChecks: VerifyCheck[] = [];
   for (const sub of perRecord) {
     allChecks.push(sub.schema, sub.reconcile);
   }
   for (const c of crossChecks) {
     allChecks.push(c);
+  }
+  if (mathGateCheck) {
+    allChecks.push(mathGateCheck);
+    // Surface the math-gate fail in the cross_record_checks list too so the
+    // rendered report AND --json envelope show it (renderVerifyMultiReport and
+    // the JSON consumer both iterate cross_record_checks for bundle-level
+    // checks; the math-gate skip is bundle-level, not per-record).
+    crossChecks.push(mathGateCheck);
   }
   const rolled = finalizeReport(allChecks, opts);
 
@@ -3110,6 +3224,9 @@ function runVerifyMulti(opts: {
     record_count: records.length,
     per_record: perRecord,
     cross_record_checks: crossChecks,
+    ...(mathGateSkipped
+      ? { math_gate_skipped: true, skipped_rules: mathGateSkippedRules }
+      : {}),
   };
 }
 
