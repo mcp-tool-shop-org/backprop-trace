@@ -53,6 +53,18 @@ import type { Topology } from "./topology.js";
  *                 the receipt's forward/backward/update math.
  */
 export function extractEngineInput(receipt: MazurReceipt): MazurInput {
+  // FT-F-012 / imports-B-006 (Stage C) — actionable guard. This is a pure
+  // destructure of an ALREADY-VALIDATED receipt (the caller is expected to have
+  // run parseReceipt / validateReceiptSchema first). A null/undefined receipt is
+  // a caller mistake; without this guard the destructure throws a cryptic
+  // "Cannot read properties of undefined (reading 'topology')". Fail with a
+  // message that says what to do instead.
+  if (receipt === null || typeof receipt !== "object") {
+    throw new Error(
+      `extractEngineInput: expected a parsed MazurReceipt object, got ${receipt === null ? "null" : typeof receipt}. ` +
+        `HINT: parse + validate the receipt first (parseReceipt / validateReceiptSchema), then pass the result here.`,
+    )
+  }
   return {
     topology: receipt.topology,
     learning_rate: receipt.learning_rate,
@@ -89,6 +101,16 @@ export function extractEngineInput(receipt: MazurReceipt): MazurInput {
  *                 the receipt's forward/backward/update math.
  */
 export function extractGeneralEngineInput(receipt: GeneralReceipt): GeneralInput {
+  // imports-B-006 (Stage C) — actionable guard (see extractEngineInput). Pure
+  // destructure of an already-validated receipt; a null/undefined argument is a
+  // caller mistake, surfaced with a diagnosable message instead of a cryptic
+  // property-access TypeError.
+  if (receipt === null || typeof receipt !== "object") {
+    throw new Error(
+      `extractGeneralEngineInput: expected a parsed GeneralReceipt object, got ${receipt === null ? "null" : typeof receipt}. ` +
+        `HINT: parse + validate the receipt first (parseReceipt / validateReceiptSchema), then pass the result here.`,
+    )
+  }
   // SerializedTopology and Topology share the same runtime shape; the
   // type difference is purely the readonly hint. Cast through `unknown`
   // to satisfy the structural assignability check.

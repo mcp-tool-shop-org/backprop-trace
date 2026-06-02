@@ -229,12 +229,17 @@ export type ValidateOptions = {
  * Dispatch order:
  *   1. If `opts.version` is supplied, validate against that exact schema.
  *   2. Else, sniff `input.schema_version`: if it's a recognized
- *      SchemaVersion ("0.1.0" or "0.2.0"), validate against that.
- *   3. Else, default to the latest schema ("0.2.0") so new callers writing
- *      generalized receipts without an explicit version land on the right
- *      target. Mazur callers ALWAYS declare schema_version: "0.1.0" in
- *      their receipts (per src/engine.ts MazurReceipt's type literal), so
- *      they hit branch 2.
+ *      SchemaVersion, validate against that.
+ *   3. Else, if `input.schema_version` is PRESENT but unrecognized, dispatch to
+ *      the default schema (so schemaVersion + pass/fail are unchanged) but
+ *      PREPEND an actionable UNKNOWN_SCHEMA_VERSION note naming the declared
+ *      version and the known versions (io-B-004 — the fallback is now explicit
+ *      and observable instead of silent).
+ *   4. Else (schema_version ABSENT / non-string), default to "0.2.0" so new
+ *      callers writing generalized receipts without an explicit version land
+ *      on the right target. Mazur callers ALWAYS declare schema_version:
+ *      "0.1.0" in their receipts (per src/engine.ts MazurReceipt's type
+ *      literal), so they hit branch 2.
  *
  * Returns a discriminated-union result with the dispatched schemaVersion
  * recorded. Does NOT throw on validation failure — schema violations are
@@ -254,7 +259,8 @@ export function validateReceiptSchema(
   input: unknown,
   opts?: ValidateOptions,
 ): ValidationResult {
-  const version = pickSchemaVersion(input, opts);
+  const picked = pickSchemaVersion(input, opts);
+  const version = picked.version;
   const validator = validators.get(version);
   // validators is populated from SCHEMA_VERSIONS at module load — every
   // SchemaVersion is guaranteed present. The non-null assertion is faithful;
@@ -267,7 +273,44 @@ export function validateReceiptSchema(
         `matching schemas/receipt.v${version}.json file.`,
     );
   }
+  // io-B-004: when the receipt DECLARED a schema_version this build does not
+  // ship, build an actionable "unknown schema_version" diagnostic. The receipt
+  // is still validated against the default schema (above), so the dispatched
+  // schemaVersion and the pass/fail outcome are unchanged for existing callers;
+  // this note replaces the OLD silent fall-through (which reported only "failed
+  // against schemas/receipt.v0.2.0.json", a version the user never wrote) with
+  // a message that names the unknown declared version and lists the known ones,
+  // so the user can fix the receipt or upgrade the verifier.
+  const unknownVersionError: SchemaError | undefined =
+    picked.kind === "unknown"
+      ? {
+          instancePath: "/schema_version",
+          schemaPath: "#/properties/schema_version",
+          keyword: "schema_version",
+          message:
+            `Unknown schema_version ${JSON.stringify(picked.declared)} — this build of backprop-trace ` +
+            `does not ship a schema for it (known versions: ${SCHEMA_VERSIONS.join(", ")}); ` +
+            `validated against the default v${version} as a fallback. ` +
+            `Hint: set schema_version to one of the known versions, or upgrade backprop-trace to a build ` +
+            `that ships ${JSON.stringify(picked.declared)}. To force a specific schema regardless of the ` +
+            `receipt's own field, pass opts.version (CLI: --schema-version).`,
+          params: {
+            unknownSchemaVersion: picked.declared,
+            knownVersions: [...SCHEMA_VERSIONS],
+            dispatchedTo: version,
+          },
+        }
+      : undefined;
+
   if (validator(input)) {
+    // Valid against the default schema even though the declared version is
+    // unknown. This is unusual (the default v0.2.0 const-pins schema_version
+    // so an unknown literal normally fails), but if a future default lacks
+    // that pin we must STILL be ok:true here — the success branch carries no
+    // errors[], so we cannot surface the note on success. The strict-pin in
+    // every shipped schema keeps this branch unreachable for unknown versions
+    // today; documented so a future schema author knows the note lives only on
+    // the failure path.
     return { ok: true, receipt: input, schemaVersion: version };
   }
   const errors = (validator.errors ?? []).map((e) => ({
@@ -277,8 +320,37 @@ export function validateReceiptSchema(
     message: e.message ?? "",
     params: (e.params ?? {}) as Record<string, unknown>,
   }));
+  // Surface the unknown-version note FIRST so it is the headline diagnostic
+  // (ahead of the cascade of "missing v0.2.0 required field" errors that the
+  // wrong-schema fallback inevitably produces).
+  if (unknownVersionError) errors.unshift(unknownVersionError);
   return { ok: false, errors, schemaVersion: version };
 }
+
+/**
+ * Result of resolving which schema version to dispatch to.
+ *
+ * io-B-004 makes the resolution OBSERVABLE by distinguishing three cases the
+ * old `SchemaVersion`-returning form collapsed into one. Every variant still
+ * carries the `version` actually dispatched to, so the existing dispatch +
+ * diagnostics behavior is preserved; the `kind` discriminator lets the caller
+ * ADD an actionable note for the formerly-silent "unknown" case:
+ *   - "known"   : an explicit opts.version, or a recognized in-band
+ *                 schema_version → validate against that exact schema.
+ *   - "default" : schema_version is ABSENT (and no override) → fall through to
+ *                 the historical default ("0.2.0") so unversioned generalized
+ *                 receipts keep landing where they have since v0.3.
+ *   - "unknown" : schema_version is PRESENT but not a shipped version. We STILL
+ *                 dispatch to the default schema (so schemaVersion + the
+ *                 pass/fail outcome are unchanged for existing callers), but
+ *                 `declared` carries the offending string so the caller can
+ *                 surface a clear, actionable "unknown schema_version" note
+ *                 instead of the old silent fall-through.
+ */
+type PickedSchemaVersion =
+  | { kind: "known"; version: SchemaVersion }
+  | { kind: "default"; version: SchemaVersion }
+  | { kind: "unknown"; version: SchemaVersion; declared: string };
 
 /**
  * Resolve which schema version to dispatch to. See validateReceiptSchema
@@ -287,27 +359,30 @@ export function validateReceiptSchema(
 function pickSchemaVersion(
   input: unknown,
   opts: ValidateOptions | undefined,
-): SchemaVersion {
-  if (opts?.version) return opts.version;
+): PickedSchemaVersion {
+  if (opts?.version) return { kind: "known", version: opts.version };
   const sv = (input as { schema_version?: unknown } | null | undefined)
     ?.schema_version;
   if (typeof sv === "string") {
-    // Type-narrow via membership check rather than a cast, so a malformed
-    // schema_version string (e.g. "0.0.99") still falls through to the
-    // default branch and the validator surfaces a proper schema error.
+    // Type-narrow via membership check rather than a cast.
     for (const v of SCHEMA_VERSIONS) {
-      if (sv === v) return v;
+      if (sv === v) return { kind: "known", version: v };
     }
+    // io-B-004: a present-but-unrecognized schema_version still dispatches to
+    // the default schema (preserving schemaVersion + the pass/fail outcome for
+    // existing callers), but is tagged "unknown" with the declared string so
+    // validateReceiptSchema surfaces an actionable note instead of failing
+    // silently against a version the user never named.
+    return { kind: "unknown", version: "0.2.0", declared: sv };
   }
-  // Default to latest. v0.1 callers always set schema_version: "0.1.0"
-  // explicitly, so this branch is reached only by (a) new callers writing
-  // generalized receipts without an explicit version and (b) malformed
-  // input that the validator will reject below. The default is kept at
-  // "0.2.0" rather than the latest schema so unversioned generalized
-  // receipts continue to land on the same dispatcher that has shipped
-  // since v0.3 — bumping the default would silently re-route legitimate
-  // callers and risk masking a forgotten schema_version field.
-  return "0.2.0";
+  // Default to latest-shipped-at-v0.3. Reached only when schema_version is
+  // ABSENT (or a non-string) AND no opts.version override: (a) new callers
+  // writing generalized receipts without an explicit version, (b) malformed
+  // input the validator rejects below. The default is kept at "0.2.0" (NOT the
+  // newest schema) so unversioned generalized receipts continue to land on the
+  // same dispatcher that has shipped since v0.3 — bumping it would silently
+  // re-route legitimate callers and risk masking a forgotten schema_version.
+  return { kind: "default", version: "0.2.0" };
 }
 
 /**

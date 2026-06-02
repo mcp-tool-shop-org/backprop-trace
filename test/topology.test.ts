@@ -27,6 +27,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
   assertTopologyValid,
+  TOPOLOGY_SIZE_CEILING,
   type Parameter,
   type Topology,
 } from "../src/topology.js"
@@ -184,4 +185,116 @@ test("assertTopologyValid throws when an output unit's hidden fan-in != hidden_s
     /fan-in|fan_in|hidden_size|incoming.*weight|expected.*2|o1/i,
     "an output unit fed by fewer than hidden_size weights must throw a fan-in diagnostic",
   )
+})
+
+// --- core-B-003: TOPOLOGY_SIZE_CEILING (verifier-owned engine-level cap) -----
+//
+// The per-layer size bound (input/hidden/output_size <= 64) lives ONLY in the
+// JSON schema. The exported assertTopologyValid / runGeneralStep have no such
+// cap, so a library caller (or the schema-less reconcile/Rule-14 path) could
+// pass a huge topology and trigger an O(n^2) weight blowup — a hang/OOM with no
+// diagnosable error. assertTopologyValid now enforces a verifier-owned ceiling
+// at its TOP (before the O(n^2) fan-in validation runs), mirroring the
+// NUMERIC_TOLERANCE_CEILING pattern: a clear "exceeds verifier maximum"
+// throw, not a hang.
+//
+// The ceiling sits well above the schema's 64 (generous headroom for any legit
+// topology) but is a hard wall against adversarial sizes. Canonical topologies
+// (Mazur 2-2-2, XOR 2-2-1, iris 4-3-3) are orders of magnitude under it.
+
+test("core-B-003: TOPOLOGY_SIZE_CEILING is exported and sane (> schema's 64)", () => {
+  assert.ok(
+    Number.isInteger(TOPOLOGY_SIZE_CEILING) && TOPOLOGY_SIZE_CEILING > 64,
+    `TOPOLOGY_SIZE_CEILING must be an integer above the schema's per-layer 64 bound ` +
+      `(got ${String(TOPOLOGY_SIZE_CEILING)})`,
+  )
+})
+
+test("core-B-003: assertTopologyValid rejects an over-ceiling input_size with a clear cap message (not a hang/OOM)", () => {
+  // Set input_size one past the ceiling. The ceiling guard runs FIRST — before
+  // the size-vs-unit_order length check and before the O(n^2) fan-in scan — so
+  // we do NOT need to materialize an oversized fully-connected graph. The cap
+  // is reached on the declared size field alone.
+  const bad = cloneMutable(MAZUR_TOPOLOGY)
+  bad.input_size = TOPOLOGY_SIZE_CEILING + 1
+  assert.throws(
+    () => assertTopologyValid(bad as unknown as Topology),
+    (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      assert.match(
+        msg,
+        /ceiling|exceeds verifier maximum|TOPOLOGY_SIZE_CEILING|size.*exceeds/i,
+        `over-ceiling topology must throw a verifier-owned cap diagnostic; got: ${msg}`,
+      )
+      // Must name the offending dimension + the ceiling value so the caller can fix it.
+      assert.match(msg, /input_size/i, "cap message must name the offending dimension (input_size)")
+      assert.match(
+        msg,
+        new RegExp(String(TOPOLOGY_SIZE_CEILING)),
+        "cap message must state the ceiling value so the caller knows the limit",
+      )
+      return true
+    },
+    "an over-ceiling input_size must throw a clear cap error, not silently attempt O(n^2) work",
+  )
+})
+
+test("core-B-003: assertTopologyValid rejects an over-ceiling hidden_size", () => {
+  const bad = cloneMutable(MAZUR_TOPOLOGY)
+  bad.hidden_size = TOPOLOGY_SIZE_CEILING + 1
+  assert.throws(
+    () => assertTopologyValid(bad as unknown as Topology),
+    /hidden_size.*(ceiling|exceeds)|(ceiling|exceeds).*hidden_size/i,
+    "an over-ceiling hidden_size must throw a verifier-owned cap diagnostic naming hidden_size",
+  )
+})
+
+test("core-B-003: assertTopologyValid rejects an over-ceiling output_size", () => {
+  const bad = cloneMutable(MAZUR_TOPOLOGY)
+  bad.output_size = TOPOLOGY_SIZE_CEILING + 1
+  assert.throws(
+    () => assertTopologyValid(bad as unknown as Topology),
+    /output_size.*(ceiling|exceeds)|(ceiling|exceeds).*output_size/i,
+    "an over-ceiling output_size must throw a verifier-owned cap diagnostic naming output_size",
+  )
+})
+
+test("core-B-003: assertTopologyValid accepts an at-ceiling size boundary (inclusive maximum, no false-FAIL)", () => {
+  // The ceiling is an INCLUSIVE maximum (mirrors NUMERIC_TOLERANCE_CEILING's
+  // inclusive semantics): a size EXACTLY at the ceiling must NOT trip the cap.
+  // We only need to prove the cap itself does not fire at the boundary — set
+  // the declared size to exactly the ceiling and assert the error (if any) is
+  // NOT the cap error (it will instead be the size-vs-unit_order length
+  // mismatch, since we don't materialize ceiling-many units; that proves the
+  // cap guard passed control through to the normal checks).
+  const bad = cloneMutable(MAZUR_TOPOLOGY)
+  bad.input_size = TOPOLOGY_SIZE_CEILING
+  let threw: Error | undefined
+  try {
+    assertTopologyValid(bad as unknown as Topology)
+  } catch (e) {
+    threw = e as Error
+  }
+  assert.ok(threw, "test setup: at-ceiling input_size with 2 declared units still trips a later check")
+  assert.doesNotMatch(
+    threw!.message,
+    /ceiling|exceeds verifier maximum|TOPOLOGY_SIZE_CEILING/i,
+    `a size EXACTLY at the ceiling must NOT trip the cap (inclusive maximum); ` +
+      `the only error should be the downstream length check. Got: ${threw!.message}`,
+  )
+})
+
+test("core-B-003: canonical topologies stay well under the ceiling (no regression)", () => {
+  for (const t of [MAZUR_TOPOLOGY, XOR_TOPOLOGY, IRIS_TOPOLOGY]) {
+    assert.ok(
+      t.input_size <= TOPOLOGY_SIZE_CEILING &&
+        t.hidden_size <= TOPOLOGY_SIZE_CEILING &&
+        t.output_size <= TOPOLOGY_SIZE_CEILING,
+      "canonical topologies must remain under the verifier size ceiling",
+    )
+    assert.doesNotThrow(
+      () => assertTopologyValid(t),
+      "the size-ceiling guard must not regress any canonical topology",
+    )
+  }
 })

@@ -8,10 +8,17 @@ on:
   schedule:
     - cron: '0 6 * * 1'  # weekly Monday 06:00 UTC
 
+# ci-future-B-008: cancel superseded runs on the same ref so a fast PR push
+# stream doesn't pile up CodeQL analyses (each is minutes-long).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
     name: analyze (javascript-typescript)
     runs-on: ubuntu-latest
+    timeout-minutes: 20  # ci-future-B-007: bound a hung CodeQL analysis
     permissions:
       actions: read
       contents: read

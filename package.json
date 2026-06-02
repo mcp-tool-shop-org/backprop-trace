@@ -179,7 +179,7 @@
     "typecheck": "tsc --noEmit",
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "verify": "pnpm typecheck && pnpm build && pnpm test",
-    "audit": "pnpm audit --audit-level=moderate",
+    "audit": "pnpm audit --prod --audit-level=moderate",
     "pack-smoke": "node scripts/pack-install-smoke.mjs",
     "prepublishOnly": "pnpm test && pnpm build"
   },

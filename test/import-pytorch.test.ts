@@ -20,7 +20,7 @@ import { readFileSync, existsSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { dirname, resolve } from "node:path"
-import { importPytorchSidecar } from "../src/import-pytorch.js"
+import { importPytorchSidecar, importPytorchSidecarStream } from "../src/import-pytorch.js"
 import { validateReceiptSchema } from "../src/validate.js"
 import { reconcileReceipt } from "../src/reconcile.js"
 
@@ -203,6 +203,213 @@ test("G-008: forged backward.hidden_error_signals[*].signal_value makes the impo
     paths.some((p) => p === `backward.hidden_error_signals.${hid}.signal_value`),
     `expected backward.hidden_error_signals.${hid}.signal_value in disagreements; got ${JSON.stringify(paths)}`,
   )
+})
+
+// =============================================================================
+// imports-B-001 — single-step unsupported-format-version guard (Stage C
+// humanization). The MULTI-step path has an explicit format-const allowlist
+// (rejects out-of-set versions with a clear "requires framework-trace.v0.2.0..."
+// diagnostic); the SINGLE-step path had none. Two concrete holes proven against
+// the live importer before this fix:
+//   (A) a recognized-but-out-of-single-step-scope format const on a v0.1.0-
+//       shaped body (e.g. format="framework-trace.v0.5.0" with NO optimizer
+//       block) was SILENTLY ACCEPTED and emitted a downgraded schema_version
+//       "0.4.0" receipt — active silent acceptance of a mislabeled sidecar.
+//   (B) an unknown/future format const was rejected, but with a CONFUSING
+//       message ("failed framework-trace.v0.1.0 validation: /format: must be
+//       equal to constant") that reads like an internal v0.1.0 schema bug, not
+//       a version-support problem.
+// The fix adds a single-step format-const allowlist
+// {v0.1.0,v0.3.0,v0.4.0,v0.5.0,v0.6.0,v0.7.0} mirroring the multi-step guard,
+// emitting a clear "unsupported sidecar format version X (supported: ...)"
+// structured failure. v0.2.0 is the multi-step baseline → routed to the
+// multi-step subcommand. MUTATION that re-REDs: delete the allowlist guard
+// block in src/import-observer.ts (buildObserverReceiptFromSidecar).
+// =============================================================================
+test("imports-B-001: a recognized-but-wrong format const (v0.5.0) on a v0.1.0-shaped body is REJECTED with an unsupported/multi-step diagnostic (was silently accepted)", () => {
+  if (!existsSync(sidecarPath)) return
+  const sidecar = JSON.parse(loadSidecarBytes().trim()) as Record<string, unknown>
+  // Precondition (non-vacuity): canonical sidecar with its real format passes.
+  assert.strictEqual(
+    sidecar.format,
+    "framework-trace.v0.1.0",
+    "precondition: canonical pytorch sidecar declares framework-trace.v0.1.0 and carries NO optimizer block",
+  )
+  assert.strictEqual(
+    (sidecar as { optimizer?: unknown }).optimizer,
+    undefined,
+    "precondition: canonical pytorch sidecar has no optimizer block (so v0.5.0 is a pure mislabel)",
+  )
+  // FORGE: relabel as v0.5.0 (sgd_momentum) while the body stays v0.1.0 SGD.
+  sidecar.format = "framework-trace.v0.5.0"
+  assert.throws(
+    () => importPytorchSidecar(JSON.stringify(sidecar) + "\n", { importTimestamp: PINNED_TIMESTAMP }),
+    /unsupported sidecar format version|framework-trace\.v0\.5\.0/,
+    "single-step importer must REJECT a mislabeled v0.5.0 sidecar instead of silently accepting it (imports-B-001)",
+  )
+})
+
+test("imports-B-001: a v0.2.0 (multi-step) sidecar is REJECTED single-step with a pointer at the multi-step subcommand", () => {
+  if (!existsSync(sidecarPath)) return
+  const sidecar = JSON.parse(loadSidecarBytes().trim()) as Record<string, unknown>
+  sidecar.format = "framework-trace.v0.2.0"
+  assert.throws(
+    () => importPytorchSidecar(JSON.stringify(sidecar) + "\n", { importTimestamp: PINNED_TIMESTAMP }),
+    /multi-step|import .*multi|Stream/i,
+    "single-step importer must point a v0.2.0 (multi-step) sidecar at the multi-step subcommand (imports-B-001)",
+  )
+})
+
+test("imports-B-001: an unknown future format const yields a clear supported-set diagnostic, not the confusing raw v0.1.0 const-mismatch", () => {
+  if (!existsSync(sidecarPath)) return
+  const sidecar = JSON.parse(loadSidecarBytes().trim()) as Record<string, unknown>
+  sidecar.format = "framework-trace.v9.9.9"
+  let caught: Error | undefined
+  try {
+    importPytorchSidecar(JSON.stringify(sidecar) + "\n", { importTimestamp: PINNED_TIMESTAMP })
+  } catch (err) {
+    caught = err as Error
+  }
+  assert.ok(caught, "must reject an unknown future format const")
+  assert.match(
+    caught!.message,
+    /unsupported sidecar format version/,
+    "message must name the version-support problem (imports-B-001 humanization)",
+  )
+  assert.doesNotMatch(
+    caught!.message,
+    /must be equal to constant/,
+    "message must NOT leak the raw Ajv v0.1.0 const-mismatch error (that was the confusing pre-fix behavior)",
+  )
+})
+
+// =============================================================================
+// imports-B-004 — multi-step ingestion is all-or-nothing across the stream, but
+// a per-record FAILURE must name WHICH record failed (Stage C humanization). The
+// validation/homogeneity aborts already name `line N`; the gap was the per-record
+// ENGINE-RECOMPUTE call (runGeneralStep / runBatchedGeneralStep), whose throw
+// propagated WITHOUT record context — so an operator with a 50-record bundle got
+// "input.parameters_before is missing required parameter 'w_x1_h1'" and no idea
+// which step it came from. The fix wraps the per-record engine recompute and
+// re-throws with "record N (step_index S)" context (still aborting — preserves
+// all-or-nothing soundness — but now diagnosable). MUTATION that re-REDs: remove
+// the try/catch record-context wrapper around the engine recompute in
+// buildObserverReceiptStreamFromSidecar.
+//
+// Exercised through importPytorchSidecarStream (owned via import-pytorch). The
+// natural home for broader multi-step coverage is import-pytorch-multi-step.test.ts
+// (NOT owned by this domain agent); this focused regression lock lives here.
+// =============================================================================
+const multiStepSidecarPath = resolve(
+  repoRoot,
+  "fixtures/external/pytorch.softmax-ce.multi-step.sidecar.jsonl",
+)
+
+test("imports-B-004: a per-record engine-recompute failure in the MIDDLE record names which record failed (record index + step_index)", () => {
+  if (!existsSync(multiStepSidecarPath)) return
+  const lines = readFileSync(multiStepSidecarPath, "utf-8").trim().split("\n")
+  assert.ok(lines.length >= 3, "multi-step fixture must have >=3 records for a middle-record test")
+
+  // Precondition (non-vacuity): the clean stream imports without throwing.
+  const cleanResult = importPytorchSidecarStream(readFileSync(multiStepSidecarPath, "utf-8"), {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: PINNED_FIXTURE_LABEL,
+  })
+  assert.strictEqual(cleanResult.steps.length, lines.length, "precondition: clean stream imports all records")
+
+  // FORGE: delete a parameters_before entry from the MIDDLE record (index 1).
+  // This passes schema validation (parameters_before has no required keys at the
+  // schema level) but makes runGeneralStep throw at engine-recompute time —
+  // exactly the class of failure that previously lacked record context.
+  const recs = lines.map((l) => JSON.parse(l) as { parameters_before: Record<string, number> })
+  const victimKey = Object.keys(recs[1]!.parameters_before)[0]!
+  delete recs[1]!.parameters_before[victimKey]
+  const forged = recs.map((r) => JSON.stringify(r)).join("\n") + "\n"
+
+  let caught: Error | undefined
+  try {
+    importPytorchSidecarStream(forged, { importTimestamp: PINNED_TIMESTAMP, fixtureLabel: PINNED_FIXTURE_LABEL })
+  } catch (err) {
+    caught = err as Error
+  }
+  assert.ok(caught, "a record whose engine recompute throws must abort the import")
+  // The humanized message must name the offending record (index 2 = 1-based line 2 / step_index 1).
+  assert.match(
+    caught!.message,
+    /record 2|step_index 1|line 2/,
+    `multi-step per-record engine failure must name WHICH record failed (imports-B-004); got: ${caught!.message}`,
+  )
+  // And it must still surface the underlying engine cause (the missing param),
+  // so the operator gets both "which record" AND "what went wrong".
+  assert.match(
+    caught!.message,
+    new RegExp(victimKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    `message must preserve the underlying engine cause (missing '${victimKey}'); got: ${caught!.message}`,
+  )
+})
+
+// =============================================================================
+// imports-B-002 — extractorIdentity is split into {name, version} for the
+// receipt's source_framework.extractor sub-block. The OLD code used
+// `identity.split("@")` and took parts[0]/parts[1], which silently DROPPED data
+// for any identity with more than one `@` — most importantly an npm-scoped name
+// like "@my-scope/tool@1.2.3": split("@") → ["", "my-scope/tool", "1.2.3"], so
+// name became "" and version became "my-scope/tool" (the real "1.2.3" tail
+// discarded). The fix splits on the LAST `@` so the version is the final segment
+// and the name keeps the leading/embedded `@`. Observability-only (the extractor
+// sub-block is forensic attribution; Rule 14 is the authority) — but a corrupted
+// attribution string is a real "good to use" defect. Byte-equal for every
+// single-`@` identity (proven by the golden byte-equality test above + the
+// default-identity assertion here). MUTATION that re-REDs: revert
+// splitExtractorIdentity to `const p = identity.split("@"); return {name: p[0],
+// version: p[1]}` in src/import-observer.ts.
+// =============================================================================
+test("imports-B-002: a scoped multi-'@' extractorIdentity splits on the LAST '@' (no silent data loss)", () => {
+  if (!existsSync(sidecarPath)) return
+
+  // Non-vacuity floor: the DEFAULT single-'@' identity still splits correctly,
+  // so this test is exercising real splitting behavior, not a no-op.
+  const defaultResult = importPytorchSidecar(loadSidecarBytes(), {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: PINNED_FIXTURE_LABEL,
+  })
+  assert.strictEqual(
+    defaultResult.receipt.source_framework?.extractor?.name,
+    "bp-import-pytorch",
+    "precondition: default single-'@' identity yields name='bp-import-pytorch'",
+  )
+  assert.strictEqual(
+    defaultResult.receipt.source_framework?.extractor?.version,
+    "0.6.0",
+    "precondition: default single-'@' identity yields version='0.6.0'",
+  )
+
+  // FORGE the override: an npm-scoped name with a version → TWO '@' characters.
+  const scoped = importPytorchSidecar(loadSidecarBytes(), {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: PINNED_FIXTURE_LABEL,
+    extractorIdentity: "@my-scope/tool@1.2.3",
+  })
+  const ex = scoped.receipt.source_framework?.extractor
+  assert.strictEqual(
+    ex?.name,
+    "@my-scope/tool",
+    "scoped name must be preserved in full (the old split('@') made this '' — data loss)",
+  )
+  assert.strictEqual(
+    ex?.version,
+    "1.2.3",
+    "version must be the segment after the LAST '@' (the old split('@') made this 'my-scope/tool' — wrong)",
+  )
+
+  // A no-'@' identity degrades to version 'unversioned' (unchanged contract).
+  const noAt = importPytorchSidecar(loadSidecarBytes(), {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: PINNED_FIXTURE_LABEL,
+    extractorIdentity: "bare-identity-no-at",
+  })
+  assert.strictEqual(noAt.receipt.source_framework?.extractor?.name, "bare-identity-no-at")
+  assert.strictEqual(noAt.receipt.source_framework?.extractor?.version, "unversioned")
 })
 
 test("imported v0.4.0 receipt schema-validates", () => {

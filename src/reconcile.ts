@@ -75,6 +75,7 @@ import type { NamedFactor } from "./engine.js"
 import {
   runGeneralStep,
   runBatchedGeneralStep,
+  MAX_BATCH_SAMPLES,
   type GeneralInput,
   type BatchedGeneralInput,
   type GeneralReceipt,
@@ -1117,11 +1118,32 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
     return undefined
   }
 
-  // --- Rule 1: output error signal == product(factors) -----------------
-  checkRule1(r, tolerance, failures, recordFailure)
+  // core-B-002: the per-receipt numeric-rule dispatch is wrapped so that ANY
+  // unexpected throw from a malformed array ELEMENT (updates:[null],
+  // updates:[42], a non-object factor, etc.) is converted to a typed Rule-0
+  // structural failure instead of escaping as a raw TypeError. reconcileReceipt
+  // documents itself as "tolerant of malformed receipts: surfaces a typed
+  // Rule-0 failure, never throws" — library callers do NOT wrap it. The
+  // top-level guards above catch the coarse shape problems (not-an-object,
+  // missing/invalid tolerance, updates-not-an-array); this catch is the
+  // backstop for malformed ELEMENTS inside otherwise-array-shaped fields, which
+  // the per-rule helpers dereference (`r.updates[i]!.optimizer.product_order`,
+  // `multiplyFactorsLeftToRight([null])`) before their own per-element guards.
+  // Graceful degradation: a diagnosable message, never a crash.
+  //
+  // `rule14` is declared in the OUTER scope (and defaulted) so the math-gate-
+  // skip diagnostic assembled after the catch can read it; it is ASSIGNED
+  // inside the protected block (Rule 14 also dereferences receipt fields and
+  // must be guarded). On the throw path the default { mathGateSkipped: false }
+  // stands — a structurally-malformed receipt that threw is a hard reject and
+  // the skip signal is moot.
+  let rule14: { mathGateSkipped: boolean } = { mathGateSkipped: false }
+  try {
+    // --- Rule 1: output error signal == product(factors) -----------------
+    checkRule1(r, tolerance, failures, recordFailure)
 
-  // --- Rule 2: contribution products + backpropagated sum --------------
-  checkRule2(r, tolerance, failures, recordFailure)
+    // --- Rule 2: contribution products + backpropagated sum --------------
+    checkRule2(r, tolerance, failures, recordFailure)
 
   // --- Rule 3: hidden error signal == backprop_sum * activation_deriv --
   checkRule3(r, tolerance, failures, recordFailure)
@@ -1173,7 +1195,7 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
   // G-006: capture whether the math gate was SKIPPED via self-asserted
   // verification_state so the result can flag a self-declared skip — an
   // ok:true with the gate skipped is NOT full verification.
-  const rule14 = checkRule14EngineRecomputeDifferential(r, failures)
+  rule14 = checkRule14EngineRecomputeDifferential(r, failures)
 
   // --- Rule 15: skip-basis required (observer-mode) --------------------
   // Fires when verification_state === "engine_recompute_skipped_with_basis"
@@ -1250,6 +1272,32 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
   // adamw.bad-as-coupled-l2 (the latter mutates gradient before the
   // moment update — Rule 22 catches it first, but Rule 24 cross-fires).
   checkRule24AdamParameterUpdate(r, tolerance, failures)
+  } catch (err) {
+    // core-B-002 backstop: a malformed array element (or any other unexpected
+    // shape the per-rule helpers dereference before their own guards) threw.
+    // Convert to a typed Rule-0 structural failure so the never-throw contract
+    // holds for library callers. The message names the throw so the defect is
+    // diagnosable; schema validation against schemas/receipt.*.json upstream is
+    // the load-bearing gate that prevents such shapes from reaching here in
+    // production — this is graceful degradation for callers that bypass it.
+    failures.push({
+      rule: 0,
+      field_path: "updates",
+      stored: 0,
+      recomputed: 0,
+      delta: 0,
+      tolerance: 0,
+      message:
+        `Receipt is structurally malformed: a reconciliation rule threw while ` +
+        `inspecting it (${err instanceof Error ? err.message : String(err)}). ` +
+        `This usually means a malformed ARRAY ELEMENT — e.g. a null/non-object ` +
+        `entry in 'updates', 'optimizer.factors', or a backward signal's ` +
+        `'downstream_contributions'. Run schema validation against ` +
+        `schemas/receipt.v0.1.0.json or v0.2.0.json before reconciling so the ` +
+        `offending field is reported precisely.`,
+    })
+    return { ok: false, failures }
+  }
 
   // G-006: attach the machine-readable math-gate-skip signal to BOTH result
   // branches. When Rule 14 was skipped via the receipt's self-asserted
@@ -3663,11 +3711,47 @@ function checkRule14EngineRecomputeDifferential(
   // sidecar's per_sample data plus reduces the gradient. Unbatched receipts
   // continue to use runGeneralStep on the single sample at top-level
   // inputs/targets (v0.6-v0.8 behavior).
+  //
+  // core-B-006 — the `as unknown as Topology` / `as unknown as
+  // GeneralInput[...]` casts below reshape RECEIPT-DERIVED data (already-parsed
+  // JSON) into the engine's input types without compile-time structural
+  // checking. This is SAFE, not a latent crash, because: (1) the entire build +
+  // dispatch is inside the try/catch above, which converts ANY throw to a
+  // structured Rule-14 failure (never an escaping exception); and (2) the engine
+  // re-validates everything it consumes at runtime — assertTopologyValid (incl.
+  // the core-B-003 size ceiling), assertFiniteGeneralInput, and
+  // assertSupportedPolicy all run at the top of runGeneralStep /
+  // runBatchedGeneralStep and throw a path-naming Error on any malformed field.
+  // A receipt with a malformed topology/policy therefore yields a diagnosable
+  // Rule-14 failure, not a TypeError. The casts buy us reuse of the engine as
+  // the second independent witness without duplicating its input types here.
   let engineReceipt: Awaited<ReturnType<typeof runGeneralStep>>
   try {
     const batch = (r as { batch?: { size: number; sample_order: string[]; reduction: "mean" | "sum" | "none" } }).batch
     const perSample = (r as { per_sample?: Record<string, { inputs: Record<string, number>; targets: Record<string, number> }> }).per_sample
     if (batch && perSample) {
+      // core-B-001: verifier-owned batched-recompute cap, checked BEFORE the
+      // per_sample map build + the engine dispatch. Without this an untrusted
+      // batch.size:100000 would build a 100k-entry map and then run the engine
+      // 100k times (~10h CPU + OOM) inside the differential gate. The throw is
+      // caught below and converted to a structured Rule-14 failure — a clear
+      // "exceeds recompute cap" message, never a hang. (Validates batch.size
+      // against sample_order length too so a size that lies about its length
+      // cannot dodge the cap.)
+      const declaredBatchSize =
+        typeof batch.size === "number" ? batch.size : (batch.sample_order?.length ?? 0)
+      const effectiveBatchSize = Math.max(
+        declaredBatchSize,
+        Array.isArray(batch.sample_order) ? batch.sample_order.length : 0,
+      )
+      if (effectiveBatchSize > MAX_BATCH_SAMPLES) {
+        throw new Error(
+          `batch exceeds verifier recompute cap: batch.size=${effectiveBatchSize} > MAX_BATCH_SAMPLES=${MAX_BATCH_SAMPLES}. ` +
+            `Rule 14 re-runs the engine once per sample; an unbounded batch would run the engine ` +
+            `${effectiveBatchSize} times (hours of CPU + OOM) instead of failing cleanly. Split the batch ` +
+            `into chunks of <= ${MAX_BATCH_SAMPLES} samples and verify them as separate steps.`,
+        )
+      }
       const batchedInput: BatchedGeneralInput = {
         topology: topo as unknown as Topology,
         learning_rate: r.learning_rate,

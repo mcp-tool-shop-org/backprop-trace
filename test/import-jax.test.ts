@@ -98,6 +98,29 @@ test("JAX receipt carries source_framework.name === 'jax' + correct attestor ide
 })
 
 // =============================================================================
+// imports-B-001 — single-step unsupported-format-version guard lives in the
+// SHARED core (buildObserverReceiptFromSidecar), so it must apply to every
+// per-framework wrapper, not just PyTorch. This proves the JAX wrapper inherits
+// the same guard. MUTATION that re-REDs: delete the allowlist guard block in
+// src/import-observer.ts.
+// =============================================================================
+test("imports-B-001: single-step JAX importer rejects a recognized-but-wrong format const (v0.5.0) on a v0.1.0-shaped body", () => {
+  if (!existsSync(jaxSidecarPath)) return
+  const sidecar = JSON.parse(readFileSync(jaxSidecarPath, "utf-8").trim()) as Record<string, unknown>
+  assert.strictEqual(
+    sidecar.format,
+    "framework-trace.v0.1.0",
+    "precondition: canonical jax sidecar declares framework-trace.v0.1.0",
+  )
+  sidecar.format = "framework-trace.v0.5.0"
+  assert.throws(
+    () => importJaxSidecar(JSON.stringify(sidecar) + "\n", { importTimestamp: PINNED_TIMESTAMP }),
+    /unsupported sidecar format version|framework-trace\.v0\.5\.0/,
+    "single-step JAX importer must reject a mislabeled v0.5.0 sidecar (shared-core guard, imports-B-001)",
+  )
+})
+
+// =============================================================================
 // Per-framework subcommand discipline at the library layer
 // =============================================================================
 

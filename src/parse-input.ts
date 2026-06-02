@@ -69,6 +69,26 @@ export type ParseInputResult =
   | { ok: false; error: ParseInputError };
 
 /**
+ * Strip a single leading UTF-8 byte-order mark (U+FEFF) from `text`.
+ *
+ * io-B-002: Windows / PowerShell `command > file.json` redirection and several
+ * editors prepend a BOM to UTF-8 output. JSON.parse does NOT skip it — it
+ * surfaces as an "Unexpected token" SyntaxError on otherwise byte-correct JSON,
+ * a confusing failure for the user. Stripping a single leading BOM here lets a
+ * redirected receipt / input parse identically to one without the mark.
+ *
+ * Only ONE leading mark is removed (a doubled BOM is itself malformed and the
+ * residual mark surfaces as a normal JSON syntax error — the strip must not
+ * silently launder arbitrarily-prefixed garbage). The function is a no-op when
+ * `text` has no leading BOM, so it is safe to call unconditionally on every
+ * parse path. Shared by src/parse.ts (receipts) and parseTopologyInput below
+ * so both parse families behave identically (io-B-007 parity).
+ */
+export function stripBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
+/**
  * Parse a JSON document and validate it as a topology-input config.
  *
  * Two-stage failure: JSON.parse exceptions are caught and re-shaped as
@@ -89,9 +109,28 @@ export function parseTopologyInput(
   text: string,
   opts?: ValidateInputOptions,
 ): ParseInputResult {
+  // io-B-007: parity with src/parse.ts — strip a leading BOM (io-B-002) and
+  // diagnose empty / whitespace-only input explicitly, rather than letting
+  // JSON.parse surface a raw "Unexpected end of JSON input" token. The
+  // empty-input branch mirrors parseReceiptJsonl's "Empty JSONL input." path
+  // so both parse families fail diagnosably on the same trivial mistake.
+  const stripped = stripBom(text);
+  if (stripped.trim().length === 0) {
+    return {
+      ok: false,
+      error: {
+        kind: "JSON_SYNTAX",
+        message:
+          `Empty topology input: the document is empty (or whitespace-only). ` +
+          `Hint: topology input must be a single non-empty JSON document ` +
+          `(topology + inputs + targets + parameters_before + ...). If you piped a ` +
+          `file in, check it is not zero-length.`,
+      },
+    };
+  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(stripped);
   } catch (err) {
     return {
       ok: false,

@@ -20,12 +20,16 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15  # ci-future-B-007: bound a hung site build
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # ci-future-B-009: '22.x' (string) to match every other workflow's
+          # node-version spec; bare `22` is parsed as a number and can resolve
+          # differently than the intended 22.x line.
+          node-version: '22.x'
 
       - name: Install site dependencies
         working-directory: site
@@ -42,6 +46,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # ci-future-B-007: bound a hung Pages deploy
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

@@ -304,6 +304,54 @@ export function buildObserverReceiptFromSidecar(
       `${callerLabel}: sidecar bytes are not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
     )
   }
+
+  // 2a. imports-B-001 (Stage C) — explicit single-step format-version
+  // allowlist, mirroring the multi-step path's allowlist
+  // (buildObserverReceiptStreamFromSidecar step 3). Two holes this closes:
+  //   (A) A recognized-but-out-of-single-step-scope format const on a v0.1.0-
+  //       shaped body (e.g. format="framework-trace.v0.5.0" with no optimizer
+  //       block) was SILENTLY ACCEPTED — the dispatcher in validate.ts sniffs
+  //       the const, validates against that schema (which a v0.1.0-shaped body
+  //       can satisfy because trace_id/step_index/optimizer are all optional),
+  //       and the importer emitted a downgraded schema_version "0.4.0" receipt.
+  //       That is active silent acceptance of a mislabeled sidecar.
+  //   (B) An unknown/future format const WAS rejected, but with a confusing
+  //       Ajv message ("failed framework-trace.v0.1.0 validation: /format: must
+  //       be equal to constant") that reads like an internal v0.1.0 bug rather
+  //       than a version-support problem.
+  // Running this BEFORE validateFrameworkTraceSidecar lets the clear,
+  // version-aware message win for any format problem; schema validation below
+  // still runs for accepted versions to catch shape errors. This is the
+  // observability/diagnosability half of the verifier-owned-limits discipline:
+  // an out-of-scope input fails with a diagnosable "supported set" message, not
+  // a silent accept or a raw constraint error. NOT a soundness change — Rule 14
+  // remains the authority on every accepted receipt.
+  if (typeof parsed === "object" && parsed !== null) {
+    const declaredFormat = (parsed as Record<string, unknown>).format
+    if (
+      typeof declaredFormat === "string" &&
+      !SINGLE_STEP_SUPPORTED_FORMATS.includes(declaredFormat)
+    ) {
+      if (declaredFormat === MULTI_STEP_BASELINE_FORMAT) {
+        throw new Error(
+          `${callerLabel}: sidecar declares format='${declaredFormat}', which is a MULTI-STEP ` +
+            `(JSONL stream) sidecar baseline. The single-step importer accepts only single-step ` +
+            `sidecars (${SINGLE_STEP_SUPPORTED_FORMATS.join(", ")}). ` +
+            `HINT: import this with the multi-step subcommand — \`bp import ${expectedFrameworkName} multi <file>\` ` +
+            `(or the ${expectedFrameworkName === "pytorch" ? "importPytorchSidecarStream" : expectedFrameworkName === "jax" ? "importJaxSidecarStream" : "importTensorflowSidecarStream"} API).`,
+        )
+      }
+      throw new Error(
+        `${callerLabel}: unsupported sidecar format version '${declaredFormat}' ` +
+          `(supported single-step: ${SINGLE_STEP_SUPPORTED_FORMATS.join(", ")}). ` +
+          `HINT: check the sidecar's \`format\` field — it must be one of the supported single-step ` +
+          `versions. A v0.2.0 sidecar is multi-step (use \`bp import ${expectedFrameworkName} multi <file>\`); ` +
+          `an unknown version means the sidecar was produced by a newer/older helper than this ` +
+          `backprop-trace build supports.`,
+      )
+    }
+  }
+
   const validation = validateFrameworkTraceSidecar(parsed)
   if (!validation.ok) {
     const summary = validation.errors
@@ -326,7 +374,54 @@ export function buildObserverReceiptFromSidecar(
     )
   }
 
+  // 3a. imports-B-001 (Stage C) — format-vs-body consistency. The JSON schema
+  // marks `optimizer` OPTIONAL for v0.4.0/v0.5.0/v0.6.0 (the `required` set is
+  // byte-identical to v0.1.0's), so a v0.1.0-shaped body — no optimizer block —
+  // validates cleanly against the v0.5.0 schema. That let a MISLABELED sidecar
+  // (`format: "framework-trace.v0.5.0"` on a plain-SGD body) be silently
+  // accepted and emitted as a downgraded schema_version "0.4.0" SGD receipt.
+  // These format consts PROMISE optimizer semantics; if the body doesn't carry
+  // the matching `optimizer` block, the sidecar is mislabeled. Reject it with a
+  // diagnosable message instead of silently reinterpreting it. (v0.7.0 is the
+  // live-helper format and legitimately carries plain SGD with no optimizer
+  // block, so it is intentionally NOT in this set. v0.1.0/v0.3.0 are SGD/batched
+  // SGD and never carry optimizer.) Not a soundness change — Rule 14 still
+  // re-checks every accepted receipt; this only makes a mislabel diagnosable
+  // rather than silently downgraded.
+  const declaredFmt = sidecar.format
+  const requiredOptimizerNames =
+    declaredFmt === "framework-trace.v0.4.0"
+      ? (["adam", "adamw"] as const)
+      : declaredFmt === "framework-trace.v0.5.0" ||
+          declaredFmt === "framework-trace.v0.6.0"
+        ? (["sgd_momentum"] as const)
+        : undefined
+  if (requiredOptimizerNames !== undefined) {
+    const optName = sidecar.optimizer?.name
+    if (optName === undefined || !requiredOptimizerNames.includes(optName as never)) {
+      throw new Error(
+        `${callerLabel}: sidecar declares format='${declaredFmt}' but its body does not match that ` +
+          `format's optimizer contract (expected optimizer.name ∈ {${requiredOptimizerNames.join(", ")}}, ` +
+          `got ${optName === undefined ? "no optimizer block" : `'${optName}'`}). ` +
+          `This looks like a MISLABELED sidecar. HINT: a plain-SGD step is 'framework-trace.v0.1.0'; ` +
+          `set \`format\` to match the optimizer the step actually used, or add the matching \`optimizer\` ` +
+          `block. (Rule 14 re-checks the math regardless; this guard prevents a silent format downgrade.)`,
+      )
+    }
+  }
+
   // 4. Resolve defaults.
+  // imports-B-003 (observability note): `differentialTolerance` is passed
+  // verbatim BOTH into the importer's own Rule-14-equivalent differential below
+  // AND onto the emitted receipt's `attestor.differential_tolerance`, so the
+  // importer's self-report and the persisted claim always agree. This is NOT a
+  // soundness concern: at the gate, reconciler Rule 14 independently clamps the
+  // applied tolerance to OBSERVER_NUMERIC_TOLERANCE_CEILING {atol:1e-5,rtol:1e-3}
+  // for external_imported receipts (see reconcile.ts), so an operator who passes
+  // a looser-than-ceiling tolerance here cannot widen the gate — the verifier
+  // owns the ceiling. The value recorded on the receipt is the operator's
+  // declared intent (forensic), and may be tighter than the ceiling but never
+  // effectively looser at verification time.
   const differentialTolerance =
     opts?.differentialTolerance ?? { atol: 1e-6, rtol: 1e-4 }
   const extractorIdentity = opts?.extractorIdentity ?? defaultExtractorIdentity
@@ -532,11 +627,10 @@ export function buildObserverReceiptFromSidecar(
 
   // Extractor sub-block: derive name + version from the resolved identity
   // string ("bp-import-pytorch@0.6.0" -> name="bp-import-pytorch", version="0.6.0").
-  // Fall back to the sidecar's declared extractor if the user shipped one
-  // and the importer's default is the only thing we'd have to merge.
-  const extractorParts = extractorIdentity.split("@")
-  const extractorName = extractorParts[0] ?? extractorIdentity
-  const extractorVersion = extractorParts[1] ?? "unversioned"
+  // imports-B-002: split on the LAST `@` so a scoped/multi-`@` identity loses no
+  // data (byte-equal for the single-`@` default identities).
+  const { name: extractorName, version: extractorVersion } =
+    splitExtractorIdentity(extractorIdentity)
   const sourceFramework: SourceFramework = {
     name: sidecar.source_framework.name,
     version: sidecar.source_framework.version,
@@ -661,7 +755,74 @@ export function buildObserverReceiptFromSidecar(
   }
 }
 
+// --- Helpers ---------------------------------------------------------------
+
+/**
+ * imports-B-002 (Stage C) — split an extractor identity string into
+ * `{name, version}` without silently dropping data when the identity contains
+ * more than one `@`.
+ *
+ * The convention is `"<name>@<version>"` (e.g. "bp-import-pytorch@0.6.0"), so
+ * the default path has exactly one `@`. But a caller-supplied
+ * `opts.extractorIdentity` could be an npm-scoped name like
+ * `"@my-scope/tool@1.2.3"`. The old `split("@")[1]` took only the FIRST segment
+ * after the first `@` ("my-scope/tool" misread, or for "a@b@c" → version "b",
+ * silently discarding "@c"). This splits on the LAST `@` so the version is the
+ * final segment and the name keeps any leading/embedded `@` — no silent loss.
+ * Identity with no `@` → version "unversioned" (unchanged). Byte-equal for every
+ * single-`@` identity, so all shipped goldens are unaffected. Observability-only
+ * (the extractor sub-block is forensic attribution; Rule 14 is the authority).
+ */
+function splitExtractorIdentity(identity: string): {
+  name: string
+  version: string
+} {
+  const lastAt = identity.lastIndexOf("@")
+  // No `@`, or a leading-only `@` (scoped name with no version, e.g.
+  // "@scope/tool") → no version segment; keep the whole string as the name.
+  if (lastAt <= 0) {
+    return { name: identity, version: "unversioned" }
+  }
+  return {
+    name: identity.slice(0, lastAt),
+    version: identity.slice(lastAt + 1),
+  }
+}
+
 // --- Defaults --------------------------------------------------------------
+
+/**
+ * imports-B-001 (Stage C) — closed allowlist of `format` consts the SINGLE-step
+ * importer accepts. This is the single-step mirror of the multi-step path's
+ * accepted-version set (buildObserverReceiptStreamFromSidecar step 3, which
+ * accepts {v0.2.0..v0.7.0} and rejects v0.1.0 → "use single-step").
+ *
+ * The single-step set is {v0.1.0, v0.3.0, v0.4.0, v0.5.0, v0.6.0, v0.7.0}:
+ *   - v0.1.0: base SGD single-step (original v0.6 fixtures).
+ *   - v0.3.0: single-step batched receipts (a `batch` block, no trace_id stream).
+ *   - v0.4.0: Adam / AdamW single-step (optimizer block).
+ *   - v0.5.0: classical sgd_momentum single-step.
+ *   - v0.6.0: sgd_momentum with Nesterov / dampening single-step.
+ *   - v0.7.0: live-helper-emitted single-step (helper attribution block).
+ * v0.2.0 is deliberately EXCLUDED — it is the multi-step baseline; a v0.2.0
+ * sidecar is routed to the multi-step subcommand with a clear hint.
+ *
+ * Keep in lockstep with the FrameworkTraceSidecar `format` union above and with
+ * the multi-step allowlist; both are intentionally explicit (closed-vocabulary
+ * discipline) so a future schema version cannot be silently accepted by the
+ * dispatcher's format-sniff alone.
+ */
+const SINGLE_STEP_SUPPORTED_FORMATS: readonly string[] = [
+  "framework-trace.v0.1.0",
+  "framework-trace.v0.3.0",
+  "framework-trace.v0.4.0",
+  "framework-trace.v0.5.0",
+  "framework-trace.v0.6.0",
+  "framework-trace.v0.7.0",
+]
+
+/** imports-B-001 — the multi-step (JSONL stream) sidecar baseline format. */
+const MULTI_STEP_BASELINE_FORMAT = "framework-trace.v0.2.0"
 
 const DEFAULT_NUMERIC_POLICY_FOR_OBSERVER: GeneralInput["numeric_policy"] = {
   number_encoding: "decimal",
@@ -1215,7 +1376,19 @@ export function buildObserverReceiptStreamFromSidecar(
       }
     }
 
+    // imports-B-004 (Stage C) — wrap the per-record engine recompute so any
+    // throw names WHICH record failed. Multi-step ingestion is intentionally
+    // all-or-nothing (a defective record aborts the whole bundle — soundness),
+    // but before this wrapper a per-record engine throw (e.g. runGeneralStep:
+    // "input.parameters_before is missing required parameter 'w_x1_h1'")
+    // propagated with no indication of WHICH of N records caused it. The
+    // validation/homogeneity aborts above already carry `line N`; this closes
+    // the engine-recompute gap. Still aborts (preserves all-or-nothing); only
+    // adds diagnosable record context — record index (1-based, matching the
+    // JSONL line) + resolved step_index. The underlying engine cause is
+    // preserved verbatim so the operator gets both "which record" and "what".
     let engineReceipt: GeneralReceipt
+    try {
     if (sidecar.batch !== undefined) {
       // BATCHED record (v0.9+).
       if (sidecar.per_sample === undefined) {
@@ -1337,6 +1510,18 @@ export function buildObserverReceiptStreamFromSidecar(
       // compareUnbatchedFullFieldSet. Per-record (multi-step) unbatched path.
       compareUnbatchedFullFieldSet(compare, engineReceipt, sidecar)
     }
+    } catch (err) {
+      // imports-B-004 — re-throw with record context. If the inner throw already
+      // names the line (the batch/per_sample structural guards do), the extra
+      // prefix is still useful (adds step_index) and harmless. The cause is
+      // preserved verbatim.
+      const cause = err instanceof Error ? err.message : String(err)
+      throw new Error(
+        `${callerLabel}: record ${i + 1} (step_index ${resolvedStepIndices[i]}) failed during engine recompute: ${cause} ` +
+          `HINT: this record (1-based line ${i + 1} of the JSONL stream) is malformed; fix or remove it. ` +
+          `Multi-step ingestion is all-or-nothing — the whole bundle is rejected so a partial trace is never emitted.`,
+      )
+    }
 
     const differentialPassed = disagreements.length === 0
 
@@ -1364,9 +1549,10 @@ export function buildObserverReceiptStreamFromSidecar(
       // bundle_root_digest deliberately omitted in pass 1 — filled in pass 2.
     }
 
-    const extractorParts = extractorIdentity.split("@")
-    const extractorName = extractorParts[0] ?? extractorIdentity
-    const extractorVersion = extractorParts[1] ?? "unversioned"
+    // imports-B-002: split on the LAST `@` (see splitExtractorIdentity) so a
+    // scoped/multi-`@` identity loses no data; byte-equal for default identities.
+    const { name: extractorName, version: extractorVersion } =
+      splitExtractorIdentity(extractorIdentity)
     const sourceFramework: SourceFramework = {
       name: sidecar.source_framework.name,
       version: sidecar.source_framework.version,

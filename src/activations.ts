@@ -34,6 +34,18 @@
  * Sigmoid inherits the Math.exp implementation-defined precision caveat
  * documented in src/engine.ts; see docs/canonical-emission.md for the V8/
  * Node 22 binary64 pinning policy.
+ *
+ * core-B-005 — NaN/Infinity is PROPAGATED, never guarded, on purpose. These are
+ * raw math primitives: a NaN/Infinity input flows through to a NaN/Infinity
+ * output by IEEE-754 arithmetic. That is the CORRECT behavior for this verifier,
+ * NOT a silent failure — the reconciler's applyToleranceCheck (src/reconcile.ts)
+ * detects any non-finite operand or delta and converts it to a typed rule
+ * failure with delta: NaN (search "NaN-poisoning"), so a fabricated/poisoned
+ * receipt surfaces as an explicit FAIL downstream, never a false PASS. Adding a
+ * NaN guard HERE would (a) change the emitted bytes — breaking byte-determinism
+ * and every shipped golden — and (b) be redundant with the downstream gate.
+ * The guard belongs at the reconciliation boundary, where it already lives; the
+ * primitives stay pure.
  */
 
 export type ActivationName = "sigmoid" | "identity" | "relu";

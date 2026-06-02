@@ -244,3 +244,126 @@ test("batched golden reconciles cleanly (no false positives from Rules 18, 19 on
     }`,
   )
 })
+
+// ============================================================================
+// core-B-002: reconcileReceipt is TOLERANT of malformed ARRAY ELEMENTS
+//
+// reconcileReceipt documents itself as "tolerant of malformed receipts:
+// surfaces a typed Rule-0 failure, never throws" (library callers do NOT wrap
+// it in try/catch). But a malformed array ELEMENT — updates:[null],
+// updates:[42], or output_error_signals factors:[null] — slips past the
+// top-level structural guards (updates IS an array) and reaches the numeric
+// rules, where `r.updates[i]!.optimizer.product_order` / a non-object factor
+// throws a raw TypeError. That violates the never-throw contract and hands a
+// library caller an unstructured crash.
+//
+// FIX: any throw inside the rule dispatch is converted to a typed Rule-0
+// structural failure (graceful degradation — a diagnosable message, not a
+// crash). reconcileReceipt(malformed) returns { ok:false, rule:0 }.
+//
+// Non-vacuity / mutation that turns these RED: remove the try/catch (or
+// per-rule element guards) so the malformed element throws again — the
+// assert.doesNotThrow then fails on the raw TypeError.
+// ============================================================================
+
+/**
+ * Minimal receipt skeleton that passes the top-level structural guards
+ * (object, valid numeric_policy.tolerance, updates is an array) and the Rule-0
+ * cross-consistency checks, so the malformed-element mutation reaches the
+ * numeric rule dispatch where the throw currently happens. The base (no
+ * mutation) reconciles to a clean, throw-free result.
+ */
+function minimalReceiptBase(): Record<string, unknown> {
+  return {
+    schema_version: "0.2.0",
+    numeric_policy: { tolerance: { atol: 1e-9, rtol: 1e-7 } },
+    updates: [],
+    backward: { output_error_signals: {}, hidden_error_signals: {} },
+  }
+}
+
+test("core-B-002: reconcileReceipt({updates:[null]}) returns a typed Rule-0 failure, never throws", () => {
+  const r = minimalReceiptBase()
+  r.updates = [null]
+  let result: ReturnType<typeof reconcileReceipt> | undefined
+  assert.doesNotThrow(() => {
+    result = reconcileReceipt(r)
+  }, "a null array element MUST NOT throw a raw TypeError (documented never-throw contract)")
+  assert.ok(result, "reconcileReceipt must return a result")
+  assert.strictEqual(result!.ok, false, "a null update element must fail reconcile")
+  if (result!.ok) return
+  const rule0 = result!.failures.filter((f) => f.rule === 0)
+  assert.ok(
+    rule0.length >= 1,
+    `a malformed update element must surface as a Rule-0 structural failure; got rules: ${[
+      ...new Set(result!.failures.map((f) => f.rule)),
+    ].join(", ")}`,
+  )
+  assert.ok(
+    typeof rule0[0]!.message === "string" && rule0[0]!.message!.length > 0,
+    "the Rule-0 failure must carry a developer-facing message (diagnosable, not a bare crash)",
+  )
+})
+
+test("core-B-002: reconcileReceipt({updates:[42]}) returns a typed Rule-0 failure, never throws", () => {
+  const r = minimalReceiptBase()
+  r.updates = [42]
+  let result: ReturnType<typeof reconcileReceipt> | undefined
+  assert.doesNotThrow(() => {
+    result = reconcileReceipt(r)
+  }, "a non-object (number) array element MUST NOT throw a raw TypeError")
+  assert.ok(result, "reconcileReceipt must return a result")
+  assert.strictEqual(result!.ok, false, "a numeric update element must fail reconcile")
+  if (result!.ok) return
+  const rule0 = result!.failures.filter((f) => f.rule === 0)
+  assert.ok(
+    rule0.length >= 1,
+    `a numeric update element must surface as a Rule-0 structural failure; got rules: ${[
+      ...new Set(result!.failures.map((f) => f.rule)),
+    ].join(", ")}`,
+  )
+})
+
+test("core-B-002: reconcileReceipt with output_error_signals factors:[null] returns a typed Rule-0 failure, never throws", () => {
+  const r = minimalReceiptBase()
+  // A well-formed output error signal shell with a malformed factor ELEMENT.
+  r.backward = {
+    output_error_signals: {
+      o1: {
+        product_order: "left_to_right",
+        signal_value: 0.5,
+        factors: [null],
+      },
+    },
+    hidden_error_signals: {},
+  }
+  let result: ReturnType<typeof reconcileReceipt> | undefined
+  assert.doesNotThrow(() => {
+    result = reconcileReceipt(r)
+  }, "a null factor element MUST NOT throw a raw TypeError")
+  assert.ok(result, "reconcileReceipt must return a result")
+  assert.strictEqual(result!.ok, false, "a null factor element must fail reconcile")
+  if (result!.ok) return
+  const rule0 = result!.failures.filter((f) => f.rule === 0)
+  assert.ok(
+    rule0.length >= 1,
+    `a malformed factor element must surface as a Rule-0 structural failure; got rules: ${[
+      ...new Set(result!.failures.map((f) => f.rule)),
+    ].join(", ")}`,
+  )
+})
+
+test("core-B-002: a clean minimal receipt still reconciles ok:true (the tolerance guard does not false-FAIL valid input)", () => {
+  // Regression-safety: the never-throw conversion must not turn a structurally
+  // valid (if trivial) receipt into a failure. Empty updates + empty backward
+  // is a degenerate-but-valid shape that exercises every rule's no-op path.
+  const r = minimalReceiptBase()
+  const result = reconcileReceipt(r)
+  assert.strictEqual(
+    result.ok,
+    true,
+    `a clean minimal receipt must still pass; failures: ${
+      result.ok === false ? JSON.stringify(result.failures) : "ok"
+    }`,
+  )
+})

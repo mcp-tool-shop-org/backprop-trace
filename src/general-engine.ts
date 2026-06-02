@@ -1984,6 +1984,37 @@ export type BatchedGeneralInput = Omit<GeneralInput, "inputs" | "targets"> & {
 }
 
 /**
+ * core-B-001 — VERIFIER-OWNED BATCHED-RECOMPUTE CAP.
+ *
+ * runBatchedGeneralStep runs the engine ONCE PER SAMPLE in batch.sample_order,
+ * and the reconciler's Rule 14 (engine-recompute differential) re-runs that same
+ * batched recompute on observer-mode imports. The schema bounds batch.size at
+ * minimum:1 with NO maximum, so an untrusted batch.size:100000 would spin up
+ * ~100k per-sample receipts → hours of CPU + OOM, with no diagnosable error —
+ * the verifier hanging on the artifact it judges.
+ *
+ * This cap is the wall against that: runBatchedGeneralStep checks it at the
+ * boundary BEFORE the per-sample engine loop, and reconcile.ts's Rule 14 dispatch
+ * checks it BEFORE calling runBatchedGeneralStep (emitting a structured Rule-14
+ * failure rather than letting the exception escape). Either way the verifier
+ * emits a clear "batch exceeds verifier recompute cap" message instead of
+ * running the engine N times — mirroring the NUMERIC_TOLERANCE_CEILING pattern
+ * in reconcile.ts.
+ *
+ * The value (10_000) is far above any legitimate single-step batch (the
+ * canonical batched goldens use size 4; production mini-batches are typically
+ * 32-512) but a hard ceiling against adversarial sizes: at ~ms per per-sample
+ * engine run on the small topologies the engine targets, 10k samples is the
+ * upper bound of a tolerable single recompute. INCLUSIVE maximum: a batch
+ * EXACTLY at the cap is accepted; anything strictly larger is rejected.
+ *
+ * Exported so tests can pin the value (a silent raise re-opens the hang/OOM
+ * surface; a silent lower could false-FAIL a legitimate large batch — both are
+ * regressions and must surface in CI).
+ */
+export const MAX_BATCH_SAMPLES = 10_000 as const
+
+/**
  * v0.9 — Batched general-engine entry point.
  *
  * Orchestrates N runs of runGeneralStep (one per sample in batch.sample_order)
@@ -2052,6 +2083,22 @@ export function runBatchedGeneralStep(input: BatchedGeneralInput): GeneralReceip
         `first-sample state — there is nothing to verify. Provide at least one ` +
         `sample in batch.sample_order + per_sample, or use runGeneralStep for a ` +
         `single unbatched step.`,
+    )
+  }
+  // core-B-001: verifier-owned upper bound. Reject BEFORE the per-sample engine
+  // loop so an adversarial batch.size fails fast with a clear cap message
+  // instead of running the engine N times (the ~10h CPU + OOM the cap prevents).
+  // Mirrors the NUMERIC_TOLERANCE_CEILING discipline: the verifier owns the
+  // limit. INCLUSIVE maximum — at-cap is accepted.
+  if (input.batch.size > MAX_BATCH_SAMPLES) {
+    throw new Error(
+      `runBatchedGeneralStep: batch.size (${input.batch.size}) exceeds verifier recompute cap ` +
+        `MAX_BATCH_SAMPLES (${MAX_BATCH_SAMPLES}). ` +
+        `Hint: the engine re-runs the forward/backward pass once per sample; an unbounded batch ` +
+        `would spin up ${input.batch.size} per-sample receipts (hours of CPU + OOM) rather than ` +
+        `fail cleanly. The cap is an inclusive maximum far above any legitimate single-step batch ` +
+        `(canonical goldens use 4; production mini-batches are 32-512). Split the batch into ` +
+        `chunks of <= ${MAX_BATCH_SAMPLES} samples, or verify them as separate steps.`,
     )
   }
   if (input.batch.size !== input.batch.sample_order.length) {

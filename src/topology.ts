@@ -100,6 +100,35 @@ export type Topology = {
 }
 
 /**
+ * core-B-003 — VERIFIER-OWNED TOPOLOGY SIZE CEILING.
+ *
+ * The per-layer size bound (input/hidden/output_size <= 64) lives ONLY in the
+ * JSON schema. The exported `assertTopologyValid` / `runGeneralStep` had no such
+ * cap, so a library caller — or the schema-less reconcile / Rule-14 engine-
+ * recompute path — could pass an enormous topology and trigger the engine's
+ * O(input_size * hidden_size + hidden_size * output_size) weight materialization
+ * to hang or OOM with no diagnosable error.
+ *
+ * This ceiling is the engine-level wall against that: `assertTopologyValid`
+ * checks it at the TOP, BEFORE the O(n^2) fan-in validation, and throws a clear
+ * "exceeds verifier maximum" Error (mirroring NUMERIC_TOLERANCE_CEILING in
+ * reconcile.ts — a verifier-owned limit, not a hang/OOM/crash).
+ *
+ * The value (512) sits an order of magnitude ABOVE the schema's per-layer 64 —
+ * generous headroom for any legitimate topology the engine targets (canonical
+ * Mazur 2-2-2 / XOR 2-2-1 / iris 4-3-3 are two-plus orders under it) — but a
+ * hard ceiling against adversarial sizes: 512x512 fully-connected is ~262k
+ * weights, the largest the single-threaded CPU engine should ever materialize
+ * in one step. INCLUSIVE maximum: a size EXACTLY at the ceiling validates;
+ * anything strictly larger on any dimension is rejected.
+ *
+ * Exported so tests can pin the value (a silent raise re-opens the hang/OOM
+ * surface; a silent lower could false-FAIL a legitimate large topology — both
+ * are regressions and must surface in CI).
+ */
+export const TOPOLOGY_SIZE_CEILING = 512 as const
+
+/**
  * Validate structural invariants on a Topology literal. Throws on the
  * first violation with a path-naming Error so a malformed topology fails
  * fast at the engine boundary.
@@ -134,6 +163,29 @@ export type Topology = {
  * Returns void on success; throws on first violation.
  */
 export function assertTopologyValid(t: Topology): void {
+  // 0 (core-B-003). Verifier-owned size ceiling — checked FIRST, before the
+  // O(n^2) fan-in validation below, so an adversarial size is rejected with a
+  // clear cap message instead of attempting (and hanging/OOMing on) the weight
+  // materialization. INCLUSIVE maximum: at-ceiling validates, strictly-larger
+  // is rejected. Each dimension named separately so the caller knows which to
+  // shrink.
+  for (const [dim, size] of [
+    ["input_size", t.input_size],
+    ["hidden_size", t.hidden_size],
+    ["output_size", t.output_size],
+  ] as const) {
+    if (size > TOPOLOGY_SIZE_CEILING) {
+      throw new Error(
+        `Topology: ${dim} (${size}) exceeds verifier maximum TOPOLOGY_SIZE_CEILING (${TOPOLOGY_SIZE_CEILING}). ` +
+          `Hint: the single-threaded CPU engine materializes O(input_size*hidden_size + ` +
+          `hidden_size*output_size) weights per step; an unbounded size would hang or OOM ` +
+          `rather than fail cleanly. The ceiling is an inclusive maximum well above the ` +
+          `schema's per-layer 64 bound. Reduce ${dim} to <= ${TOPOLOGY_SIZE_CEILING}, or split ` +
+          `the network into smaller verifiable steps.`,
+      )
+    }
+  }
+
   // 1. Size matches unit_order arrays
   if (t.unit_order.input.length !== t.input_size) {
     throw new Error(

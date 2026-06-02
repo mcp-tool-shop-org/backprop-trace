@@ -776,13 +776,24 @@ function emitOrderedNumberMap(
 ): string {
   const parts: string[] = [];
   for (const key of order) {
-    if (!(key in map)) {
+    // io-B-003: use a direct lookup + numeric-value check rather than `key in
+    // map`. `in` walks the prototype chain (an inherited "toString"/"valueOf"
+    // would falsely satisfy it) and accepts a present-but-non-numeric value,
+    // which would then reach the number formatter and throw a less-clear
+    // error. Checking the resolved value is a finite number here (a) matches
+    // the sibling emitOrderedForwardMap / emitOrderedSignalMap guards and
+    // (b) fails loudly at the right path with an actionable hint. Valid
+    // receipts are unaffected (every ordered key resolves to a real number),
+    // so all shipped goldens stay byte-equal.
+    const value = map[key];
+    if (typeof value !== "number") {
       throw new Error(
-        `emitOrderedNumberMap: missing required key '${key}' in ordered number map. ` +
-          `Hint: every id in the receipt's unit_order/parameter_order must have a numeric value.`,
+        `emitOrderedNumberMap: missing or non-numeric value for key '${key}' in ordered number map ` +
+          `(got ${value === undefined ? "undefined" : typeof value}). ` +
+          `Hint: every id in the receipt's unit_order/parameter_order must map to a finite numeric value.`,
       );
     }
-    parts.push(`${S(key)}:${N(map[key]!)}`);
+    parts.push(`${S(key)}:${N(value)}`);
   }
   return `{${parts.join(",")}}`;
 }

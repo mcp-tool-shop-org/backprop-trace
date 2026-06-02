@@ -93,7 +93,11 @@
  *   1  reconciliation or verification failure (or import differential disagreement)
  *   2  usage or I/O error (missing file, permission denied, malformed JSON, …)
  *   3  invalid CLI argument (unknown flag, malformed --color value, …)
- *   4  reserved (framework adapter declared but not implemented)
+ *   4  reserved; never emitted by the current surface. Held for a future
+ *      "framework adapter declared but not implemented" state — all shipped
+ *      adapters (pytorch / jax / tensorflow) are implemented, so nothing
+ *      returns 4 today. (cli-B-005: the prior wording read as if 4 were a
+ *      live outcome.)
  *
  * The CLI is itself a consumer of the public library API — every domain
  * primitive comes from "../index.js" (the published barrel) so the surface
@@ -191,13 +195,37 @@ const FLAG_TOKENS = new Set([
   "--check",
 ]);
 
+/**
+ * Is `token` shaped like a CLI flag (and therefore NOT a valid value for a
+ * value-bearing flag)? The bare `-` stdin sentinel and the bare `--`
+ * separator are explicitly NOT flag-shaped — they are legitimate value tokens
+ * in this CLI's grammar. cli-B-006 helper.
+ */
+function isFlagShaped(token: string | undefined): boolean {
+  return (
+    typeof token === "string" &&
+    token.startsWith("-") &&
+    token !== "-" &&
+    token !== "--"
+  );
+}
+
 function valueFlag(flag: string): string | undefined {
   // Supports both `--flag value` and `--flag=value`.
   const eqPrefix = `${flag}=`;
   for (let i = 0; i < rawArgv.length; i += 1) {
     const token = rawArgv[i] ?? "";
     if (token.startsWith(eqPrefix)) return token.slice(eqPrefix.length);
-    if (token === flag) return rawArgv[i + 1];
+    if (token === flag) {
+      // cli-B-006: missing-value guard. If `--flag` is the LAST token, or the
+      // next token is itself a flag (e.g. `bp ... --out --json`), the value is
+      // absent — return undefined rather than silently swallowing the next
+      // flag as the value (which previously produced a file literally named
+      // "--json"). The `-` / `--` sentinels are still accepted as values.
+      const next = rawArgv[i + 1];
+      if (next === undefined || isFlagShaped(next)) return undefined;
+      return next;
+    }
   }
   return undefined;
 }
@@ -233,14 +261,15 @@ function stripFlags(args: string[]): string[] {
     if (FLAG_TOKENS.has(a)) continue;
     if (a.startsWith("--color")) continue;
     if (a === "--out") {
-      // skip the next token (the value)
-      i += 1;
+      // cli-B-006: consume the next token as the value ONLY if it is a real
+      // value (not absent, not another flag) — mirrors valueFlag's guard so a
+      // following flag like `--json` is NOT swallowed and stays parseable.
+      if (!isFlagShaped(args[i + 1]) && args[i + 1] !== undefined) i += 1;
       continue;
     }
     if (a.startsWith("--out=")) continue;
     if (a === "--topology") {
-      // skip the next token (the value)
-      i += 1;
+      if (!isFlagShaped(args[i + 1]) && args[i + 1] !== undefined) i += 1;
       continue;
     }
     if (a.startsWith("--topology=")) continue;
@@ -341,6 +370,33 @@ function verboseLog(message: string): void {
 // =============================================================================
 
 /**
+ * Read all of stdin as UTF-8. cli-B-007: when the `-` sentinel is used but
+ * stdin is an interactive TTY (no piped input), `readFileSync(0, "utf-8")`
+ * blocks until the user manually sends EOF (Ctrl+D / Ctrl+Z) — which reads as
+ * a silent hang. Detect that case up front and exit with an actionable Tier-1
+ * envelope telling the user how to feed stdin, instead of hanging. When stdin
+ * IS piped (the normal `echo '{...}' | bp validate -` case) isTTY is false and
+ * the read proceeds unchanged.
+ */
+function readStdinText(): string {
+  if (process.stdin.isTTY) {
+    exitWithUsageError(
+      "no data on stdin: the '-' argument means 'read from stdin', but stdin is a " +
+        "terminal (nothing is piped in).",
+      "STDIN_IS_TTY",
+      2,
+      {
+        hint:
+          "pipe a receipt in, e.g. `cat receipt.jsonl | bp ... -` or " +
+          "`echo '{...}' | bp ... -`; or pass a file path instead of '-'.",
+        retryable: false,
+      },
+    );
+  }
+  return readFileSync(0, "utf-8");
+}
+
+/**
  * Read and parse a receipt file. Supports `.json` (whole-file JSON) and
  * `.jsonl` (one JSON record per line, v0.1 = exactly one record).
  *
@@ -359,7 +415,7 @@ function verboseLog(message: string): void {
  */
 function readReceipt(file: string): unknown {
   if (file === "-") {
-    const raw = readFileSync(0, "utf-8");
+    const raw = readStdinText();
     return JSON.parse(raw);
   }
 
@@ -415,7 +471,7 @@ function readReceipt(file: string): unknown {
 function readMultiRecordJsonl(file: string): unknown[] {
   let raw: string;
   if (file === "-") {
-    raw = readFileSync(0, "utf-8");
+    raw = readStdinText();
   } else {
     raw = readFileSync(file, "utf-8");
   }
@@ -507,16 +563,60 @@ function exitOnReadError(err: unknown, file: string): never {
       },
     );
   }
-  // Unknown I/O failure — preserve the stack for developer visibility
-  // in human mode; emit a structured fallback in JSON mode.
-  if (jsonMode) {
-    const message = err instanceof Error ? err.message : String(err);
-    exitWithUsageError(`unexpected error reading ${file}: ${message}`, "IO_ERROR", 2, {
-      hint: "this is an unexpected I/O error; retry after checking the path and file permissions.",
-      retryable: true,
-    });
+  // cli-B-001: a routine multi-step training trace can be a >512MB JSONL.
+  // readFileSync(path, "utf-8") throws ERR_STRING_TOO_LONG once the file
+  // exceeds V8's max string length (~512MB, buffer.constants.MAX_STRING_LENGTH);
+  // a buffer read past buffer.constants.MAX_LENGTH throws ERR_FS_FILE_TOO_LARGE.
+  // Before this branch the human path hit the catch-all `throw err` and dumped a
+  // raw Node stack, and the JSON path mislabeled it IO_ERROR / retryable:true —
+  // misleading, since re-reading the same oversized file can never succeed. Map
+  // both to a Tier-1 INPUT_TOO_LARGE envelope naming the ~512MB single-string
+  // limit, with an actionable hint and retryable:false.
+  if (codeStr === "ERR_STRING_TOO_LONG" || codeStr === "ERR_FS_FILE_TOO_LARGE") {
+    exitWithUsageError(
+      `input too large to read: ${file}. A single file read is capped at ~512MB ` +
+        `(V8's maximum string length); this JSONL exceeds it.`,
+      "INPUT_TOO_LARGE",
+      2,
+      {
+        hint:
+          "split the JSONL into smaller files and verify in batches " +
+          "(e.g. 'bp verify multi' over each chunk), or stream a single step at a time.",
+        retryable: false,
+      },
+    );
   }
-  throw err;
+  // Catch-all: any remaining I/O failure. NEVER surface a raw Node stack to a
+  // CLI user (the historic `throw err` did exactly that in human mode). Emit a
+  // structured Tier-1 envelope in BOTH human and JSON mode. retryable is set by
+  // error class: a small allow-list of transient errnos (resource-exhaustion /
+  // contention that may clear on a retry) is retryable; everything else,
+  // including unknown failures, is not.
+  const RETRYABLE_ERRNOS = new Set([
+    "EAGAIN",
+    "EBUSY",
+    "EMFILE",
+    "ENFILE",
+    "ENOMEM",
+    "ETIMEDOUT",
+    "EINTR",
+  ]);
+  const retryable = typeof codeStr === "string" && RETRYABLE_ERRNOS.has(codeStr);
+  const message = err instanceof Error ? err.message : String(err);
+  exitWithUsageError(
+    `could not read ${file}: ${message}`,
+    "IO_ERROR",
+    2,
+    {
+      hint: retryable
+        ? "this looks like a transient I/O error (resource contention); retry shortly."
+        : "verify the path is a readable file; if this persists, the file or filesystem may be damaged.",
+      // cause carries the underlying errno (when present) so CI consumers can
+      // branch on the specific failure without parsing the message string.
+      ...(typeof codeStr === "string" ? { cause: codeStr } : {}),
+      retryable,
+    },
+  );
 }
 
 /**
@@ -698,7 +798,7 @@ function usageText(): string {
     "  1  reconciliation/verification failure (or import differential disagreement)",
     "  2  usage or I/O error",
     "  3  invalid CLI argument",
-    "  4  reserved (framework adapter declared but not implemented)",
+    "  4  reserved (not emitted today; held for a future unimplemented-adapter state)",
     "",
     "EXAMPLES",
     "  bp reconcile receipt fixtures/mazur.golden.jsonl",
@@ -1370,17 +1470,75 @@ function importPytorchUsageText(): string {
     "         for audit, but the verifier-side gate has flagged it.",
     "    2  Usage / I/O / schema-validation error.",
     "    3  Invalid CLI argument.",
-    "    4  Reserved: framework adapter declared but not implemented.",
+    "    (Exit 4 is reserved for an unimplemented adapter and never occurs",
+    "     here — the PyTorch adapter is implemented.)",
     "",
   ].join("\n");
 }
 
 /**
- * Levenshtein-light suggestion for unknown top-level subcommand. Hand-
- * rolled because the v0.3 surface still has only four real top-level
- * tokens (reconcile, verify, generate, validate). The example string
- * for each top-level verb summarizes the full subnoun set so a user
- * who typed `bp verfy` sees the three valid `verify` shapes inline.
+ * Damerau-Levenshtein (optimal string alignment) edit distance between two
+ * strings: the minimum number of single-character insertions, deletions,
+ * substitutions, OR adjacent transpositions to turn `a` into `b`. The
+ * transposition case (over plain Levenshtein) is what lets `recouncile` →
+ * `reconcile` and `verifu` → `verify` register as near-misses — a swap counts
+ * as ONE edit, not two. O(len(a)·len(b)) time / O(len(b)) space; fine for the
+ * handful of short subcommand tokens here.
+ */
+function damerauLevenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  // Full (m+1)x(n+1) matrix in a flat Int32Array. A typed-array element access
+  // is typed `number` (not `number | undefined`) even under
+  // noUncheckedIndexedAccess, so the recurrence stays clean. The tokens are
+  // short subcommand names, so the O(m·n) allocation is negligible.
+  const w = n + 1;
+  const d = new Int32Array((m + 1) * w);
+  for (let j = 0; j <= n; j += 1) d[j] = j; // first row: 0..n
+  for (let i = 1; i <= m; i += 1) d[i * w] = i; // first column: 0..m
+  for (let i = 1; i <= m; i += 1) {
+    for (let j = 1; j <= n; j += 1) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      // The `!` assertions are sound: every index here is in [0, (m+1)*w) and
+      // every cell was initialized by the row/column seeding above or a prior
+      // iteration. Under noUncheckedIndexedAccess, Int32Array element access is
+      // typed `number | undefined`, so we assert the known-defined value.
+      let v = Math.min(
+        d[(i - 1) * w + j]! + 1, // deletion
+        d[i * w + (j - 1)]! + 1, // insertion
+        d[(i - 1) * w + (j - 1)]! + cost, // substitution
+      );
+      // Adjacent transposition (optimal string alignment):
+      // a[i-1] a[i-2] == b[j-2] b[j-1].
+      if (
+        i > 1 &&
+        j > 1 &&
+        a.charCodeAt(i - 1) === b.charCodeAt(j - 2) &&
+        a.charCodeAt(i - 2) === b.charCodeAt(j - 1)
+      ) {
+        v = Math.min(v, d[(i - 2) * w + (j - 2)]! + 1);
+      }
+      d[i * w + j] = v;
+    }
+  }
+  return d[m * w + n]!;
+}
+
+/**
+ * Damerau-Levenshtein suggestion for an unknown top-level subcommand. Three
+ * passes, in priority order:
+ *   1. EXACT-or-`unknown.startsWith(verb)` — the user's literal typed prefix
+ *      (`validat` -> `validate`, `validate-inp` -> `validate-input`).
+ *   2. `verb.startsWith(unknown)` — short prefixes (`gen` -> `generate`).
+ *   3. Nearest edit-distance match within a length-scaled threshold — typos
+ *      and transpositions that are NOT prefixes (`recouncile` -> `reconcile`,
+ *      `verifu` -> `verify`, `genrate` -> `generate`). cli-B-004: the docstring
+ *      historically promised "Levenshtein-light" but only passes 1-2 (prefix)
+ *      existed; pass 3 makes the promise real.
+ * The example string for each top-level verb summarizes the full subnoun set so
+ * a user who typed `bp verfy` sees the valid `verify` shapes inline.
  */
 function suggestSubcommand(unknown: string): string | null {
   // `validate` is a proper prefix of `validate-input`. Two-pass match:
@@ -1426,6 +1584,29 @@ function suggestSubcommand(unknown: string): string | null {
     }
   }
   if (bestPrefix) return bestPrefix.example;
+
+  // Pass 3 (typo / transposition bias): no prefix relationship in either
+  // direction. Fall back to the nearest Damerau-Levenshtein match so a
+  // mistyped verb still resolves (`recouncile` -> `reconcile`, `verifu` ->
+  // `verify`, `genrate` -> `generate`). Threshold scales with the candidate
+  // length (ceil(len/3), min 2) so short verbs ('verify') tolerate ~2 edits
+  // and longer ones ('validate-input') a few more, WITHOUT collapsing every
+  // garbage token onto a suggestion. Ties broken by the smallest distance,
+  // then the shortest verb (the more canonical guess).
+  let bestFuzzy: { verb: string; example: string; dist: number } | null = null;
+  for (const c of candidates) {
+    const dist = damerauLevenshtein(unknown, c.verb);
+    const threshold = Math.max(2, Math.ceil(c.verb.length / 3));
+    if (dist > threshold) continue;
+    if (
+      bestFuzzy === null ||
+      dist < bestFuzzy.dist ||
+      (dist === bestFuzzy.dist && c.verb.length < bestFuzzy.verb.length)
+    ) {
+      bestFuzzy = { verb: c.verb, example: c.example, dist };
+    }
+  }
+  if (bestFuzzy) return bestFuzzy.example;
   return null;
 }
 
@@ -2058,7 +2239,7 @@ function runGenerateIris(): void {
  */
 function readInputConfigText(file: string): string {
   try {
-    if (file === "-") return readFileSync(0, "utf-8");
+    if (file === "-") return readStdinText();
     return readFileSync(file, "utf-8");
   } catch (err) {
     exitOnReadError(err, file === "-" ? "<stdin>" : file);
@@ -2379,6 +2560,13 @@ function runValidateInput(file: string): void {
  *   1  — Import succeeded; differential check DISAGREED. Receipt still
  *         emitted so the operator can audit the disagreement.
  *   2  — Sidecar invalid or I/O error.
+ *
+ * cli-B-003 stream contract (--json mode): STDOUT carries the emitted receipt
+ * bytes (when no --out) and NOTHING else, so it stays parseable as a receipt.
+ * The JSON RESULT envelope ({ok, differential} on success/disagreement, or
+ * {ok:false, error} when the import threw) ALWAYS goes to STDERR — success and
+ * failure alike — so a CI consumer reads one stream for the summary regardless
+ * of outcome. Pattern: `bp import pytorch x.jsonl --json >receipt.jsonl 2>summary.json`.
  */
 function runImportFramework(
   file: string,
@@ -2420,7 +2608,9 @@ function runImportFramework(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (jsonMode) {
-      process.stdout.write(
+      // cli-B-003: result envelope to STDERR (same stream as the success
+      // envelope below) — STDOUT is reserved for the receipt payload.
+      process.stderr.write(
         `${JSON.stringify({
           ok: false,
           error: { kind: "IMPORT_FAILED", message },
@@ -2437,8 +2627,14 @@ function runImportFramework(
   }
 
   if (outPath !== undefined && outPath.length > 0) {
-    const { writeFileSync } = require("node:fs") as typeof import("node:fs");
-    writeFileSync(outPath, result.emittedBytes);
+    // cli-B-002: wrap the write so a failed --out (EACCES / ENOSPC / EISDIR /
+    // EROFS) surfaces a Tier-1 envelope via exitOnReadError instead of a raw
+    // stack — matching every other writeFileSync call site in this CLI.
+    try {
+      writeFileSync(outPath, result.emittedBytes);
+    } catch (err) {
+      exitOnReadError(err, outPath);
+    }
     verboseLog(`wrote ${outPath}`);
   } else {
     process.stdout.write(result.emittedBytes);
@@ -2466,7 +2662,12 @@ function runImportFramework(
   }
 
   if (jsonMode) {
-    process.stdout.write(
+    // cli-B-003: result envelope to STDERR (same stream as the success
+    // envelope above) so a CI consumer reads ONE stream for the summary
+    // regardless of outcome. STDOUT already carries the receipt bytes (when
+    // no --out); mixing the envelope onto STDOUT would make the receipt
+    // stream unparseable.
+    process.stderr.write(
       `${JSON.stringify({
         ok: false,
         differential: {
@@ -2556,6 +2757,12 @@ function runImportTensorflow(file: string): void {
  *         record, mid-stream framework swap, mid-stream trace_id swap,
  *         non-sequential step_index).
  *   3  — Invalid CLI argument.
+ *
+ * cli-B-003 stream contract (--json mode): identical to the single-step runner.
+ * STDOUT carries the emitted receipt stream (when no --out) and nothing else;
+ * the JSON RESULT envelope — success, ≥1-disagreement, or import-threw — ALWAYS
+ * goes to STDERR so a CI consumer reads one stream for the summary regardless of
+ * outcome.
  */
 function runImportFrameworkStream(
   file: string,
@@ -2601,7 +2808,9 @@ function runImportFrameworkStream(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (jsonMode) {
-      process.stdout.write(
+      // cli-B-003: result envelope to STDERR (same stream as success +
+      // disagreement envelopes) — STDOUT is reserved for the receipt stream.
+      process.stderr.write(
         `${JSON.stringify({
           ok: false,
           error: { kind: "IMPORT_STREAM_FAILED", message },
@@ -2618,8 +2827,14 @@ function runImportFrameworkStream(
   }
 
   if (outPath !== undefined && outPath.length > 0) {
-    const { writeFileSync } = require("node:fs") as typeof import("node:fs");
-    writeFileSync(outPath, result.emittedBytes);
+    // cli-B-002: wrap the write so a failed --out surfaces a Tier-1 envelope
+    // via exitOnReadError instead of a raw stack (parity with every other
+    // writeFileSync call site).
+    try {
+      writeFileSync(outPath, result.emittedBytes);
+    } catch (err) {
+      exitOnReadError(err, outPath);
+    }
     verboseLog(
       `wrote ${outPath} (${result.steps.length} receipts, bundle_root_digest=${result.bundleRootDigest})`,
     );
@@ -2656,7 +2871,10 @@ function runImportFrameworkStream(
     .filter((x) => !x.s.differentialPassed)
     .map((x) => x.i);
   if (jsonMode) {
-    process.stdout.write(
+    // cli-B-003: result envelope to STDERR (same stream as the success
+    // envelope above) so the summary is on one stream regardless of outcome;
+    // STDOUT carries the emitted receipt stream.
+    process.stderr.write(
       `${JSON.stringify({
         ok: false,
         steps: result.steps.length,

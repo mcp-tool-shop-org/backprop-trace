@@ -342,3 +342,105 @@ test("G-048: top-level --help header carries the LIVE package version, not a fro
     `help output must not contain the stale 'v0.7.0 surface' marker`,
   );
 });
+
+// =============================================================================
+// cli-B-004 — 'did you mean' must do real edit-distance matching (Damerau-
+// Levenshtein), not prefix-only. A transposed/typo'd subcommand that is NOT a
+// prefix of (or prefixed by) a real verb must still suggest the nearest verb.
+// =============================================================================
+
+test("cli-B-004: transposed 'recouncile' suggests 'reconcile'", () => {
+  const { status, stderr, stdout } = runBp(["recouncile", "receipt", "x.json"]);
+  // Unknown command → usage error, exit 2, suggestion on stderr.
+  assert.strictEqual(status, 2, `unknown command must exit 2 (got ${status})`);
+  const out = stderr + stdout;
+  assert.match(
+    out,
+    /Did you mean 'bp reconcile receipt/,
+    `'recouncile' must fuzzy-match to reconcile; got: ${JSON.stringify(out.slice(0, 200))}`,
+  );
+});
+
+test("cli-B-004: typo'd 'verifu' suggests 'verify'", () => {
+  const { status, stderr, stdout } = runBp(["verifu", "mazur"]);
+  assert.strictEqual(status, 2);
+  const out = stderr + stdout;
+  assert.match(
+    out,
+    /Did you mean 'bp verify /,
+    `'verifu' must fuzzy-match to verify; got: ${JSON.stringify(out.slice(0, 200))}`,
+  );
+});
+
+test("cli-B-004: typo'd 'genrate' (transposition) suggests 'generate'", () => {
+  const { status, stderr, stdout } = runBp(["genrate", "mazur"]);
+  assert.strictEqual(status, 2);
+  const out = stderr + stdout;
+  assert.match(
+    out,
+    /Did you mean 'bp generate /,
+    `'genrate' must fuzzy-match to generate; got: ${JSON.stringify(out.slice(0, 200))}`,
+  );
+});
+
+test("cli-B-004: existing prefix behavior is preserved ('gen' → 'generate')", () => {
+  // Regression guard: pass 1/2 (prefix) must still win for short prefixes so
+  // the new edit-distance pass does not change established behavior.
+  const { status, stderr, stdout } = runBp(["gen"]);
+  assert.strictEqual(status, 2);
+  const out = stderr + stdout;
+  assert.match(out, /Did you mean 'bp generate /, `'gen' must still prefix-match generate; got: ${JSON.stringify(out.slice(0, 200))}`);
+});
+
+test("cli-B-004: a far-off garbage token does NOT force a misleading suggestion", () => {
+  // The threshold must not collapse arbitrary input onto a verb. 'zzzzzzzz' is
+  // beyond edit distance of every verb → no 'Did you mean', just the plain
+  // unknown-command message.
+  const { status, stderr, stdout } = runBp(["zzzzzzzz"]);
+  assert.strictEqual(status, 2);
+  const out = stderr + stdout;
+  assert.doesNotMatch(
+    out,
+    /Did you mean/,
+    `far-off garbage must not produce a suggestion; got: ${JSON.stringify(out.slice(0, 200))}`,
+  );
+  assert.match(out, /unknown command 'zzzzzzzz'/);
+});
+
+// =============================================================================
+// cli-B-005 — exit-code-4 doc drift. Exit 4 is reserved and NEVER emitted by
+// the current surface (all three framework adapters are implemented). The help
+// must not advertise it as a live "declared but not implemented" outcome.
+// =============================================================================
+
+test("cli-B-005: top-level help does not advertise exit 4 as a live unimplemented-adapter outcome", () => {
+  const { status, stdout } = runBp(["--help"]);
+  assert.strictEqual(status, 0);
+  // The stale wording read "4  reserved (framework adapter declared but not
+  // implemented)" — implying it can occur. The corrected line must mark it as
+  // not-emitted / reserved-only.
+  assert.doesNotMatch(
+    stdout,
+    /4\s+reserved \(framework adapter declared but not implemented\)/,
+    `top-level help must not advertise exit 4 with the stale 'declared but not implemented' wording; got: ${JSON.stringify(stdout)}`,
+  );
+  // Exit 4 is still mentioned (it IS a reserved code) but as not-emitted.
+  assert.match(
+    stdout,
+    /4\s+reserved/,
+    "top-level help should still note exit 4 is reserved",
+  );
+});
+
+test("cli-B-005: 'bp import pytorch --help' does not list exit 4 as an outcome (pytorch is implemented)", () => {
+  const { status, stdout } = runBp(["import", "pytorch", "--help"]);
+  assert.strictEqual(status, 0);
+  // The pytorch adapter IS implemented, so exit 4 can never occur here. The
+  // help must not list "4  Reserved: framework adapter declared but not
+  // implemented." as one of this command's exit codes.
+  assert.doesNotMatch(
+    stdout,
+    /^\s*4\s+Reserved: framework adapter declared but not implemented\.\s*$/m,
+    `pytorch import help must not list exit 4 as an outcome; got: ${JSON.stringify(stdout)}`,
+  );
+});

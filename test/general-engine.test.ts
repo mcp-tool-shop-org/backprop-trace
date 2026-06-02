@@ -31,6 +31,7 @@ import { runMazurStep } from "../src/engine.js"
 import {
   runGeneralStep,
   runBatchedGeneralStep,
+  MAX_BATCH_SAMPLES,
   type GeneralInput,
   type BatchedGeneralInput,
 } from "../src/general-engine.js"
@@ -513,5 +514,113 @@ test("G-039: runBatchedGeneralStep throws a clear error on batch.size = 0", () =
     () => runBatchedGeneralStep(badBatch),
     /batch\.size must be >= 1/,
     "runBatchedGeneralStep must reject batch.size = 0 with a clear path-naming error (not a cryptic undefined deref)",
+  )
+})
+
+// ===========================================================================
+// core-B-001 — runBatchedGeneralStep must cap batch.size (verifier-owned)
+//
+// Rule 14 (checkRule14EngineRecomputeDifferential) and runBatchedGeneralStep
+// run the engine ONCE PER SAMPLE with no cap on batch.size / per_sample length
+// (the schema has minimum:1, no maximum). An untrusted batch.size:100000 ->
+// ~10h CPU + OOM (100k per-sample receipts). A verifier-owned MAX_BATCH_SAMPLES
+// cap is checked at runBatchedGeneralStep's boundary BEFORE the per-sample
+// engine loop runs, emitting a clear "batch exceeds verifier recompute cap"
+// failure instead of running the engine N times — mirroring the
+// NUMERIC_TOLERANCE_CEILING pattern (a verifier-owned limit, not a hang/OOM).
+//
+// Non-vacuity / mutation that turns this RED: delete the
+// `if (input.batch.size > MAX_BATCH_SAMPLES) throw ...` guard. Without it a
+// size > cap batch attempts the full per-sample engine loop (the
+// hang/OOM the cap prevents) instead of throwing the cap message.
+// ===========================================================================
+
+test("core-B-001: MAX_BATCH_SAMPLES is exported and sane (>= the canonical batch size 4)", () => {
+  assert.ok(
+    Number.isInteger(MAX_BATCH_SAMPLES) && MAX_BATCH_SAMPLES >= 4,
+    `MAX_BATCH_SAMPLES must be an integer at least as large as the canonical batched ` +
+      `golden's batch size (4); got ${String(MAX_BATCH_SAMPLES)}`,
+  )
+})
+
+test("core-B-001: runBatchedGeneralStep rejects batch.size over the cap with a clear cap message (does NOT run the engine N times)", () => {
+  // Declare a batch ONE PAST the cap. We construct the sample_order +
+  // per_sample map cheaply (plain object construction — no engine runs) so the
+  // cap guard, which fires BEFORE the per-sample engine loop, is the only
+  // expensive work avoided. The cap MUST fire before any runGeneralStep call.
+  const overCap = MAX_BATCH_SAMPLES + 1
+  const sampleOrder: string[] = new Array(overCap)
+  const perSample: Record<string, { inputs: { x1: number; x2: number }; targets: { y: number } }> = {}
+  for (let i = 0; i < overCap; i++) {
+    const sid = `s${i}`
+    sampleOrder[i] = sid
+    perSample[sid] = { inputs: { x1: 1, x2: 0 }, targets: { y: 1 } }
+  }
+  const tooBig: BatchedGeneralInput = {
+    topology: XOR_INPUT.topology,
+    learning_rate: XOR_INPUT.learning_rate,
+    parameters_before: { ...XOR_INPUT.parameters_before },
+    numeric_policy: XOR_INPUT.numeric_policy,
+    bias_policy: XOR_INPUT.bias_policy,
+    batch: {
+      size: overCap,
+      sample_order: sampleOrder,
+      reduction: "mean",
+    },
+    per_sample: perSample,
+  }
+  const started = Date.now()
+  assert.throws(
+    () => runBatchedGeneralStep(tooBig),
+    (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      assert.match(
+        msg,
+        /cap|exceeds verifier|recompute cap|MAX_BATCH_SAMPLES|batch.*exceeds/i,
+        `over-cap batch must throw a verifier-owned cap diagnostic; got: ${msg}`,
+      )
+      // The message must state both the offending size and the cap so the
+      // caller can fix it (mirrors NUMERIC_TOLERANCE_CEILING messaging).
+      assert.match(
+        msg,
+        new RegExp(String(MAX_BATCH_SAMPLES)),
+        "cap message must state the cap value",
+      )
+      assert.match(msg, new RegExp(String(overCap)), "cap message must state the offending batch.size")
+      return true
+    },
+    "an over-cap batch.size must throw a clear cap error, not run the engine N times",
+  )
+  // The cap fires before the per-sample loop, so this returns near-instantly.
+  // A generous bound (the loop on overCap samples would take many seconds-to-
+  // minutes); this proves we did NOT enter the engine loop.
+  assert.ok(
+    Date.now() - started < 5000,
+    "the cap must short-circuit BEFORE the per-sample engine loop (near-instant reject)",
+  )
+})
+
+test("core-B-001: runBatchedGeneralStep accepts a small legit batch (cap does not false-FAIL real batches)", () => {
+  // A 2-sample batch is far under the cap and must still run cleanly — the cap
+  // is a wall against adversarial sizes, not a regression on legit batched use.
+  const okBatch: BatchedGeneralInput = {
+    topology: XOR_INPUT.topology,
+    learning_rate: XOR_INPUT.learning_rate,
+    parameters_before: { ...XOR_INPUT.parameters_before },
+    numeric_policy: XOR_INPUT.numeric_policy,
+    bias_policy: XOR_INPUT.bias_policy,
+    batch: {
+      size: 2,
+      sample_order: ["s0", "s1"],
+      reduction: "mean",
+    },
+    per_sample: {
+      s0: { inputs: { x1: 1, x2: 0 }, targets: { y: 1 } },
+      s1: { inputs: { x1: 0, x2: 1 }, targets: { y: 1 } },
+    },
+  }
+  assert.doesNotThrow(
+    () => runBatchedGeneralStep(okBatch),
+    "a small batch (size 2, well under the cap) must still reconcile-recompute cleanly",
   )
 })
