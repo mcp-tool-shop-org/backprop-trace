@@ -15,9 +15,9 @@
 
 Un verificador determinista de 26 reglas para los pasos de entrenamiento de redes neuronales. Se le proporciona un registro que enumera cada factor que contribuyó a una actualización del gradiente; el verificador vuelve a derivar cada afirmación y la rechaza si hay discrepancias. Sigue la línea de Csmith/CompCert, donde *"el oráculo no debe consultar el artefacto que está juzgando."*
 
-> **Estado: versión preliminar v0 (v0.11.0) — primera versión publicable.** Solo para CPU. El verificador cubre SGD + Adam + AdamW + el impulso de SGD al estilo de PyTorch (clásico + Nesterov + amortiguación).
-> Un asistente de PyTorch ( `scripts/extract/pytorch.py`) cubre la misma matriz de optimizadores. Solo es un observador; [la regla 14](./docs/reconciliation.md) es la autoridad.
-> La versión 0.11 es la primera versión publicada en npm; la versión 1.0 aún depende de [un caso práctico real + validación del usuario + asistentes en vivo para múltiples frameworks](#whats-not-in-this-version-yet). Consulte [`docs/live-helpers.md`](./docs/live-helpers.md) antes de usarlo en producción.
+**Estado: versión intermedia v0 (v0.12.0) — lanzamiento para mejorar la solidez.** Solo para CPU. El verificador cubre SGD + Adam + AdamW + el impulso de SGD al estilo PyTorch (clásico + Nesterov + amortiguación).
+El helper de PyTorch en tiempo real (`scripts/extract/pytorch.py`) cubre la misma matriz de optimizadores. Solo observador: la [Regla 14](./docs/reconciliation.md) es la autoridad.
+La versión v0.11 fue el primer lanzamiento publicado en npm; la versión v0.12.0 mejora la solidez después de una auditoría adversarial completa: límites de tolerancia controlados por el verificador (un recibo ya no puede ampliar su propia banda de paso), la Regla 14 está protegida por marcadores, el salto automático de varios pasos está desactivado y hay límites de recursos. 792 pruebas, 12 invariantes de confianza. La versión 1.0 aún está condicionada a [una implementación real + validación del usuario](#whats-not-in-this-version-yet). Consulte [`docs/live-helpers.md`](./docs/live-helpers.md) antes de usarlo en producción.
 
 ## Guía de inicio rápido de 30 segundos
 
@@ -161,18 +161,19 @@ NO compatible: entre motores (Bun, Deno, navegadores); entre versiones principal
 
 ## Lo que no está en esta versión (todavía)
 
-backprop-trace v0.11.0 es la primera versión publicada en npm, pero **todavía está en la versión 0.x**. El motor, el conciliador, el contrato de emisión canónica, la ruta de ingesta externa y el asistente en vivo de PyTorch son reales y estables. La versión 1.0 requiere que se completen los siguientes elementos:
+backprop-trace v0.12.0 mejora la solidez, pero aún está en la **versión intermedia v0**. El motor, el reconciliador, el contrato de emisión canónica, la ruta de ingesta externa y el helper de PyTorch en tiempo real son reales y estables. El siguiente plan de desarrollo está ordenado por uso × viabilidad de verificación: cada línea está condicionada a un reajuste de CPU de forma cerrada que el reconciliador puede realmente controlar:
 
-- **Trazas de marcos múltiples y heterogéneos** — solo se admiten paquetes de un solo marco; no se admiten flujos de marcos mixtos. *Puede quedar fuera del alcance.*
-- **Enlace de identidad del productor en trazas de múltiples pasos** — La regla 17 detecta fallos de integridad del paquete, no la autenticidad del productor. Combine con la regla 16 / Sigstore / atestación fuera de banda. Superficie de operador, no una función integrada.
-- **Decaimiento de peso L2 acoplado a SGD** — Rama 3 de la regla 7; *v0.11.*
-- **AMSGrad / NAdam / RAdam / Lion / grupos de parámetros por parámetro / programas de tasa de aprendizaje / recorte de gradiente / precisión mixta** — *v0.10+.*
-- **Gradientes por muestra en recibos por lotes** — solo se reducen los gradientes actualmente; la descomposición por muestra es útil para auditorías de influencia. *v0.10.x / v0.11.*
-- **Tamaños de lote heterogéneos en cada paso** — tamaño de lote fijo por flujo. *Puede quedar fuera del alcance.*
-- **Asistentes en vivo de JAX / TensorFlow** — los complementos creados manualmente funcionan; los asistentes en vivo son *v0.11 (JAX, activación de adopter-pull) / v0.12+ (TF).*
-- **Configuración de prueba del mundo real** — Mazur 2-2-2 + softmax+CE + sgd_momentum-Mazur son los héroes; la configuración de CNN pequeña / bloque de transformador es *v0.11.*
-- **Validación del adoptante** — no hay estudios de casos de investigadores externos, no hay adopción en cursos, no hay paquete de cumplimiento en producción. *v0.12 antes de v1.0.*
-- **Determinismo de GPU** — fuera del alcance y probablemente permanente (las operaciones atómicas de cuDNN ConvolutionBackwardFilter impiden la exactitud de bits por [CMU SEI](https://www.sei.cmu.edu/blog/the-myth-of-machine-learning-reproducibility-and-randomness-for-acquisitions-and-testing-evaluation-verification-and-validation/)). La posición del producto es la esquina determinista de la CPU.
+- **Decaimiento de peso L2 acoplado a SGD** — la tercera rama de la Regla 7 documentada (`grad += lambda*theta` antes del búfer de impulso). La brecha con mayor demanda; reajuste de CPU de forma cerrada. *v0.13.*
+- **NAdam (+ opcionalmente RAdam)** — variantes económicas de Adam. Luego, **verificación de la programación de la tasa de aprendizaje**, que se combina con cada optimizador. *v0.14.*
+- **Implementación real de referencia** — Mazur 2-2-2 + softmax+CE + sgd_momentum-Mazur son los "héroes" de hoy en día; una pequeña red conv→ReLU→dense, reproducible en bytes en la CPU, es la condición para la versión 1.0. *v1.0.*
+- **Validación del usuario** — aún no hay estudios de casos de investigadores externos, adopción en cursos ni paquetes de cumplimiento en producción. *Condición para la versión 1.0.*
+- **Helper de JAX en tiempo real** — los módulos auxiliares de JAX/TF escritos a mano ya se importan a través de la Regla 14; un helper en tiempo real que utiliza `jax.make_jaxpr(grad)` proporciona un límite de confianza más fuerte que PyTorch eager (CPU + `jax_enable_x64` + XLA fijado). *v1.0.*
+- **AMSGrad / recorte de gradiente global / tasas de aprendizaje por grupo / Lion** — cada uno está condicionado a una extensión de recibo/reconciliador. *Más adelante.*
+- **Trazas de marcos múltiples heterogéneos** — solo se admiten paquetes de un solo marco; no se admiten flujos de marcos mixtos. *Puede quedar fuera del alcance.*
+- **Tamaños de lote heterogéneos en diferentes pasos** — tamaño de lote fijo por flujo. *Puede quedar fuera del alcance.*
+- **Gradientes por muestra en recibos agrupados** — solo se reducen los gradientes actualmente; la descomposición por muestra es útil para auditorías de influencia, pero aún no está disponible. *Más adelante.*
+- **Vinculación de la identidad del productor en trazas de varios pasos** — la Regla 17 detecta fallos de integridad del paquete, no la autenticidad del productor. Combine con la Regla 16 / Sigstore / atestación fuera de banda. Superficie de operador, no una función integrada.
+- **Determinismo de bits de GPU / kernel fusionado** — fuera del alcance y permanente. La no asociatividad de coma flotante hace que la exactitud de bits sea inalcanzable en kernels fusionados/paralelos ([arXiv:2408.05148](https://arxiv.org/abs/2408.05148); cuDNN ConvolutionBackwardFilter atomics según [CMU SEI](https://www.sei.cmu.edu/blog/the-myth-of-machine-learning-reproducibility-and-randomness-for-acquisitions-and-testing-evaluation-verification-and-validation/)). El producto es el componente determinista de la CPU.
 
 Si su flujo de trabajo depende de alguno de estos elementos, esta no es la versión adecuada para usted todavía.
 
