@@ -383,7 +383,7 @@ export function buildObserverReceiptFromSidecar(
       ),
       numeric_policy:
         sidecar.numeric_policy ?? DEFAULT_NUMERIC_POLICY_FOR_OBSERVER,
-      bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
+      bias_policy: resolveBiasPolicyForSidecar(sidecar),
     }
     engineReceipt = runBatchedGeneralStep(batchedInput)
 
@@ -433,7 +433,7 @@ export function buildObserverReceiptFromSidecar(
       parameters_before: sidecar.parameters_before,
       numeric_policy:
         sidecar.numeric_policy ?? DEFAULT_NUMERIC_POLICY_FOR_OBSERVER,
-      bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
+      bias_policy: resolveBiasPolicyForSidecar(sidecar),
     }
     let engineInput: GeneralInput = engineInputBase
     // v0.9.1 — Adam/AdamW dispatch. v0.9.2 — sgd_momentum dispatch.
@@ -450,6 +450,17 @@ export function buildObserverReceiptFromSidecar(
           ? { weight_decay: ocIn.weight_decay }
           : {}),
         ...(ocIn.momentum !== undefined ? { momentum: ocIn.momentum } : {}),
+        // sgd_momentum Nesterov / dampening MUST flow into the engine's
+        // differential recompute. Omitting them made the engine treat a
+        // Nesterov step as classical (update = lr*buffer instead of
+        // lr*(grad + mu*buffer)) → a false Rule 14 disagreement on a valid
+        // step (caught by torch end-to-end). They are already emitted onto the
+        // receipt's optimizer_config below, so reconcileMultiStep saw them;
+        // only this differential path missed them.
+        ...(ocIn.nesterov === true ? { nesterov: true } : {}),
+        ...(typeof ocIn.dampening === "number" && ocIn.dampening !== 0
+          ? { dampening: ocIn.dampening }
+          : {}),
       }
       // Extract per-parameter state_before from sidecar updates[].optimizer.state_before.
       // Shape dispatches on optimizer.name: Adam/AdamW get AdamState ({m, v});
@@ -586,7 +597,7 @@ export function buildObserverReceiptFromSidecar(
     },
     numeric_policy:
       sidecar.numeric_policy ?? DEFAULT_NUMERIC_POLICY_FOR_OBSERVER,
-    bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
+    bias_policy: resolveBiasPolicyForSidecar(sidecar),
     topology: engineReceipt.topology,
     learning_rate: sidecar.learning_rate,
     // v0.9.1 — emit optimizer_config block ONLY when Adam/AdamW (preserves
@@ -673,6 +684,67 @@ const DEFAULT_BIAS_POLICY_FOR_OBSERVER: GeneralInput["bias_policy"] = {
   updated_in_step: false,
   reconciliation:
     "parameters_after[bias_id] === parameters_before[bias_id] for every bias parameter",
+}
+
+/**
+ * G-015 — bias_policy for an observer-mode sidecar that omits one.
+ *
+ * The live PyTorch helper (scripts/extract/pytorch.py) emits per-neuron
+ * biases (`bias_sharing: "per_neuron"`, one `b_h<k>` / `b_o<k>` parameter per
+ * neuron) but NO `bias_policy` field. A real `nn.Linear(..., bias=True)` under
+ * ANY optimizer updates each per-neuron bias every step, so the engine MUST be
+ * told `bias_policy.mode = "sgd"` — otherwise it defaults to `"constant"`,
+ * holds the engine's recomputed biases at their before-step values, and Rule 14
+ * compares them against the receipt's CHANGED biases → a valid step is rejected
+ * (the false FAIL this finding fixes).
+ *
+ * Decision rule (purely structural — no helper-claim trust; Rule 14 remains the
+ * authority):
+ *   - If the sidecar carries an explicit `bias_policy`, honor it verbatim.
+ *   - Else, if ANY bias parameter's value changes across the step
+ *     (parameters_before[b] !== parameters_after[b]), the biases are UPDATING →
+ *     route to mode="sgd". The engine's per_neuron + sgd path
+ *     (general-engine.ts) then recomputes them and Rule 14 compares apples to
+ *     apples. (Requires bias_sharing="per_neuron"; the engine rejects
+ *     per_layer + sgd. A bias=False model has all-zero, unchanging biases and
+ *     falls through to the constant default below — byte-equal with pre-G-015
+ *     SGD observer receipts.)
+ *   - Else (no bias changed — bias=False, or a genuinely constant-bias step):
+ *     keep the constant default.
+ *
+ * A "changed" bias is detected with an exact `!==`: the engine recompute is the
+ * arbiter of whether the claimed deltas are CORRECT (Rule 14), so this routing
+ * only needs to detect INTENT (did the producer move the bias at all). An
+ * honest constant-bias step never trips it; a corrupt one is caught downstream.
+ */
+function resolveBiasPolicyForSidecar(
+  sidecar: FrameworkTraceSidecar,
+): GeneralInput["bias_policy"] {
+  if (sidecar.bias_policy !== undefined) return sidecar.bias_policy
+  const before = sidecar.parameters_before ?? {}
+  const after = sidecar.parameters_after ?? {}
+  const biasParams = (sidecar.topology?.parameters ?? []).filter(
+    (p) => p.role === "hidden_bias" || p.role === "output_bias",
+  )
+  const anyBiasUpdates = biasParams.some((p) => {
+    const b = before[p.id]
+    const a = after[p.id]
+    return typeof b === "number" && typeof a === "number" && b !== a
+  })
+  if (anyBiasUpdates && sidecar.topology?.bias_sharing === "per_neuron") {
+    return {
+      mode: "sgd",
+      reason:
+        "G-015 observer routing: sidecar omitted bias_policy but carries UPDATING per-neuron biases " +
+        "(a real nn.Linear(bias=True) under any optimizer); routed to per_neuron + sgd so the engine " +
+        "updates biases and Rule 14 compares like-for-like. Rule 14 remains the authority on correctness.",
+      updated_in_step: true,
+      reconciliation:
+        "for every per_neuron bias parameter b_u, parameters_after[b_u] === parameters_before[b_u] + learning_rate * signal_u " +
+        "(verified via the optimizer's single-factor gradient under Rules 4-7 / 21-24).",
+    }
+  }
+  return DEFAULT_BIAS_POLICY_FOR_OBSERVER
 }
 
 // ---------------------------------------------------------------------------
@@ -1158,7 +1230,7 @@ export function buildObserverReceiptStreamFromSidecar(
         ),
         numeric_policy:
           sidecar.numeric_policy ?? DEFAULT_NUMERIC_POLICY_FOR_OBSERVER,
-        bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
+        bias_policy: resolveBiasPolicyForSidecar(sidecar),
       }
       engineReceipt = runBatchedGeneralStep(batchedInput)
 
@@ -1201,7 +1273,7 @@ export function buildObserverReceiptStreamFromSidecar(
         parameters_before: sidecar.parameters_before,
         numeric_policy:
           sidecar.numeric_policy ?? DEFAULT_NUMERIC_POLICY_FOR_OBSERVER,
-        bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
+        bias_policy: resolveBiasPolicyForSidecar(sidecar),
       }
       let engineInput: GeneralInput = engineInputBase
       if (sidecar.optimizer !== undefined && sidecar.optimizer.name !== "sgd") {
@@ -1217,6 +1289,12 @@ export function buildObserverReceiptStreamFromSidecar(
             ? { weight_decay: ocIn.weight_decay }
             : {}),
           ...(ocIn.momentum !== undefined ? { momentum: ocIn.momentum } : {}),
+          // Nesterov / dampening into the engine's differential recompute
+          // (see single-step path above — same false-disagreement fix).
+          ...(ocIn.nesterov === true ? { nesterov: true } : {}),
+          ...(typeof ocIn.dampening === "number" && ocIn.dampening !== 0
+            ? { dampening: ocIn.dampening }
+            : {}),
         }
         const stateBefore: Record<string, OptimizerStateAny> = {}
         for (const u of sidecar.updates) {
@@ -1338,7 +1416,7 @@ export function buildObserverReceiptStreamFromSidecar(
       },
       numeric_policy:
         sidecar.numeric_policy ?? DEFAULT_NUMERIC_POLICY_FOR_OBSERVER,
-      bias_policy: sidecar.bias_policy ?? DEFAULT_BIAS_POLICY_FOR_OBSERVER,
+      bias_policy: resolveBiasPolicyForSidecar(sidecar),
       topology: engineReceipt.topology,
       learning_rate: sidecar.learning_rate,
       // v0.9.1 — emit optimizer_config block ONLY for Adam/AdamW records.

@@ -26,6 +26,13 @@ import {
   validateFrameworkTraceSidecarOrThrow,
 } from "../src/validate.js"
 
+// G-052 — read the package version at test time instead of hardcoding it, so
+// the helper-version assertion does not drift on every release bump (mirrors
+// the pattern in test/bp.examples-pytorch.cli.test.ts).
+const PKG_VERSION = (
+  JSON.parse(readFileSync(resolve("package.json"), "utf-8")) as { version: string }
+).version
+
 const GOOD_FIXTURE = resolve(
   "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
 )
@@ -56,7 +63,7 @@ test("v0.7.0 schema: helper block must declare name, version, distribution, sour
   //   - test/bp.examples-pytorch.cli.test.ts (HELPER_VERSION matches pkg.version)
   //   - scripts/pack-install-smoke.mjs (printed helper HELPER_VERSION ==
   //     installed package.version) — the v0.10.2 distribution-integrity gate
-  assert.equal(helper.version, "0.11.0")
+  assert.equal(helper.version, PKG_VERSION)
   assert.equal(helper.distribution, "repo-script")
   assert.match(helper.source_hash as string, /^sha256:[0-9a-f]{64}$/)
   assert.ok(helper.framework)
