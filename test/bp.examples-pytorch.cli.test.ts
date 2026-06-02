@@ -111,9 +111,10 @@ test("v0.10.1: scripts/extract/pytorch.py accepts AdamW + sgd_momentum (not just
 test("scripts/extract/pytorch.py: helper version matches package.json (forensic identity)", () => {
   const text = readFileSync(HELPER_PATH, "utf-8")
   const pkg = JSON.parse(readFileSync(resolve(REPO_ROOT, "package.json"), "utf-8")) as { version: string }
+  const verEsc = pkg.version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
   assert.match(
     text,
-    new RegExp(`HELPER_VERSION\\s*=\\s*"${pkg.version.replace(/\./g, "\\.")}"`),
+    new RegExp(`HELPER_VERSION\\s*=\\s*"${verEsc}"`),
     `helper HELPER_VERSION must match package.json version (${pkg.version})`,
   )
 })

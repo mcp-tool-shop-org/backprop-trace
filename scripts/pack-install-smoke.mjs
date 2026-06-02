@@ -339,7 +339,7 @@ try {
   if (!/HELPER_VERSION/.test(examplesPrint.stdout)) {
     die("printed helper missing HELPER_VERSION constant")
   }
-  const versionEscaped = PKG_VERSION.replace(/\./g, "\\.")
+  const versionEscaped = PKG_VERSION.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
   const versionRegex = new RegExp(`HELPER_VERSION\\s*=\\s*"${versionEscaped}"`)
   if (!versionRegex.test(examplesPrint.stdout)) {
     die(
