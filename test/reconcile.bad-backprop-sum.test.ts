@@ -77,7 +77,7 @@ test("reconciler reports Rule 2 failure on bad-backprop-sum fixture or in-memory
     receipt = built.receipt;
     source = "in-memory mutation";
     expectedFieldPathPattern = new RegExp(
-      built.expectedFieldPath.replace(/\./g, "\\."),
+      built.expectedFieldPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
     );
   }
 

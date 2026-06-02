@@ -80,6 +80,54 @@ test("importPytorchSidecarStream produces byte-equal output to shipped multi-ste
   }
 })
 
+// G-008 — the UNBATCHED multi-step record path baked differentialPassed from a
+// forward+loss-only check, ignoring updates + parameters_after. Forge the
+// MIDDLE record's updates[*].gradient + parameters_after (forward + loss left
+// correct) and confirm that record's differential FAILS while the others stay
+// clean. Re-REDs if compareUnbatchedFullFieldSet(...) is dropped from the
+// multi-step unbatched record path.
+test("G-008: forged updates[*].gradient + parameters_after in an unbatched multi-step RECORD make that step's differential FAIL", () => {
+  if (!existsSync(sidecarPath)) return
+  const lines = readFileSync(sidecarPath, "utf-8").trim().split("\n")
+  assert.ok(lines.length >= 3, "multi-step fixture must have >=3 records")
+  const rec1 = JSON.parse(lines[1]!) as {
+    updates: Array<{ parameter_id: string; gradient: number; weight_after: number }>
+    parameters_after: Record<string, number>
+  }
+  const target = rec1.updates[0]!
+  const pid = target.parameter_id
+  target.gradient = target.gradient + 7.0
+  target.weight_after = target.weight_after + 7.0
+  rec1.parameters_after[pid] = rec1.parameters_after[pid]! + 7.0
+  const forged = [lines[0]!, JSON.stringify(rec1), ...lines.slice(2)].join("\n") + "\n"
+
+  const result = importPytorchSidecarStream(forged, {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: PINNED_FIXTURE_LABEL,
+  })
+  assert.strictEqual(
+    result.allDifferentialsPassed,
+    false,
+    "unbatched multi-step stream must report a failing differential when a record's updates/params are forged (G-008)",
+  )
+  assert.strictEqual(result.steps[0]!.differentialPassed, true, "step 0 stays clean")
+  assert.strictEqual(result.steps[1]!.differentialPassed, false, "step 1 (forged) fails")
+  assert.strictEqual(result.steps[2]!.differentialPassed, true, "step 2 stays clean")
+  const paths = result.steps[1]!.differentialDisagreements.map((d) => d.fieldPath)
+  assert.ok(
+    paths.some((p) => p === `updates[${pid}].gradient`),
+    `expected updates[${pid}].gradient in step-1 disagreements; got ${JSON.stringify(paths)}`,
+  )
+  assert.ok(
+    paths.some((p) => p === `parameters_after.${pid}`),
+    `expected parameters_after.${pid} in step-1 disagreements; got ${JSON.stringify(paths)}`,
+  )
+  assert.strictEqual(
+    result.steps[1]!.receipt.fixture_status.verification_state,
+    "engine_recompute_disagreed",
+  )
+})
+
 test("each multi-step receipt schema-validates against v0.4.0", () => {
   if (!existsSync(goldenPath)) return
   const text = readFileSync(goldenPath, "utf-8").trim()

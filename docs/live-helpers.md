@@ -55,15 +55,15 @@ This mirrors the doctrine in:
 | Mazur-shaped feed-forward nets (single hidden layer, sigmoid/relu/identity hidden, sigmoid/softmax/identity/relu output) | ✅ supported | ✅ supported |
 | `half_squared_error` loss | ✅ supported | ✅ supported |
 | `cross_entropy_softmax` loss | ✅ supported | ✅ supported |
-| PyTorch SGD with weight_decay > 0 (coupled L2) | ❌ rejected at boundary | ❌ rejected at boundary (Rule 7 third branch deferred to v0.11) |
+| PyTorch SGD with weight_decay > 0 (coupled L2) | ❌ rejected at boundary | ❌ rejected at boundary (Rule 7 third branch — v0.13) |
 | AMP / `torch.cuda.amp.autocast` | ❌ rejected at boundary (fp16/fp32 master confusion — PyTorch issue #75224) | ❌ rejected at boundary |
-| CUDA / MPS / XLA devices | ❌ rejected at boundary (CPU-first; v0.11+ for device-tolerance) | ❌ rejected at boundary |
+| CUDA / MPS / XLA devices | ❌ rejected at boundary (CPU-first; GPU/fused-kernel bit-determinism is permanently out of scope — FP non-associativity, arXiv:2408.05148) | ❌ rejected at boundary |
 | Batched live extraction | ❌ not supported in helper (hand-authored batched sidecars continue working) | ❌ not supported in helper |
-| AMSGrad / NAdam / RAdam / Lion | ❌ deferred to v0.10+ | ❌ deferred to v0.10+ |
+| AMSGrad / NAdam / RAdam / Lion | ❌ deferred (NAdam/RAdam targeted v0.14; AMSGrad/Lion later, each gated on a receipt/reconciler extension) | ❌ deferred |
 | LBFGS / closure-style optimizers | ❌ deferred | ❌ deferred |
-| Multi-hidden-layer / CNN / transformer topologies | ❌ deferred to v0.11 | ❌ deferred to v0.11 |
-| JAX live helper | ⏸ deferred to v0.11 (adopter-pull triggered) | ⏸ deferred to v0.11 |
-| TensorFlow live helper | ⏸ deferred to v0.12+ (gated on JAX clean shipment) | ⏸ deferred to v0.12+ |
+| Multi-hidden-layer / CNN / transformer topologies | ❌ deferred to v1.0 (hero real-world fixture) | ❌ deferred to v1.0 |
+| JAX live helper | ⏸ deferred to v1.0 (jax.make_jaxpr(grad) gives a stronger trust boundary than PyTorch eager) | ⏸ deferred to v1.0 |
+| TensorFlow live helper | ⏸ deferred (gated on JAX clean shipment) | ⏸ deferred |
 
 **v0.10.1 closure:** the helper's optimizer matrix now matches the
 verifier's full PyTorch surface. The mismatch that defined v0.10.0
@@ -276,10 +276,15 @@ for cold readers.
 **v0.10.4 (planned)**: pip-vs-repo-script decision memo. Driven by
 the flip-signal contract documented above, not a calendar.
 
-**v0.11 and beyond** — JAX helper (adopter-pull triggered), TF helper
-(gated on JAX clean shipment), Lightning / Accelerate integration,
-multi-hidden-layer topologies, SGD coupled-L2 weight decay (Rule 7
-third branch) — out of v0.10.x scope.
+**v0.13 and beyond** (study-verified roadmap) — SGD coupled-L2 weight
+decay (the documented Rule 7 third branch; closed-form CPU recompute) at
+v0.13; NAdam / RAdam as cheap Adam variants then LR-schedule verification
+at v0.14; a real-world hero fixture (tiny conv→ReLU→dense, byte-reproducible
+CPU) + adopter validation + the JAX live helper (`jax.make_jaxpr(grad)`
+gives a stronger trust boundary than PyTorch eager; CPU + `jax_enable_x64`
++ pinned XLA) at v1.0. TF helper, multi-hidden-layer topologies, Lightning /
+Accelerate integration follow, each gated on a receipt/reconciler
+extension — out of v0.12 scope.
 
 ## Sources
 

@@ -51,7 +51,21 @@ The engine is the canonical reference. When the importer ingests a foreign sidec
 
 26 rules organized into per-receipt math (1-8), multi-step (9-10), schema-gated extensions (11-13, 18-19), engine-recompute differential (14), trust-related gates (15-17), Adam-family (20, 22-26), and SGD-momentum-family (20, 21, 25, 26). Each rule has a closed-form numerical expression — the rule re-derives the receipt's claimed value from the named factors, compares within hybrid tolerance (`atol + rtol`, symmetric max form), records {ok | failure} with the rule name + field path + numeric quartet (stored / recomputed / delta / tolerance).
 
-The reconciler is **pure** (no I/O) and **anti-circular** (does not read `fixture_status` / `authoring_state` / `verification_state` to decide whether to reject — those are operator-facing lifecycle metadata, NOT verifier authority). The verifier rejects on math, not on labels. This is the Csmith/CompCert ratchet enforced in code.
+The reconciler is **pure** (no I/O), **anti-circular** (does not read `fixture_status` / `authoring_state` / `verification_state` to decide whether to reject — those are operator-facing lifecycle metadata, NOT verifier authority), and **never throws** — it always returns a structured `{ok, failures[]}` result, even on malformed input, so callers never have to wrap it in try/catch. The verifier rejects on math, not on labels. This is the Csmith/CompCert ratchet enforced in code.
+
+### The tolerance-ceiling model (v0.12.0)
+
+A receipt declares a comparison tolerance (`attestor.differential_tolerance`), but **the verifier owns the ceiling**. Before any rule runs, the reconciler clamps the requested tolerance to a fixed, code-defined maximum — a receipt can tighten its tolerance but can never loosen it past the floor. This closes the worst hole an adversarial-audit found: a receipt naming a giant tolerance to wave its own numeric errors through.
+
+Three ceilings, one per comparison path:
+
+| Path | Constant | Ceiling |
+|---|---|---|
+| Engine-authored numeric rules | `NUMERIC_TOLERANCE_CEILING` | `{atol: 1e-8, rtol: 1e-6}` |
+| Observer-mode numeric rules | `OBSERVER_NUMERIC_TOLERANCE_CEILING` | `{atol: 1e-5, rtol: 1e-3}` |
+| Rule 14 differential | `DIFFERENTIAL_TOLERANCE_CEILING` | `{atol: 1e-5, rtol: 1e-3}` |
+
+The observer / differential ceilings are looser than the engine ceiling because foreign frameworks (and float32 sidecars) carry legitimate last-place FP drift the engine-authored path doesn't. The schema's `differential_tolerance` maximums act as a second line of defense, but the clamp is the authority — schema validation alone is not trusted to bound the numeric gate. See [Security](../security/) for the residual-tolerance-window discussion.
 
 ## The schemas
 
@@ -72,11 +86,13 @@ Three families, versioned independently:
 3. Validate against the matching framework-trace.v0.X.0 schema (dispatch on the `format` const)
 4. Assert `sidecar.source_framework.name` matches the calling importer (per-framework subcommand discipline)
 5. Run `runGeneralStep` from the sidecar's inputs as the differential witness
-6. Compare engine output to foreign claims field-by-field within `differential_tolerance` (default `{atol: 1e-6, rtol: 1e-4}` — looser than engine-authored to absorb foreign FP drift per the v0.6 study)
+6. Compare engine output to foreign claims field-by-field within `differential_tolerance` (default `{atol: 1e-6, rtol: 1e-4}` — looser than engine-authored to absorb foreign FP drift per the v0.6 study), clamped to `DIFFERENTIAL_TOLERANCE_CEILING` (`{atol: 1e-5, rtol: 1e-3}`) so a sidecar can't request an unbounded pass band. The comparison also accounts for float32 inputs (a v0.12.0 fix — single-precision sidecars were previously false-FAILing against a double-precision tolerance)
 7. Build the observer-mode receipt: foreign claims as canonical fields + `attestor` + `source_framework` + `fixture_status` (with `verification_state` reflecting the differential outcome)
 8. Emit canonical bytes via `emitGeneralReceipt`
 
 The receipt is always produced — even when Rule 14 disagrees at import time — so the operator can persist it for audit. `verification_state` records the outcome; downstream `bp verify` re-runs Rule 14 independently as the actual gate (Reproducible Builds discipline: producer's claim is not the verifier's truth).
+
+**Rule 14 is marker-gated (v0.12.0).** The reconciler decides whether to run Rule 14 on the presence of **observer markers** — `source_framework` (the foreign producer's identity) or `attestor.import_provenance` (the import seam) — NOT on the `authoring_state` enum. A receipt carrying either marker is, by construction, an import, so stripping or relabeling `authoring_state` no longer lets it dodge re-derivation. Rule 14 also checks **completeness**, not just agreement: it asserts the update set covers every engine-updated parameter and that `parameters_after` equals `topology.parameter_order` — a sidecar can no longer pass by omitting the parameters it got wrong.
 
 ## The live PyTorch helper
 

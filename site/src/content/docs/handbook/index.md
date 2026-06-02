@@ -21,8 +21,20 @@ The doctrinal anchor is [Csmith (Yang/Chen/Eide/Regehr, PLDI 2011)](https://user
 
 ## Status
 
-**v0.11.0 — first npm-published release**, still mid-v0. CPU-only. The 26-rule reconciler, canonical-emission contract, external ingestion path, and PyTorch live helper are real and stable.
+**v0.12.0 — soundness-hardening release**, still mid-v0. CPU-only. The 26-rule reconciler, canonical-emission contract, external ingestion path, and PyTorch live helper are real and stable.
 
-Not v1.0 yet — see the [README's "What's not in this version (yet)" section](https://github.com/mcp-tool-shop-org/backprop-trace#whats-not-in-this-version-yet) for the gaps that block promotion. The verifier surface is strong; the distribution surface ships correctly (pack-install smoke is CI-gated across ubuntu + macos + windows); the live helper covers the same optimizer matrix the verifier supports. What's missing for v1.0: adopter validation, a real-world (CNN / transformer) fixture, multi-framework live helpers (JAX/TF), and SGD coupled-L2 weight decay.
+v0.12.0 follows a comprehensive adversarial audit that found five classes of **false-PASS** — the worst defect a verifier can have, where it *accepts* a receipt it should reject. All five are closed:
 
-`pnpm add @mcptoolshop/backprop-trace` or `npm install @mcptoolshop/backprop-trace` — released to npm as v0.11.0.
+1. **Receipt-controlled tolerance** — a receipt could name its own tolerance and widen it until every numeric rule passed. Tolerance ceilings are now **verifier-owned**, clamped before any rule runs (engine `{atol 1e-8, rtol 1e-6}`, observer `{atol 1e-5, rtol 1e-3}`, differential `{atol 1e-5, rtol 1e-3}`), with schema maximums as defense-in-depth.
+2. **Rule 14 bypass by relabeling** — the only math gate on imported traces could be skipped by stripping/renaming the authoring-state field. It now triggers on **observer-marker presence** (`source_framework` / `import_provenance`).
+3. **Multi-step self-skip** — `bp verify multi` accepted a trace that declared its own math gate skipped. A self-declared skip is now a **NON-PASS on every path**.
+4. **Rule 14 completeness** — it verified agreement on present fields but not coverage. It now asserts the update set covers **every engine-updated parameter** and `parameters_after` matches the declared topology.
+5. **Unknown optimizers** — an unrecognized optimizer name silently skipped the update-equation rules. It is now a **Rule 0 structural reject**.
+
+Proactively, v0.12.0 adds verifier-owned resource caps (`MAX_BATCH_SAMPLES`, `TOPOLOGY_SIZE_CEILING`) that turn OOM/hang inputs into an actionable "limit exceeded" message, graceful large-input handling (`ERR_STRING_TOO_LONG` → structured error, no raw stacks), and fixes two false-FAILs (float32 observer receipts; per-neuron biases in the live helper, now torch-validated end-to-end). **792 tests** pass (up from 502), deterministic across the CI matrix; **12 trust invariants** hold with non-vacuous tests. See [Security & trust boundary](./security/) for the invariants and the documented residual tolerance windows.
+
+Not v1.0 yet — see the [README's "What's not in this version (yet)" section](https://github.com/mcp-tool-shop-org/backprop-trace#whats-not-in-this-version-yet) for the gaps that block promotion. The verifier surface is strong; the distribution surface ships correctly (pack-install smoke is CI-gated across ubuntu + macos + windows); the live helper covers the same optimizer matrix the verifier supports. v1.0 is gated on a real-world hero fixture (a tiny conv→ReLU→dense net, byte-reproducible on CPU) and external adopter validation.
+
+**Study-verified roadmap:** v0.13 — SGD coupled-L2 weight decay (the documented "Rule 7 third branch"). v0.14 — NAdam (+ optionally RAdam) and LR-schedule verification. v1.0 (gated) — the real-world hero fixture, adopter validation, and a JAX live helper (`jax.make_jaxpr(grad)` is a stronger trust boundary than PyTorch eager). Later, each gated on a receipt/reconciler extension: AMSGrad, global-norm gradient clipping, per-group LRs, Lion. **Permanent scope:** GPU/fused-kernel bit-determinism is out (FP non-associativity, [arXiv:2408.05148](https://arxiv.org/abs/2408.05148)) — the product is the deterministic CPU corner.
+
+`pnpm add @mcptoolshop/backprop-trace` or `npm install @mcptoolshop/backprop-trace` — released to npm as v0.12.0.

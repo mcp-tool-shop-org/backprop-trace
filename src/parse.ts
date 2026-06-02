@@ -28,6 +28,7 @@ import {
   type ValidateOptions,
 } from "./validate.js";
 import type { SchemaVersion } from "./schema-loader.js";
+import { stripBom } from "./parse-input.js";
 
 /**
  * Tagged union of the two failure classes parseReceipt can surface:
@@ -120,7 +121,9 @@ export function parseReceipt(
 ): ParseResult {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    // io-B-002: strip a leading UTF-8 BOM (U+FEFF) so a receipt written via
+    // Windows/PowerShell redirection parses identically to one without it.
+    parsed = JSON.parse(stripBom(text));
   } catch (err) {
     return {
       ok: false,
@@ -164,7 +167,18 @@ export function parseReceipt(
  *
  * Tolerates CRLF line endings on input (split on /\r?\n/) but the canonical
  * emitter still produces LF-only output (see docs/canonical-emission.md);
- * this leniency is for hand-edited / Windows-edited inputs only.
+ * this leniency is for hand-edited / Windows-edited inputs only. A leading
+ * UTF-8 BOM is stripped (io-B-002).
+ *
+ * IN-MEMORY CONTRACT (io-B-001): this helper holds the ENTIRE `text` in memory
+ * and `split`s it eagerly — it is NOT a streaming reader. That is the correct
+ * shape for the single-record receipts this validator targets (a Mazur/XOR/iris
+ * receipt is a few KB). A caller feeding a large multi-record JSONL stream
+ * (e.g. a long training run) must NOT read the whole file into one string and
+ * pass it here: chunk it line-by-line and call parseReceipt on each record, or
+ * use parseReceiptJsonlMulti (v0.3+) for the multi-record path. Streaming
+ * ingestion is a deferred feature-pass item; this note exists so the in-memory
+ * cost is explicit rather than a surprise at scale.
  *
  * @param text  Raw JSONL text. Trailing-LF after the single record is
  *              expected (canonical emission appends one), but not required;
@@ -176,7 +190,12 @@ export function parseReceiptJsonl(
   text: string,
   opts?: ValidateOptions,
 ): ParseResult {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  // io-B-002: strip a leading BOM before splitting — the mark sits at the very
+  // start of the document (ahead of the first record) when a JSONL file is
+  // produced by Windows/PowerShell redirection.
+  const lines = stripBom(text)
+    .split(/\r?\n/)
+    .filter((l) => l.trim().length > 0);
   if (lines.length === 0) {
     return {
       ok: false,

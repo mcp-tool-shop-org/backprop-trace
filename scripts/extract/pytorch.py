@@ -1,6 +1,8 @@
 """
-backprop-trace PyTorch live helper (v0.11.0)
-=============================================
+backprop-trace PyTorch live helper
+==================================
+(version tracked by the HELPER_VERSION constant below, in lockstep with the
+@mcptoolshop/backprop-trace package version — not hardcoded in this docstring.)
 
 MIT License — Copyright (c) 2026 mcp-tool-shop. See LICENSE in the
 @mcptoolshop/backprop-trace package.
@@ -62,32 +64,46 @@ judges. Fang et al. 2023 PoL spoofing class: producer with byte-control
 defeats structural-only checks; defense is independent recomputation.
 backprop-trace's Rule 14 IS that independent recomputation.
 
-SCOPE (v0.10.x)
----------------
+SCOPE
+-----
 SUPPORTED:
 - PyTorch SGD (vanilla, no momentum).
 - PyTorch SGD with momentum (`torch.optim.SGD(momentum=...)`), classical
-  + Nesterov + dampening — momentum_buffer sign-flipped at extraction
+  + Nesterov (dampening=0) — momentum_buffer sign-flipped at extraction
   boundary (see MOMENTUM_BUFFER SIGN FLIP below).
 - PyTorch Adam.
 - PyTorch AdamW (decoupled weight decay).
+- nn.Linear(..., bias=True): PER-NEURON biases (one bias parameter per
+  output neuron, b_h<k>/b_o<k>), updated every step like any real model.
+  bias=False is also supported (synthetic constant 0 biases).
 - Single-step and multi-step (call `with dumper.step():` per training step).
 - CPU device.
 - 2-2-2 / 2-2-3 / 2-3-2 topologies (Mazur-shaped feed-forward nets).
 - half_squared_error loss; cross_entropy_softmax loss.
 
-NOT SUPPORTED YET (v0.10.x / v0.11):
-- SGD with weight_decay (coupled L2 form) — REJECTED at boundary;
-  Rule 7 third branch deferred to v0.11.
-- AMSGrad / NAdam / RAdam / Lion — REJECTED at boundary.
-- LBFGS / closure-style optimizers — REJECTED at boundary.
+NOT SUPPORTED (REJECTED at the extraction boundary — HelperUnsupportedError):
+- SGD with weight_decay (coupled L2 form) — Rule 7 third branch deferred.
+- SGD dampening != 0 — PyTorch SKIPS dampening on the first (buffer-init)
+  step (buf = grad, no (1 - dampening) factor) while the engine's Rule 21a
+  applies it uniformly; the first-step buffer diverges, so a valid step
+  would be rejected. Classical momentum + Nesterov (dampening=0) are fine.
+- amsgrad=True (Adam/AdamW) — the engine models plain Adam, not the
+  AMSGrad max-of-v_hat track.
+- maximize=True (any) — ascent step; the engine is descent-only.
+- fused / capturable / differentiable = True — alternate kernels / graph
+  modes that can reorder FP ops and diverge from the engine recompute.
+- Multiple param_groups — the sidecar reads only param_groups[0]; per-
+  parameter / per-layer groups are deferred.
+- NAdam / RAdam / Lion / LBFGS / closure-style optimizers.
 - Batched live extraction — the batched sidecar path exists for
-  hand-authored sidecars, but the v0.10.x helper extracts SINGLE
-  samples one at a time.
-- AMP / GradScaler — REJECTED at boundary (PyTorch issue #75224
-  fp16/fp32 master-confusion).
-- CUDA / MPS / XLA devices — REJECTED at boundary (CPU-first v0.10.x;
-  device-tolerance work is v0.11+).
+  hand-authored sidecars, but the helper extracts SINGLE samples one at a
+  time.
+- AMP / GradScaler — PyTorch issue #75224 fp16/fp32 master-confusion.
+- CUDA / MPS / XLA devices — CPU-first; device-tolerance is future work.
+
+NOTE: the hand-authored sidecar path (bp import pytorch on a manually
+written framework-trace sidecar) continues to support many of these — only
+the LIVE HELPER refuses them.
 
 MOMENTUM_BUFFER SIGN FLIP (LOAD-BEARING)
 -----------------------------------------
@@ -141,7 +157,7 @@ except ImportError:  # pragma: no cover
     nn = None  # type: ignore
 
 
-HELPER_VERSION = "0.11.0"
+HELPER_VERSION = "0.12.0"
 HELPER_NAME = "backprop-trace-pytorch-helper"
 SCHEMA_FORMAT = "framework-trace.v0.7.0"
 DEFAULT_TOLERANCE_ATOL = 1e-6
@@ -160,7 +176,7 @@ class HelperError(Exception):
 
 
 class HelperUnsupportedError(HelperError):
-    """User asked for a feature outside the current v0.10.x helper
+    """User asked for a feature outside the current helper
     scope (AMSGrad / NAdam / RAdam / Lion / LBFGS / SGD-coupled-L2-
     weight-decay / AMP / GPU / multi-hidden-layer topologies). The
     hand-authored sidecar path remains available for many of these;
@@ -190,7 +206,7 @@ def _compute_self_source_hash() -> str:
 def _infer_topology(model: "nn.Module", *, loss: str) -> dict[str, Any]:
     """Infer a backprop-trace topology from a torch.nn.Module.
 
-    v0.10 supports the same single-hidden-layer feed-forward shape the
+    The helper supports the same single-hidden-layer feed-forward shape the
     engine's general-engine.ts handles: Linear(input → hidden) →
     activation → Linear(hidden → output) → output_activation. Topology
     keys are pinned to the Mazur canonical form (i1/i2, h1/h2, o1/o2).
@@ -198,16 +214,16 @@ def _infer_topology(model: "nn.Module", *, loss: str) -> dict[str, Any]:
     linears = [m for m in model.modules() if isinstance(m, nn.Linear)]
     if len(linears) != 2:
         raise HelperUnsupportedError(
-            f"helper v0.10.x: expected exactly 2 nn.Linear layers (input→hidden, hidden→output); "
-            f"got {len(linears)}. v0.10 supports single-hidden-layer feed-forward nets only. "
-            f"CNN / transformer / multi-hidden-layer topologies deferred to v0.11."
+            f"helper: expected exactly 2 nn.Linear layers (input→hidden, hidden→output); "
+            f"got {len(linears)}. The helper supports single-hidden-layer feed-forward nets only. "
+            f"CNN / transformer / multi-hidden-layer topologies are not supported."
         )
     input_size = linears[0].in_features
     hidden_size = linears[0].out_features
     output_size = linears[1].out_features
     if linears[1].in_features != hidden_size:
         raise HelperUnsupportedError(
-            f"helper v0.10.x: hidden→output linear's in_features ({linears[1].in_features}) "
+            f"helper: hidden→output linear's in_features ({linears[1].in_features}) "
             f"!= input→hidden's out_features ({hidden_size}). Topology mismatch."
         )
 
@@ -235,12 +251,12 @@ def _infer_topology(model: "nn.Module", *, loss: str) -> dict[str, Any]:
     # Cross-check loss vs output activation
     if loss == "cross_entropy_softmax" and activation_output != "softmax":
         raise HelperUnsupportedError(
-            f"helper v0.10.x: loss='cross_entropy_softmax' requires output activation "
+            f"helper: loss='cross_entropy_softmax' requires output activation "
             f"to be Softmax; observed '{activation_output}'."
         )
     if loss == "half_squared_error" and activation_output not in ("sigmoid", "identity", "relu"):
         raise HelperUnsupportedError(
-            f"helper v0.10.x: loss='half_squared_error' requires output activation "
+            f"helper: loss='half_squared_error' requires output activation "
             f"in (sigmoid, identity, relu); observed '{activation_output}'."
         )
 
@@ -265,15 +281,27 @@ def _infer_topology(model: "nn.Module", *, loss: str) -> dict[str, Any]:
                 }
             )
             parameter_order.append(pid)
-    # hidden biases (per-layer convention in v0.10; bias_sharing="per_layer")
-    parameters.append(
-        {
-            "id": "b_h",
-            "role": "hidden_bias",
-            "applies_to_units": list(hidden_units),
-        }
-    )
-    parameter_order.append("b_h")
+    # hidden biases (PER-NEURON convention; bias_sharing="per_neuron").
+    #
+    # A real nn.Linear(in, hidden, bias=True) has ONE bias scalar per OUTPUT
+    # neuron (Linear.bias is a 1-D tensor of length out_features), and any
+    # optimizer updates each of those scalars independently. There is no
+    # "shared layer bias" in PyTorch. Emitting a single per_layer b_h was
+    # structurally wrong (G-015): after one real SGD/Adam step the two hidden
+    # biases diverge, so a per_layer sidecar either crashed at extraction (the
+    # "all equal" guard) or — worse — was silently treated as constant by the
+    # importer and rejected by Rule 14. We emit one bias parameter per hidden
+    # unit (b_h1, b_h2, …) so the engine's per_neuron + sgd path updates them.
+    for h_out in range(hidden_size):
+        bid = f"b_h{h_out + 1}"
+        parameters.append(
+            {
+                "id": bid,
+                "role": "hidden_bias",
+                "applies_to_units": [hidden_units[h_out]],
+            }
+        )
+        parameter_order.append(bid)
     # hidden→output weights: w_<h_in>_<o_out>
     for h_in in range(hidden_size):
         for o_out in range(output_size):
@@ -287,15 +315,17 @@ def _infer_topology(model: "nn.Module", *, loss: str) -> dict[str, Any]:
                 }
             )
             parameter_order.append(pid)
-    # output biases (per-layer)
-    parameters.append(
-        {
-            "id": "b_o",
-            "role": "output_bias",
-            "applies_to_units": list(output_units),
-        }
-    )
-    parameter_order.append("b_o")
+    # output biases (PER-NEURON — one per output unit: b_o1, b_o2, …).
+    for o_out in range(output_size):
+        bid = f"b_o{o_out + 1}"
+        parameters.append(
+            {
+                "id": bid,
+                "role": "output_bias",
+                "applies_to_units": [output_units[o_out]],
+            }
+        )
+        parameter_order.append(bid)
 
     return {
         "layers": ["input", "hidden", "output"],
@@ -312,7 +342,7 @@ def _infer_topology(model: "nn.Module", *, loss: str) -> dict[str, Any]:
         "activation_hidden": activation_hidden,
         "activation_output": activation_output,
         "loss": loss,
-        "bias_sharing": "per_layer",
+        "bias_sharing": "per_neuron",
     }
 
 
@@ -349,10 +379,14 @@ def _snapshot_parameters(model: "nn.Module", topology: dict[str, Any]) -> dict[s
         weight[h_out_idx, i_in_idx] = w_i<in+1>_h<out+1>
     For hidden→output:
         weight[o_out_idx, h_in_idx] = w_h<in+1>_o<out+1>
-    Bias is a 1-D tensor of length out_features; we apply per-layer
-    averaging when bias_sharing == "per_layer" (the canonical case in
-    v0.10) — PyTorch's per-unit biases must all be equal for that
-    sharing convention to hold.
+    Bias is a 1-D tensor of length out_features; under the PER-NEURON
+    convention (G-015) each bias scalar maps to its own parameter:
+        bias[h_out_idx] = b_h<out+1>
+        bias[o_out_idx] = b_o<out+1>
+    PyTorch has no shared per-layer bias, so there is no all-equal guard.
+    A bias-less Linear (bias=False) is reported as 0.0 per neuron — the
+    importer keeps these constant (bias_policy stays 'constant' when no
+    bias parameter changes across the step; see import-observer.ts).
     """
     linears = [m for m in model.modules() if isinstance(m, nn.Linear)]
     L_in_h = linears[0]
@@ -366,31 +400,23 @@ def _snapshot_parameters(model: "nn.Module", topology: dict[str, Any]) -> dict[s
         for i_in in range(input_size):
             snap[f"w_i{i_in + 1}_h{h_out + 1}"] = W_ih[h_out * input_size + i_in]
     if L_in_h.bias is not None:
-        b_h = _snap_tensor(L_in_h.bias)
-        if not all(abs(b - b_h[0]) < 1e-12 for b in b_h):
-            raise HelperUnsupportedError(
-                f"helper v0.10.x: hidden-layer per-unit biases must all be equal "
-                f"for bias_sharing='per_layer' convention; observed {b_h}. "
-                f"Per-neuron-bias topologies are receipt-schema-supported but "
-                f"v0.10 helper authors per-layer only."
-            )
-        snap["b_h"] = b_h[0]
+        b_h = _snap_tensor(L_in_h.bias)  # length hidden_size, per-neuron
+        for h_out in range(hidden_size):
+            snap[f"b_h{h_out + 1}"] = b_h[h_out]
     else:
-        snap["b_h"] = 0.0
+        for h_out in range(hidden_size):
+            snap[f"b_h{h_out + 1}"] = 0.0
     W_ho = _snap_tensor(L_h_o.weight)  # length output_size * hidden_size
     for o_out in range(output_size):
         for h_in in range(hidden_size):
             snap[f"w_h{h_in + 1}_o{o_out + 1}"] = W_ho[o_out * hidden_size + h_in]
     if L_h_o.bias is not None:
-        b_o = _snap_tensor(L_h_o.bias)
-        if not all(abs(b - b_o[0]) < 1e-12 for b in b_o):
-            raise HelperUnsupportedError(
-                f"helper v0.10.x: output-layer per-unit biases must all be equal "
-                f"for bias_sharing='per_layer' convention; observed {b_o}."
-            )
-        snap["b_o"] = b_o[0]
+        b_o = _snap_tensor(L_h_o.bias)  # length output_size, per-neuron
+        for o_out in range(output_size):
+            snap[f"b_o{o_out + 1}"] = b_o[o_out]
     else:
-        snap["b_o"] = 0.0
+        for o_out in range(output_size):
+            snap[f"b_o{o_out + 1}"] = 0.0
     return snap
 
 
@@ -440,29 +466,47 @@ def _snapshot_per_parameter_state(
 
     if family in ("adam", "adamw"):
         def _adam_element(state: dict[str, Any], *idx: int) -> dict[str, Any]:
-            # Pre-first-step zero-init (Adam lazy-init; matches v0.6.0
-            # AdamState required shape {m, v}).
+            # Pre-first-step zero-init (Adam lazy-init). The schema's AdamState
+            # is EXACTLY {m, v} (additionalProperties:false) — emitting a `step`
+            # field fails schema validation (a latent bug torch end-to-end
+            # exposed; the fixtures derive from hand-authored {m,v}-only
+            # sidecars). The Adam timestep `t` lives on the top-level optimizer
+            # block (step_index + 1, Rule 23), NOT in per-parameter state, so
+            # `step` is not needed here.
             if not state or "exp_avg" not in state:
-                return {"m": 0.0, "v": 0.0, "step": step_index}
-            step_val = state["step"]
-            step_int = int(step_val.item()) if torch.is_tensor(step_val) else int(step_val)
+                return {"m": 0.0, "v": 0.0}
             m_t = state["exp_avg"]
             v_t = state["exp_avg_sq"]
-            m_val = float(m_t[idx].detach().to(torch.float64).item())
+            # === ADAM m SIGN FLIP (LOAD-BEARING) ===
+            # PyTorch's exp_avg accumulates the ASCENT gradient:
+            #   exp_avg = beta1 * exp_avg + (1 - beta1) * grad_ascent.
+            # backprop-trace's AdamState.m lives in DESCENT space, consistent
+            # with the descent-signed `gradient` the receipt carries (Rule 22a:
+            # m_after = beta1*m_before + (1-beta1)*gradient_descent). Since m is
+            # LINEAR in the gradient, m_descent = -m_ascent — flip once here.
+            # exp_avg_sq (v) is QUADRATIC in the gradient (grad^2), so it is
+            # sign-invariant and is NOT flipped (Rule 22b uses gradient^2).
+            # Same doctrine as the momentum_buffer sign flip above; the
+            # hand-authored Adam fixtures were already descent-signed, so this
+            # live-extraction flip was untested until torch end-to-end.
+            m_val = -float(m_t[idx].detach().to(torch.float64).item())
             v_val = float(v_t[idx].detach().to(torch.float64).item())
-            return {"m": m_val, "v": v_val, "step": step_int}
+            return {"m": m_val, "v": v_val}
 
         # input→hidden weights (Linear.weight shape: [hidden_size, input_size])
         for h_out in range(hidden_size):
             for i_in in range(input_size):
                 snap[f"w_i{i_in + 1}_h{h_out + 1}"] = _adam_element(s_w_ih, h_out, i_in)
-        # hidden bias (per-layer convention: all bias entries equal; element 0)
-        snap["b_h"] = _adam_element(s_b_h, 0)
+        # hidden biases (PER-NEURON: bias state element h_out → b_h<h_out+1>)
+        for h_out in range(hidden_size):
+            snap[f"b_h{h_out + 1}"] = _adam_element(s_b_h, h_out)
         # hidden→output weights (Linear.weight shape: [output_size, hidden_size])
         for o_out in range(output_size):
             for h_in in range(hidden_size):
                 snap[f"w_h{h_in + 1}_o{o_out + 1}"] = _adam_element(s_w_ho, o_out, h_in)
-        snap["b_o"] = _adam_element(s_b_o, 0)
+        # output biases (PER-NEURON: bias state element o_out → b_o<o_out+1>)
+        for o_out in range(output_size):
+            snap[f"b_o{o_out + 1}"] = _adam_element(s_b_o, o_out)
         return snap
 
     if family == "sgd_momentum":
@@ -490,15 +534,19 @@ def _snapshot_per_parameter_state(
         for h_out in range(hidden_size):
             for i_in in range(input_size):
                 snap[f"w_i{i_in + 1}_h{h_out + 1}"] = _momentum_element(s_w_ih, h_out, i_in)
-        snap["b_h"] = _momentum_element(s_b_h, 0)
+        # hidden biases (PER-NEURON: momentum buffer element h_out → b_h<h_out+1>)
+        for h_out in range(hidden_size):
+            snap[f"b_h{h_out + 1}"] = _momentum_element(s_b_h, h_out)
         for o_out in range(output_size):
             for h_in in range(hidden_size):
                 snap[f"w_h{h_in + 1}_o{o_out + 1}"] = _momentum_element(s_w_ho, o_out, h_in)
-        snap["b_o"] = _momentum_element(s_b_o, 0)
+        # output biases (PER-NEURON: momentum buffer element o_out → b_o<o_out+1>)
+        for o_out in range(output_size):
+            snap[f"b_o{o_out + 1}"] = _momentum_element(s_b_o, o_out)
         return snap
 
     raise HelperUnsupportedError(  # pragma: no cover
-        f"helper v0.10.x: unknown optimizer family {family!r} in _snapshot_per_parameter_state"
+        f"helper: unknown optimizer family {family!r} in _snapshot_per_parameter_state"
     )
 
 
@@ -507,51 +555,149 @@ def _snapshot_per_parameter_state(
 # ---------------------------------------------------------------------------
 
 
-def _detect_optimizer_family(optimizer: "torch.optim.Optimizer") -> str:
-    """Return one of "sgd" | "sgd_momentum" | "adam" | "adamw" for v0.10.1
-    supported families.
+def _flag_is_set(optimizer: "torch.optim.Optimizer", group: dict[str, Any], key: str) -> bool:
+    """Read a boolean optimizer flag, checking the param_group first then the
+    optimizer.defaults. Some flags (e.g. fused, capturable) live in defaults
+    but not always in every param_group dict; checking both is robust."""
+    if key in group:
+        return bool(group.get(key))
+    defaults = getattr(optimizer, "defaults", {}) or {}
+    return bool(defaults.get(key, False))
 
-    v0.10.1 closes the helper-side optimizer matrix gap from v0.10.0:
+
+def _assert_supported_optimizer_flags(optimizer: "torch.optim.Optimizer") -> None:
+    """G-016 / G-034 — reject optimizer flags whose numerics the engine does
+    NOT model, BEFORE any sidecar is emitted.
+
+    _detect_optimizer_family used to key SOLELY on type(optimizer).__name__, so
+    Adam(amsgrad=True) / AdamW(amsgrad=True) and any optimizer with
+    maximize=True were silently accepted and MISLABELED as plain
+    adam/adamw/descent — a wrong-but-schema-valid sidecar (the README claimed
+    'AMSGrad ... REJECTED at boundary'; that was false for the flag form). We
+    inspect the actual flags via optimizer.defaults / param_group and refuse:
+
+      - maximize=True   (all): ascent step (θ += lr·g); the engine is descent-
+                               only. Numerically inverted.
+      - amsgrad=True (Adam/AdamW): uses max(v_hat) — the engine's Rule 22/24
+                               model plain Adam, not the AMSGrad max-track.
+      - fused / capturable / differentiable = True: alternate kernels / graph
+                               modes that can reorder FP ops and diverge from
+                               the engine's pinned scalar recurrences.
+
+    (foreach is intentionally NOT rejected: on CPU it is a vectorized but
+    bit-identical path. G-034 multi-param-group rejection lives in the caller.)
+    """
+    BANNED_ALL = ("maximize", "fused", "capturable", "differentiable")
+    BANNED_ADAM = ("amsgrad",)
+    cls = type(optimizer).__name__
+    for group in optimizer.param_groups:
+        for flag in BANNED_ALL:
+            if _flag_is_set(optimizer, group, flag):
+                raise HelperUnsupportedError(
+                    f"helper: torch.optim.{cls} with {flag}=True is rejected at the "
+                    f"extraction boundary — its numerics can diverge from backprop-trace's "
+                    f"engine recompute (maximize is an ascent step; fused/capturable/"
+                    f"differentiable use alternate kernels/graph modes that reorder FP ops). "
+                    f"The engine models descent-only, scalar, pinned recurrences. Disable the "
+                    f"flag for sidecar extraction, or use the hand-authored sidecar path."
+                )
+        if cls in ("Adam", "AdamW"):
+            for flag in BANNED_ADAM:
+                if _flag_is_set(optimizer, group, flag):
+                    raise HelperUnsupportedError(
+                        f"helper: torch.optim.{cls} with {flag}=True (AMSGrad) is rejected at the "
+                        f"extraction boundary. The engine's Adam recurrences (Rule 22/24, Kingma & Ba "
+                        f"2014) model plain Adam, NOT the AMSGrad max-of-v_hat track (Reddi et al. 2018 "
+                        f"arXiv:1904.09237). An AMSGrad step would be silently mislabeled as plain adam. "
+                        f"Use plain Adam/AdamW, or the hand-authored sidecar path."
+                    )
+
+
+def _detect_optimizer_family(optimizer: "torch.optim.Optimizer") -> str:
+    """Return one of "sgd" | "sgd_momentum" | "adam" | "adamw" for the
+    supported families, AFTER asserting flags + param-group constraints.
+
     - "sgd" — torch.optim.SGD with momentum=0 AND weight_decay=0
-    - "sgd_momentum" — torch.optim.SGD with momentum > 0 (any combo of
-      Nesterov / dampening; PyTorch rejects nesterov=True with
-      dampening != 0 at constructor time so we never observe the combo)
+    - "sgd_momentum" — torch.optim.SGD with momentum > 0 (classical or
+      Nesterov; dampening != 0 is REJECTED — see below)
     - "adam" — torch.optim.Adam
     - "adamw" — torch.optim.AdamW (decoupled weight decay)
 
-    SGD with weight_decay > 0 (coupled L2) remains REJECTED — Rule 7's
-    third branch is deferred to v0.11. AMSGrad / NAdam / RAdam / Lion /
-    LBFGS remain REJECTED."""
+    G-016: flags whose numerics diverge (maximize / amsgrad / fused /
+    capturable / differentiable) are rejected via
+    _assert_supported_optimizer_flags. G-034: multi-param-group optimizers are
+    rejected here (the family scan inspects all groups but the hyperparameter
+    block reads only param_groups[0], so >1 group would be silently
+    mishandled). SGD with weight_decay > 0 (coupled L2) and AMSGrad / NAdam /
+    RAdam / Lion / LBFGS remain REJECTED."""
+    # G-016 — reject divergent flags first (applies to every family).
+    _assert_supported_optimizer_flags(optimizer)
+    # G-034 — multi-param-group optimizers: the family scan below looks at all
+    # groups, but _build_optimizer_block + the learning_rate resolution read
+    # ONLY param_groups[0]. A 2-group optimizer (e.g. different lr per layer)
+    # would be silently mishandled (group-1 hyperparameters dropped). Reject —
+    # per-parameter groups are deferred (documented scope).
+    if len(optimizer.param_groups) > 1:
+        raise HelperUnsupportedError(
+            f"helper: optimizer has {len(optimizer.param_groups)} param_groups; the helper supports "
+            f"exactly 1. Per-parameter / per-layer groups (distinct lr, momentum, weight_decay, etc.) "
+            f"are deferred — the sidecar's top-level optimizer block reads only param_groups[0], so "
+            f"additional groups would be silently dropped. Use a single param_group, or the "
+            f"hand-authored sidecar path."
+        )
     cls = type(optimizer).__name__
     if cls == "Adam":
         return "adam"
     if cls == "AdamW":
         return "adamw"
     if cls == "SGD":
-        # Inspect param_groups for momentum + weight_decay
+        # Inspect the (single) param_group for momentum + weight_decay + dampening.
         any_momentum = False
         for group in optimizer.param_groups:
             wd = group.get("weight_decay", 0.0)
             if wd > 0:
                 raise HelperUnsupportedError(
-                    "helper v0.10.x: torch.optim.SGD with weight_decay > 0 "
-                    "(coupled L2 form) is deferred to v0.11 (Rule 7 third branch). "
-                    "v0.10.x supports SGD (no weight_decay), sgd_momentum (no "
+                    "helper: torch.optim.SGD with weight_decay > 0 "
+                    "(coupled L2 form) is deferred (Rule 7 third branch). "
+                    "Supported: SGD (no weight_decay), sgd_momentum (no "
                     "weight_decay), Adam, and AdamW (decoupled weight_decay). "
                     "Hand-authored sidecars continue to work via the existing "
                     "bp import pytorch path."
                 )
-            if group.get("momentum", 0.0) > 0:
+            momentum = group.get("momentum", 0.0)
+            dampening = group.get("dampening", 0.0)
+            # DAMPENING REJECTION (numerics diverge on the FIRST step):
+            # PyTorch's SGD skips dampening on the step where the momentum
+            # buffer is initialized — `buf = grad.clone()` (NO (1 - dampening)
+            # factor) — and applies `buf = mu*buf + (1 - dampening)*grad` only
+            # from the SECOND step on (torch/optim/sgd.py _single_tensor_sgd).
+            # The engine's Rule 21a applies (1 - dampening) UNIFORMLY on every
+            # step, so a step-0 dampening sidecar fails Rule 14 on
+            # state_after.buffer. A per-step observer cannot guarantee it is
+            # never invoked on a buffer-init step, so dampening != 0 is rejected
+            # outright. Classical momentum (dampening=0) and Nesterov are
+            # supported and round-trip exactly. (Hand-authored dampening
+            # sidecars remain valid via bp import pytorch.)
+            if momentum > 0 and dampening != 0:
+                raise HelperUnsupportedError(
+                    "helper: torch.optim.SGD with dampening != 0 is rejected at the extraction "
+                    "boundary. PyTorch SKIPS dampening on the first (buffer-init) step "
+                    "(buf = grad, no (1 - dampening) factor) but the engine's Rule 21a applies "
+                    "(1 - dampening) on every step, so the first-step buffer diverges and Rule 14 "
+                    "rejects a valid step. Classical momentum (dampening=0) and Nesterov are fully "
+                    "supported. Use dampening=0, or the hand-authored sidecar path for dampening."
+                )
+            if momentum > 0:
                 any_momentum = True
         if any_momentum:
             return "sgd_momentum"
         return "sgd"
     raise HelperUnsupportedError(
-        f"helper v0.10.x: optimizer class '{cls}' is not supported. "
-        f"v0.10.x supports torch.optim.{{SGD, Adam, AdamW}}. "
+        f"helper: optimizer class '{cls}' is not supported. "
+        f"The helper supports torch.optim.{{SGD, Adam, AdamW}}. "
         f"SGD with momentum > 0 is supported as 'sgd_momentum' (with the "
         f"documented momentum_buffer sign-flip). "
-        f"AMSGrad / NAdam / RAdam / Lion / LBFGS deferred to v0.10+."
+        f"AMSGrad / NAdam / RAdam / Lion / LBFGS are not supported."
     )
 
 
@@ -568,12 +714,13 @@ def _build_optimizer_block(
     block:
       - adam:         {name, learning_rate, beta1, beta2, epsilon, t}
       - adamw:        same as adam + weight_decay
-      - sgd_momentum: {name, learning_rate, momentum, nesterov?, dampening?}
+      - sgd_momentum: {name, learning_rate, momentum, nesterov?}
         - nesterov is emitted only when True (preserves v0.6.0 byte-equal
           for classical sgd_momentum)
-        - dampening is emitted only when > 0
-        - PyTorch rejects nesterov=True with dampening != 0 at the
-          constructor, so we never observe the combo
+        - dampening is NOT emitted: SGD with dampening != 0 is rejected
+          upstream by _detect_optimizer_family (it cannot round-trip the
+          engine's uniform Rule 21a on the buffer-init step), so the live
+          helper only ever observes dampening == 0 here.
     """
     if family == "sgd":
         return None
@@ -606,13 +753,15 @@ def _build_optimizer_block(
             "momentum": float(g["momentum"]),
         }
         nesterov = bool(g.get("nesterov", False))
-        dampening = float(g.get("dampening", 0.0))
         if nesterov:
             block["nesterov"] = True
-        if dampening > 0:
-            block["dampening"] = dampening
+        # dampening is NOT emitted. _detect_optimizer_family rejects SGD with
+        # dampening != 0 at the extraction boundary (it cannot round-trip the
+        # engine's uniform Rule 21a on the buffer-init step — see the DAMPENING
+        # REJECTION block there), so by construction dampening == 0 here. Do NOT
+        # re-add a dampening field: a dampened step genuinely fails Rule 14.
         return block
-    raise HelperUnsupportedError(f"helper v0.10.x: optimizer family {family!r} unsupported")  # pragma: no cover
+    raise HelperUnsupportedError(f"helper: optimizer family {family!r} unsupported")  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------
@@ -621,13 +770,13 @@ def _build_optimizer_block(
 
 
 def _assert_no_amp() -> None:
-    """v0.10 rejects AMP / autocast — fp16 master vs fp32 master confusion
+    """The helper rejects AMP / autocast — fp16 master vs fp32 master confusion
     is the canonical AMP extraction bug (PyTorch issue #75224)."""
     if not _TORCH_AVAILABLE:  # pragma: no cover
         return
     if torch.is_autocast_enabled():
         raise HelperUnsupportedError(
-            "helper v0.10.x: torch.cuda.amp.autocast is active. v0.10.x helper requires "
+            "helper: torch.cuda.amp.autocast is active. The helper requires "
             "fp32 training without autocast (fp16 master vs fp32 master confusion is "
             "the canonical AMP extraction bug per PyTorch issue #75224). Disable "
             "autocast for the snapshot or upcast tensors to fp32 before dumper.step()."
@@ -635,13 +784,13 @@ def _assert_no_amp() -> None:
 
 
 def _assert_cpu_only(p: "torch.Tensor") -> None:
-    """v0.10 ships CPU-first. CUDA/MPS/XLA reported but rejected for v0.10
-    (separate device-tolerance work is v0.11+)."""
+    """The helper is CPU-first. CUDA/MPS/XLA reported but rejected
+    (separate device-tolerance work is future)."""
     device_type = p.device.type
     if device_type != "cpu":
         raise HelperUnsupportedError(
-            f"helper v0.10.x: parameter device '{device_type}' is not supported. "
-            f"v0.10 ships CPU-first; CUDA/MPS/XLA device-tolerance is v0.11+. "
+            f"helper: parameter device '{device_type}' is not supported. "
+            f"The helper is CPU-first; CUDA/MPS/XLA device-tolerance is future work. "
             f"Move the model to CPU for sidecar extraction "
             f"(model.cpu(); inputs.cpu(); targets.cpu()) and try again. "
             f"Training can resume on GPU after the snapshot."
@@ -658,9 +807,9 @@ def _normalize_for_json(value: Any) -> Any:
     would reject these, but a clean Python-side error is friendlier)."""
     if isinstance(value, float):
         if value != value:  # NaN
-            raise HelperError("helper v0.10.x: extracted NaN — backprop-trace receipts forbid NaN.")
+            raise HelperError("helper: extracted NaN — backprop-trace receipts forbid NaN.")
         if value in (float("inf"), float("-inf")):
-            raise HelperError("helper v0.10.x: extracted Infinity — backprop-trace receipts forbid Infinity.")
+            raise HelperError("helper: extracted Infinity — backprop-trace receipts forbid Infinity.")
         return value
     if isinstance(value, dict):
         return {k: _normalize_for_json(v) for k, v in value.items()}
@@ -718,7 +867,7 @@ class TraceDumper:
     around the per-step body to emit one sidecar per training step.
 
     See module docstring for the trust-boundary statement, scope, and
-    momentum_buffer sign-flip pin for v0.10.1.
+    momentum_buffer sign-flip pin.
     """
 
     def __init__(
@@ -731,10 +880,11 @@ class TraceDumper:
         trace_id: Optional[str] = None,
         topology_loss: str = "half_squared_error",
         learning_rate: Optional[float] = None,
+        append: bool = False,
     ) -> None:
         if not _TORCH_AVAILABLE:  # pragma: no cover
             raise HelperError(
-                "helper v0.10.x: torch is not installed. Install PyTorch (https://pytorch.org) "
+                "helper: torch is not installed. Install PyTorch (https://pytorch.org) "
                 "or use the hand-authored sidecar path via the framework-trace.v0.6.0 schema."
             )
         _assert_no_amp()
@@ -752,12 +902,32 @@ class TraceDumper:
             self._learning_rate = float(optimizer.param_groups[0]["lr"])
         self._trace_id_default = trace_id
         self._step_counter = 0
-        # Resolve out destination
+        # Resolve out destination.
+        #
+        # G-058 — DEFAULT to write-truncate ('w'). The old default was append
+        # ('a'), so re-running a training script silently CONCATENATED a new
+        # trace onto the previous file's bytes — a stale multi-trace JSONL that
+        # then fails import (mixed trace_ids / step_index sequencing) or, worse,
+        # imports as a corrupt longer trace. Truncating on open is the
+        # least-surprise default; pass append=True to deliberately accumulate
+        # across runs, and we warn loudly if that targets a non-empty file.
         self._out_owns_handle = False
         if out is None:
             self._out: TextIO = sys.stdout
         elif isinstance(out, (str, Path)):
-            self._out = open(str(out), "a", encoding="utf-8")
+            mode = "a" if append else "w"
+            if append:
+                try:
+                    if Path(str(out)).exists() and Path(str(out)).stat().st_size > 0:
+                        print(
+                            f"helper: WARNING — appending (append=True) to non-empty file "
+                            f"{out!r}; existing bytes are preserved and the new trace is "
+                            f"concatenated. If you meant to overwrite, drop append=True.",
+                            file=sys.stderr,
+                        )
+                except OSError:  # pragma: no cover
+                    pass
+            self._out = open(str(out), mode, encoding="utf-8")
             self._out_owns_handle = True
         else:
             self._out = out  # caller-provided stream
@@ -796,7 +966,7 @@ class TraceDumper:
         _assert_no_amp()
         if not torch.is_grad_enabled():
             raise HelperError(
-                "helper v0.10.x: torch.is_grad_enabled() is False on entry to dumper.step(). "
+                "helper: torch.is_grad_enabled() is False on entry to dumper.step(). "
                 "backprop-trace requires gradients to verify Rule 4. Did you nest dumper.step() "
                 "inside a torch.no_grad() block?"
             )
@@ -827,10 +997,10 @@ class TraceDumper:
             self._model, self._optimizer, self._topology, self._family, self._step_counter,
         )
 
-        # Resolve inputs/targets — required from the caller in v0.10
+        # Resolve inputs/targets — required from the caller
         if inputs_override is None or targets_override is None:
             raise HelperError(
-                "helper v0.10.x: dumper.step(inputs={...}, targets={...}) requires "
+                "helper: dumper.step(inputs={...}, targets={...}) requires "
                 "both inputs and targets to be passed explicitly. Inference from "
                 "torch.autograd graph is fragile; the explicit-pass convention "
                 "makes the receipt's named-factors provenance unambiguous."
@@ -840,7 +1010,7 @@ class TraceDumper:
         optimizer_block = _build_optimizer_block(self._optimizer, self._family, self._step_counter)
 
         # Compute gradient + forward from cached run by re-doing the math
-        # the user just ran. v0.10 does NOT capture mid-step; it captures
+        # the user just ran. The helper does NOT capture mid-step; it captures
         # pre-state and post-state and asks the verifier (Rule 14) to fill
         # forward/backward by recomputation. The sidecar emits a MINIMAL
         # shape: parameters_before, parameters_after, inputs, targets, plus
@@ -912,8 +1082,8 @@ class TraceDumper:
         For the gradient field of each update, we use (weight_before -
         weight_after) / lr for plain SGD; for Adam we cannot derive it from
         before/after alone (the moment update is path-dependent), so we
-        flag this as a v0.10 limitation that requires the user to capture
-        gradients explicitly. The simpler solution for v0.10 is: re-run
+        flag this as a limitation that requires the user to capture
+        gradients explicitly. The simpler solution is: re-run
         loss.backward() once more on a snapshot of pre-state. We do that
         below.
         """
@@ -937,19 +1107,21 @@ class TraceDumper:
             requires_grad=False,
         )
 
-        # Reconstruct weights
+        # Reconstruct weights + PER-NEURON biases (G-015): b_h<k> / b_o<k>.
         W_ih = torch.zeros(len(h_units), len(i_units), dtype=torch.float64, requires_grad=True)
-        b_h = torch.full((len(h_units),), params_before["b_h"], dtype=torch.float64, requires_grad=True)
+        b_h = torch.zeros(len(h_units), dtype=torch.float64, requires_grad=True)
         W_ho = torch.zeros(len(o_units), len(h_units), dtype=torch.float64, requires_grad=True)
-        b_o = torch.full((len(o_units),), params_before["b_o"], dtype=torch.float64, requires_grad=True)
+        b_o = torch.zeros(len(o_units), dtype=torch.float64, requires_grad=True)
 
         with torch.no_grad():
             for h_out in range(len(h_units)):
                 for i_in in range(len(i_units)):
                     W_ih[h_out, i_in] = params_before[f"w_i{i_in + 1}_h{h_out + 1}"]
+                b_h[h_out] = params_before[f"b_h{h_out + 1}"]
             for o_out in range(len(o_units)):
                 for h_in in range(len(h_units)):
                     W_ho[o_out, h_in] = params_before[f"w_h{h_in + 1}_o{o_out + 1}"]
+                b_o[o_out] = params_before[f"b_o{o_out + 1}"]
 
         W_ih.requires_grad_(True)
         b_h.requires_grad_(True)
@@ -983,7 +1155,7 @@ class TraceDumper:
             per_output_loss = -y * torch.log(out_o + eps)
             total_loss = per_output_loss.sum()
         else:
-            raise HelperUnsupportedError(f"helper v0.10.x: loss {topo['loss']!r} unsupported")
+            raise HelperUnsupportedError(f"helper: loss {topo['loss']!r} unsupported")
 
         # Backward
         total_loss.backward()
@@ -1005,30 +1177,57 @@ class TraceDumper:
             "total": _scalar(total_loss),
         }
 
-        # Backward: output_error_signals (dL/dnet_o) + hidden_error_signals (dL/dnet_h)
-        # PyTorch doesn't expose dL/dnet_o directly; we compute from the closed forms:
-        # For half_squared_error + sigmoid: signal_o = (out_o - y) * sigmoid'(net_o) = (out_o - y) * out_o * (1 - out_o)
-        # For half_squared_error + identity/relu: signal_o = (out_o - y) [* derivative]
-        # For cross_entropy_softmax: signal_o = (out_o - y) directly
+        # Backward: output_error_signals + hidden_error_signals.
+        #
+        # SIGN CONVENTION (LOAD-BEARING — descent_direction). The engine
+        # (general-engine.ts) emits the output error signal in DESCENT
+        # direction so that `update = lr * gradient` and `weight_after =
+        # weight_before + update` (Rules 5/6). That means:
+        #   - half_squared_error: signal_o = (target - out) * act'(net_o)
+        #       factors = [target_minus_output, activation_derivative]
+        #   - cross_entropy_softmax (collapsed): signal_o = (target - p_o)
+        #       factors = [target_minus_probability]
+        # An earlier helper used (out - target) (ASCENT, the raw dL/dnet sign).
+        # That flipped the stored gradient's sign so Rule 5 (update == lr *
+        # gradient) FAILED against the real torch update (which is descent).
+        # The mismatch was invisible because the fixtures derived from
+        # hand-authored (correctly-signed) sidecars; torch end-to-end exposes
+        # it. The factor NAMES also match the engine so the receipt is
+        # shape-identical to an engine-authored one.
         output_error_signals = {}
         for o_idx, u in enumerate(o_units):
             t_val = targets[u]
             o_val = out_o_vals[o_idx]
             if topo["loss"] == "cross_entropy_softmax":
-                signal_val = o_val - t_val
+                # Collapsed softmax+CE signal: (target - probability).
+                signal_val = t_val - o_val
                 factors = [
-                    {"name": "out_minus_target", "value": signal_val},
+                    {"name": "target_minus_probability", "value": signal_val},
                 ]
             elif topo["activation_output"] == "sigmoid":
-                deriv = o_val * (1.0 - o_val)
-                signal_val = (o_val - t_val) * deriv
+                tmo = t_val - o_val
+                deriv = o_val * (1.0 - o_val)  # sigmoid'(net) = out*(1-out)
+                signal_val = tmo * deriv
                 factors = [
-                    {"name": "out_minus_target", "value": o_val - t_val},
-                    {"name": "sigmoid_derivative", "value": deriv},
+                    {"name": "target_minus_output", "value": tmo},
+                    {"name": "activation_derivative", "value": deriv},
                 ]
-            else:
-                signal_val = o_val - t_val
-                factors = [{"name": "out_minus_target", "value": signal_val}]
+            elif topo["activation_output"] == "relu":
+                tmo = t_val - o_val
+                # Engine uses reluDerivativeFromOut(out): out > 0 ? 1 : 0.
+                deriv = 1.0 if o_val > 0 else 0.0
+                signal_val = tmo * deriv
+                factors = [
+                    {"name": "target_minus_output", "value": tmo},
+                    {"name": "activation_derivative", "value": deriv},
+                ]
+            else:  # identity
+                tmo = t_val - o_val
+                signal_val = tmo * 1.0
+                factors = [
+                    {"name": "target_minus_output", "value": tmo},
+                    {"name": "activation_derivative", "value": 1.0},
+                ]
             output_error_signals[u] = {
                 "factors": factors,
                 "product_order": "left_to_right",
@@ -1056,7 +1255,8 @@ class TraceDumper:
             if topo["activation_hidden"] == "sigmoid":
                 act_deriv = out_h_val * (1.0 - out_h_val)
             elif topo["activation_hidden"] == "relu":
-                act_deriv = 1.0 if net_h_vals[h_idx] > 0 else 0.0
+                # Engine uses reluDerivativeFromOut(out): out > 0 ? 1 : 0.
+                act_deriv = 1.0 if out_h_val > 0 else 0.0
             else:
                 act_deriv = 1.0
             hidden_error_signals[hu] = {
@@ -1075,14 +1275,71 @@ class TraceDumper:
 
         # Updates: walk parameter_order
         lr = self._learning_rate
+        h_cache = self._cache_forward(topo, params_before, inputs)
+        # BIAS-UPDATE EMISSION POLICY (mirrors import-observer.ts
+        # resolveBiasPolicyForSidecar). A real nn.Linear(bias=True) updates its
+        # per-neuron biases every step → the importer routes to
+        # bias_policy.mode='sgd' and the engine EMITS a bias update per neuron;
+        # the helper must emit them too. A bias=False model has synthetic 0
+        # biases that never change → the importer keeps mode='constant' and the
+        # engine emits NO bias updates (it `continue`s past them); emitting bias
+        # updates anyway trips Rule 0's bias_policy-vs-Update.kind cross-check.
+        # Decide once: emit bias updates IFF at least one bias actually moved.
+        bias_ids = [
+            p["id"] for p in topo["parameters"]
+            if p["role"] in ("hidden_bias", "output_bias")
+        ]
+        any_bias_changed = any(
+            params_after[bid] != params_before[bid] for bid in bias_ids
+        )
         updates_dict = []
         for pid in topo["parameter_order"]:
             wb = params_before[pid]
             wa = params_after[pid]
+            meta_param_pre = next(p for p in topo["parameters"] if p["id"] == pid)
+            # Skip constant biases (bias=False / unchanged) — matches the
+            # engine's bias_policy.mode='constant' path which omits the entry.
+            if (
+                meta_param_pre["role"] in ("hidden_bias", "output_bias")
+                and not any_bias_changed
+            ):
+                continue
             grad = self._derive_gradient_for_param(
                 pid, topo, params_before, inputs, output_error_signals, hidden_error_signals
             )
-            update_val = wa - wb
+            # `update` SEMANTICS (LOAD-BEARING for AdamW — Rule 6/7).
+            # The engine defines `weight_after = weight_before + update` for
+            # SGD / sgd_momentum / Adam, so update = wa - wb. But AdamW applies
+            # DECOUPLED weight decay (Loshchilov & Hutter 2017 arXiv:1711.05101
+            # Alg 2): weight_after = (1 - lr*wd)*weight_before + update, where
+            # `update` is the PLAIN Adam step (lr*m_hat/(sqrt(v_hat)+eps)) and
+            # does NOT include the decay shrinkage. Using wa - wb here would
+            # fold the -lr*wd*weight_before shrinkage INTO update — exactly the
+            # coupled-L2 confusion the bad-adamw-as-coupled-l2 fixture rejects.
+            # Recover the plain Adam update: update = wa - (1 - lr*wd)*wb.
+            if self._family == "adamw":
+                g0 = self._optimizer.param_groups[0]
+                wd = float(g0.get("weight_decay", 0.0))
+                update_val = wa - (1.0 - self._learning_rate * wd) * wb
+            else:
+                update_val = wa - wb
+            meta_param = next(p for p in topo["parameters"] if p["id"] == pid)
+            role = meta_param["role"]
+            # === NAMED-FACTOR DECOMPOSITION (LOAD-BEARING — Rule 4) ===
+            # Rule 4 requires `gradient == product(optimizer.factors)` left-to-
+            # right. The engine (general-engine.ts computeUpdateAndOptimizer +
+            # the weight/bias branches) emits factors as the GRADIENT operands
+            # — [error_signal, upstream_activation] for weights, [error_signal]
+            # for per-neuron biases — NOT [learning_rate, gradient] (whose
+            # product would be lr*gradient and fail Rule 4). The helper MUST
+            # mirror that decomposition exactly, including the `from` provenance
+            # paths, or its own honest receipt is rejected at Rule 4 (the latent
+            # bug G-017's torch end-to-end test now guards against). The
+            # learning_rate enters via update = lr * gradient (Rules 5/6/21/24),
+            # not as a factor of the gradient.
+            factors: list[dict[str, Any]] = self._build_optimizer_factors(
+                pid, role, inputs, output_error_signals, hidden_error_signals, h_cache
+            )
             update_entry: dict[str, Any] = {
                 "parameter_id": pid,
                 "kind": "bias" if pid.startswith("b_") else "weight",
@@ -1090,10 +1347,7 @@ class TraceDumper:
                 "optimizer": {
                     "name": self._family,
                     "learning_rate": lr,
-                    "factors": [
-                        {"name": "learning_rate", "value": lr},
-                        {"name": "gradient", "value": grad},
-                    ],
+                    "factors": factors,
                     "product_order": "left_to_right",
                 },
                 "gradient": grad,
@@ -1101,22 +1355,34 @@ class TraceDumper:
                 "weight_after": wa,
             }
             # Add layer_edge / from_unit / to_unit / parameter_role from topology
-            meta_param = next(p for p in topo["parameters"] if p["id"] == pid)
-            update_entry["parameter_role"] = meta_param["role"]
-            if "from_unit" in meta_param:
-                update_entry["from_unit"] = meta_param["from_unit"]
-            if "to_unit" in meta_param:
-                update_entry["to_unit"] = meta_param["to_unit"]
-            if meta_param["role"] == "input_to_hidden_weight":
+            update_entry["parameter_role"] = (
+                # Weights carry the engine's "<from>_to_<to>" role string;
+                # biases carry the role name (hidden_bias / output_bias) since
+                # a bias does not connect two units (matches general-engine.ts).
+                f'{meta_param["from_unit"]}_to_{meta_param["to_unit"]}'
+                if role in ("input_to_hidden_weight", "hidden_to_output_weight")
+                else role
+            )
+            if role in ("hidden_bias", "output_bias"):
+                # Bias: from_unit === to_unit === served unit (engine convention).
+                served = meta_param["applies_to_units"][0]
+                update_entry["from_unit"] = served
+                update_entry["to_unit"] = served
+            else:
+                if "from_unit" in meta_param:
+                    update_entry["from_unit"] = meta_param["from_unit"]
+                if "to_unit" in meta_param:
+                    update_entry["to_unit"] = meta_param["to_unit"]
+            if role == "input_to_hidden_weight":
                 update_entry["layer_edge"] = "input_to_hidden"
-            elif meta_param["role"] == "hidden_to_output_weight":
+            elif role == "hidden_to_output_weight":
                 update_entry["layer_edge"] = "hidden_to_output"
-            elif meta_param["role"] in ("hidden_bias", "output_bias"):
+            elif role in ("hidden_bias", "output_bias"):
                 update_entry["layer_edge"] = "bias_to_layer"
-            # Optimizer-state pass-through (v0.10.1).
+            # Optimizer-state pass-through.
             #
             # state_before / state_after are now keyed by backprop-trace
-            # parameter_id directly (refactored from the v0.10 tuple key
+            # parameter_id directly (refactored from the earlier tuple key
             # via _snapshot_per_parameter_state). For adam/adamw the
             # state shape is {m, v, step}; for sgd_momentum it's
             # {buffer} (already sign-flipped from PyTorch's ascent-
@@ -1146,8 +1412,8 @@ class TraceDumper:
         + error signals. This mirrors the engine's named-factors form:
         - input→hidden weight w_i<a>_h<b>: signal_h<b> * input_i<a>
         - hidden→output weight w_h<a>_o<b>: signal_o<b> * out_h<a>
-        - hidden bias: sum_h signal_h * 1.0
-        - output bias: sum_o signal_o * 1.0
+        - PER-NEURON hidden bias b_h<b>: signal_h<b> (single factor; ∂E/∂b_u = signal_u)
+        - PER-NEURON output bias b_o<b>: signal_o<b>
         """
         if pid.startswith("w_i"):
             # w_i<a>_h<b>
@@ -1166,12 +1432,95 @@ class TraceDumper:
             )
             output_signal = output_signals[o_part]["signal_value"]
             return output_signal * out_h_val
-        if pid == "b_h":
-            # Sum of hidden signals (bias contributes 1.0 to each net_h)
-            return sum(sig["signal_value"] for sig in hidden_signals.values())
-        if pid == "b_o":
-            return sum(sig["signal_value"] for sig in output_signals.values())
-        raise HelperError(f"helper v0.10.x: unknown parameter id {pid!r}")
+        if pid.startswith("b_h"):
+            # PER-NEURON hidden bias for unit h<k>: the unit's own error signal.
+            h_part = pid[2:]  # "h<k>"
+            return hidden_signals[h_part]["signal_value"]
+        if pid.startswith("b_o"):
+            # PER-NEURON output bias for unit o<k>: the unit's own error signal.
+            o_part = pid[2:]  # "o<k>"
+            return output_signals[o_part]["signal_value"]
+        raise HelperError(f"helper: unknown parameter id {pid!r}")
+
+    def _build_optimizer_factors(
+        self,
+        pid: str,
+        role: str,
+        inputs: dict[str, float],
+        output_signals: dict[str, dict[str, Any]],
+        hidden_signals: dict[str, dict[str, Any]],
+        h_cache: dict[str, dict[str, float]],
+    ) -> list[dict[str, Any]]:
+        """Build the named-factor decomposition for `pid`'s optimizer block.
+
+        Mirrors general-engine.ts EXACTLY so Rule 4 (gradient ==
+        product(factors), left-to-right) holds on the helper's own honest
+        receipt:
+
+          - input→hidden weight w_i<a>_h<b>:
+              [hidden_error_signal (from backward.hidden_error_signals.h<b>.signal_value),
+               upstream_activation (from inputs.i<a>)]
+          - hidden→output weight w_h<a>_o<b>:
+              [output_error_signal (from backward.output_error_signals.o<b>.signal_value),
+               upstream_activation (from forward.h<a>.out)]
+          - per-neuron hidden bias b_h<b>:
+              [hidden_error_signal (from backward.hidden_error_signals.h<b>.signal_value)]
+          - per-neuron output bias b_o<b>:
+              [output_error_signal (from backward.output_error_signals.o<b>.signal_value)]
+
+        The `from` provenance strings match the engine's NamedFactor.from
+        paths so the emitted receipt is byte-shape-identical to an engine-
+        authored one for the same step.
+        """
+        if role == "input_to_hidden_weight":
+            parts = pid[2:].split("_")  # ["i<a>", "h<b>"]
+            i_part, h_part = parts[0], parts[1]
+            return [
+                {
+                    "name": "hidden_error_signal",
+                    "from": f"backward.hidden_error_signals.{h_part}.signal_value",
+                    "value": hidden_signals[h_part]["signal_value"],
+                },
+                {
+                    "name": "upstream_activation",
+                    "from": f"inputs.{i_part}",
+                    "value": inputs[i_part],
+                },
+            ]
+        if role == "hidden_to_output_weight":
+            parts = pid[2:].split("_")  # ["h<a>", "o<b>"]
+            h_part, o_part = parts[0], parts[1]
+            return [
+                {
+                    "name": "output_error_signal",
+                    "from": f"backward.output_error_signals.{o_part}.signal_value",
+                    "value": output_signals[o_part]["signal_value"],
+                },
+                {
+                    "name": "upstream_activation",
+                    "from": f"forward.{h_part}.out",
+                    "value": h_cache[h_part]["out"],
+                },
+            ]
+        if role == "hidden_bias":
+            h_part = pid[2:]  # "h<b>"
+            return [
+                {
+                    "name": "hidden_error_signal",
+                    "from": f"backward.hidden_error_signals.{h_part}.signal_value",
+                    "value": hidden_signals[h_part]["signal_value"],
+                },
+            ]
+        if role == "output_bias":
+            o_part = pid[2:]  # "o<b>"
+            return [
+                {
+                    "name": "output_error_signal",
+                    "from": f"backward.output_error_signals.{o_part}.signal_value",
+                    "value": output_signals[o_part]["signal_value"],
+                },
+            ]
+        raise HelperError(f"helper: unknown parameter role {role!r} for {pid!r}")
 
     def _cache_forward(
         self, topo: dict[str, Any], params_before: dict[str, float], inputs: dict[str, float]
@@ -1183,7 +1532,7 @@ class TraceDumper:
         i_units = topo["unit_order"]["input"]
         out: dict[str, dict[str, float]] = {}
         for h_idx, hu in enumerate(h_units):
-            net = params_before["b_h"]
+            net = params_before[f"b_h{h_idx + 1}"]  # PER-NEURON hidden bias
             for i_idx, iu in enumerate(i_units):
                 net += params_before[f"w_i{i_idx + 1}_h{h_idx + 1}"] * inputs[iu]
             if topo["activation_hidden"] == "sigmoid":

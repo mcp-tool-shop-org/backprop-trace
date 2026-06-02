@@ -14,6 +14,10 @@ coverage/
 Thumbs.db
 .pnpm-store/
 
+# Python (live PyTorch helper + golden generator) bytecode cache
+__pycache__/
+*.pyc
+
 # Translation tool cache (polyglot-mcp / TranslateGemma)
 .polyglot-cache.json
 

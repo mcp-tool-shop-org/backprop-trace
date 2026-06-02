@@ -135,6 +135,55 @@ test("batched receipt reconciles cleanly (Rules 1-19 all pass on canonical golde
   )
 })
 
+// G-008 — the BATCHED single-step path also baked differentialPassed from a
+// forward+loss-only check, ignoring the reduced (top-level) updates +
+// parameters_after. Forge the reduced gradient/weight_after + parameters_after
+// (per-sample forward + loss left correct) and confirm the importer's
+// differential now FAILS. Mutation that re-REDs this: drop the
+// compareReducedFullFieldSet(...) call from the single-step batched path.
+test("G-008: forged reduced updates[*].gradient/weight_after + parameters_after make the BATCHED importer differential FAIL", () => {
+  if (!existsSync(batchedSidecarPath)) return
+  const sidecar = JSON.parse(readFileSync(batchedSidecarPath, "utf-8").trim()) as {
+    updates: Array<{ parameter_id: string; gradient: number; weight_after: number }>
+    parameters_after: Record<string, number>
+  }
+  // Precondition: clean batched sidecar passes (non-vacuity guard).
+  const clean = importPytorchSidecar(readFileSync(batchedSidecarPath, "utf-8"), {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: "pytorch-softmax-ce-batched-imported",
+  })
+  assert.strictEqual(clean.differentialPassed, true, "precondition: clean batched sidecar passes")
+
+  const target = sidecar.updates[0]!
+  const pid = target.parameter_id
+  target.gradient = target.gradient + 4.0
+  target.weight_after = target.weight_after + 4.0
+  sidecar.parameters_after[pid] = sidecar.parameters_after[pid]! + 4.0
+
+  const result = importPytorchSidecar(JSON.stringify(sidecar) + "\n", {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: "pytorch-softmax-ce-batched-imported",
+  })
+  assert.strictEqual(
+    result.differentialPassed,
+    false,
+    "batched importer differential must cover reduced updates + parameters_after (G-008)",
+  )
+  const paths = result.differentialDisagreements.map((d) => d.fieldPath)
+  assert.ok(
+    paths.some((p) => p === `updates[${pid}].gradient`),
+    `expected updates[${pid}].gradient; got ${JSON.stringify(paths)}`,
+  )
+  assert.ok(
+    paths.some((p) => p === `parameters_after.${pid}`),
+    `expected parameters_after.${pid}; got ${JSON.stringify(paths)}`,
+  )
+  assert.strictEqual(
+    result.receipt.fixture_status.verification_state,
+    "engine_recompute_disagreed",
+  )
+})
+
 // ============================================================================
 // Multi-step batched
 // ============================================================================
@@ -158,6 +207,50 @@ test("importPytorchSidecarStream produces byte-equal output to shipped multi-ste
   )
   assert.strictEqual(result.allDifferentialsPassed, true)
   assert.strictEqual(result.steps.length, 2)
+})
+
+// G-008 — the MULTI-STEP batched record path also omitted reduced backward /
+// updates / parameters_after from its per-record differential. Forge the
+// SECOND record's reduced updates[*].weight_after + parameters_after and
+// confirm that record's differential FAILS (while the first record stays
+// clean). Re-REDs if compareReducedFullFieldSet(...) is dropped from the
+// multi-step batched record path.
+test("G-008: forged reduced updates/parameters_after in a multi-step batched RECORD make that step's differential FAIL", () => {
+  if (!existsSync(multiStepBatchedSidecarPath)) return
+  const lines = readFileSync(multiStepBatchedSidecarPath, "utf-8").trim().split("\n")
+  assert.ok(lines.length >= 2, "multi-step batched fixture must have >=2 records")
+  const rec1 = JSON.parse(lines[1]!) as {
+    updates: Array<{ parameter_id: string; weight_after: number; gradient: number }>
+    parameters_after: Record<string, number>
+  }
+  const target = rec1.updates[0]!
+  const pid = target.parameter_id
+  target.weight_after = target.weight_after + 6.0
+  target.gradient = target.gradient + 6.0
+  rec1.parameters_after[pid] = rec1.parameters_after[pid]! + 6.0
+  const forged = [lines[0]!, JSON.stringify(rec1)].join("\n") + "\n"
+
+  const result = importPytorchSidecarStream(forged, {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: "pytorch-softmax-ce-multi-step-batched-imported",
+  })
+  assert.strictEqual(
+    result.allDifferentialsPassed,
+    false,
+    "multi-step batched stream must report a failing differential when a record's reduced updates/params are forged (G-008)",
+  )
+  // Step 0 clean, step 1 disagreed.
+  assert.strictEqual(result.steps[0]!.differentialPassed, true, "step 0 stays clean")
+  assert.strictEqual(result.steps[1]!.differentialPassed, false, "step 1 (forged) fails")
+  const paths = result.steps[1]!.differentialDisagreements.map((d) => d.fieldPath)
+  assert.ok(
+    paths.some((p) => p === `updates[${pid}].weight_after`),
+    `expected updates[${pid}].weight_after in step-1 disagreements; got ${JSON.stringify(paths)}`,
+  )
+  assert.strictEqual(
+    result.steps[1]!.receipt.fixture_status.verification_state,
+    "engine_recompute_disagreed",
+  )
 })
 
 test("multi-step batched receipt stream reconciles cleanly (Rules 1-19 + cross-step Rules 9, 10, 17)", () => {

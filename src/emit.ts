@@ -13,6 +13,7 @@
  */
 
 import { formatNumberForEngine } from "./runtime-format.js";
+import { FormatPolicyError } from "./format.js";
 import type {
   DownstreamContribution,
   ForwardUnit,
@@ -45,6 +46,92 @@ import type {
 // the receipt. The TypeScript signature prevents that path.
 const S = (value: string): string => JSON.stringify(value);
 const N = formatNumberForEngine;
+
+/**
+ * G-043 — typed error raised by emitMazurReceipt / emitGeneralReceipt when a
+ * schema-valid receipt cannot be canonically serialized. The two kinds:
+ *
+ *   - `FORMAT_OUT_OF_SCOPE` — a numeric data leaf (weight, gradient, signal,
+ *     loss, learning_rate, …) has a magnitude outside the formatter's
+ *     plain-decimal range [1e-13, 1e7). The schema does NOT cap numeric
+ *     magnitude, so such a value passes Ajv but cannot be emitted as a plain
+ *     decimal. The underlying FormatPolicyError is preserved on `.cause` so
+ *     callers can read its `kind` discriminator without re-parsing strings.
+ *
+ *   - `NON_INTEGER_FIELD` — a field the schema declares `type: integer`
+ *     (step, step_index, precision_significant_digits, topology *_size,
+ *     batch.size, optimizer_config.t) carried a non-integer or non-finite
+ *     value. Without the guard this would interpolate the non-JSON token
+ *     "NaN"/"Infinity" or a fractional literal into a type:integer slot,
+ *     producing bytes that neither parse as JSON nor validate. The guard
+ *     converts the corruption into a loud throw (see helper `I`).
+ *
+ * EmitError is part of the public API: callers that drive the emitter over
+ * externally-sourced receipts (e.g. transcoded / hand-authored) get a single
+ * typed failure class with a remediation hint instead of a raw library throw.
+ */
+export type EmitErrorKind = "FORMAT_OUT_OF_SCOPE" | "NON_INTEGER_FIELD";
+
+export class EmitError extends Error {
+  readonly kind: EmitErrorKind;
+  constructor(kind: EmitErrorKind, message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.kind = kind;
+    this.name = "EmitError";
+  }
+}
+
+/**
+ * G-022 — integer/finiteness guard for bare-interpolated integer fields.
+ *
+ * The schema declares step, step_index, precision_significant_digits,
+ * topology.input_size/hidden_size/output_size, batch.size, and
+ * optimizer_config.t as `type: integer`. Previously these were interpolated
+ * directly (`${r.step}`), bypassing formatNumberForEngine's finiteness reject.
+ * A NaN/Infinity stringifies to the non-JSON tokens "NaN"/"Infinity"; a
+ * fractional value stringifies to e.g. "1.5" — either way the emitted bytes
+ * are malformed (unparseable and/or schema-invalid) yet emitted SILENTLY.
+ *
+ * `I` routes every bare integer field through one check: finite AND integer,
+ * else throw EmitError(NON_INTEGER_FIELD). This is the integer analogue of
+ * formatNumberForEngine's `Number.isFinite` reject — a malformed receipt must
+ * fail loudly at emit, never serialize corrupt bytes. The `field` label is
+ * threaded into the message so the throw points at the offending path.
+ *
+ * Returns the canonical bare-digit string (`String(v)`); for any in-range
+ * integer this is byte-identical to the previous `${v}` interpolation, so
+ * every shipped golden stays byte-equal.
+ */
+function I(v: number, field: string): string {
+  if (!Number.isInteger(v)) {
+    throw new EmitError(
+      "NON_INTEGER_FIELD",
+      `emit: field '${field}' must be a finite integer (schema declares type:integer), got ${String(v)}. ` +
+        `Hint: a non-integer or non-finite value here would serialize to a malformed JSON token ` +
+        `("NaN"/"Infinity") or a fractional literal in a type:integer slot. Check the receipt source ` +
+        `(engine output is always integral here; this indicates a hand-authored or transcoded receipt bug).`,
+    );
+  }
+  return String(v);
+}
+
+/**
+ * G-022 (companion) — boolean guard for the bare-interpolated boolean field
+ * `bias_policy.updated_in_step`. The schema declares it `type: boolean`;
+ * `${bp.updated_in_step}` would serialize `undefined`/a number to the wrong
+ * token. `B` rejects any non-boolean so the corruption fails loudly. Returns
+ * the literal "true"/"false" — byte-identical to the prior interpolation for
+ * a genuine boolean, so goldens stay byte-equal.
+ */
+function B(v: boolean, field: string): string {
+  if (typeof v !== "boolean") {
+    throw new EmitError(
+      "NON_INTEGER_FIELD",
+      `emit: field '${field}' must be a boolean (schema declares type:boolean), got ${String(v)}.`,
+    );
+  }
+  return v ? "true" : "false";
+}
 
 // F-A-002: build-time exhaustiveness check that EMITTED_KEYS exactly equals
 // `keyof MazurReceipt`. If a future PR adds a field to MazurReceipt without
@@ -101,28 +188,53 @@ void EMITTED_KEYS
  * @returns Canonical JSONL line ending in LF (`}\n`).
  */
 export function emitMazurReceipt(r: MazurReceipt): string {
-  const parts: string[] = [
-    `"schema_version":${S(r.schema_version)}`,
-    `"fixture":${S(r.fixture)}`,
-    `"step":${r.step}`,
-    `"fixture_status":${emitFixtureStatus(r.fixture_status)}`,
-    `"metadata":${emitMetadata(r.metadata)}`,
-    `"numeric_policy":${emitNumericPolicy(r.numeric_policy)}`,
-    `"bias_policy":${emitBiasPolicy(r.bias_policy)}`,
-    `"topology":${emitTopology(r.topology)}`,
-    `"learning_rate":${N(r.learning_rate)}`,
-    `"inputs":${emitInputs(r.inputs)}`,
-    `"targets":${emitTargets(r.targets)}`,
-    `"parameters_before":${emitParameters(r.parameters_before)}`,
-    `"forward":${emitForward(r.forward)}`,
-    `"loss":${emitLoss(r.loss)}`,
-    `"backward":${emitBackward(r.backward)}`,
-    `"updates":${emitUpdates(r.updates)}`,
-    `"parameters_after":${emitParameters(r.parameters_after)}`,
-    `"post_update_forward":${emitPostUpdateForward(r.post_update_forward)}`,
-    `"post_update_loss":${emitPostUpdateLoss(r.post_update_loss)}`,
-  ];
-  return `{${parts.join(",")}}\n`;
+  try {
+    const parts: string[] = [
+      `"schema_version":${S(r.schema_version)}`,
+      `"fixture":${S(r.fixture)}`,
+      `"step":${I(r.step, "step")}`,
+      `"fixture_status":${emitFixtureStatus(r.fixture_status)}`,
+      `"metadata":${emitMetadata(r.metadata)}`,
+      `"numeric_policy":${emitNumericPolicy(r.numeric_policy)}`,
+      `"bias_policy":${emitBiasPolicy(r.bias_policy)}`,
+      `"topology":${emitTopology(r.topology)}`,
+      `"learning_rate":${N(r.learning_rate)}`,
+      `"inputs":${emitInputs(r.inputs)}`,
+      `"targets":${emitTargets(r.targets)}`,
+      `"parameters_before":${emitParameters(r.parameters_before)}`,
+      `"forward":${emitForward(r.forward)}`,
+      `"loss":${emitLoss(r.loss)}`,
+      `"backward":${emitBackward(r.backward)}`,
+      `"updates":${emitUpdates(r.updates)}`,
+      `"parameters_after":${emitParameters(r.parameters_after)}`,
+      `"post_update_forward":${emitPostUpdateForward(r.post_update_forward)}`,
+      `"post_update_loss":${emitPostUpdateLoss(r.post_update_loss)}`,
+    ];
+    return `{${parts.join(",")}}\n`;
+  } catch (err) {
+    throw wrapFormatPolicyError(err);
+  }
+}
+
+/**
+ * G-043 — re-surface a raw FormatPolicyError from the number formatter as a
+ * typed EmitError carrying the underlying error on `.cause`. Any other error
+ * (including EmitError already thrown by `I`/`B`) passes through unchanged so
+ * the integer/boolean guards keep their own kind + message.
+ */
+function wrapFormatPolicyError(err: unknown): unknown {
+  if (err instanceof FormatPolicyError) {
+    return new EmitError(
+      "FORMAT_OUT_OF_SCOPE",
+      `emit: a numeric data leaf could not be canonically serialized — ${err.message} ` +
+        `Hint: the receipt is schema-valid (the schema does not cap numeric magnitude) but a value ` +
+        `falls outside the formatter's plain-decimal range [1e-13, 1e7). Either the receipt carries an ` +
+        `out-of-range value (upstream bug) or the plain-decimal range needs widening (see ` +
+        `docs/canonical-emission.md). The underlying FormatPolicyError is preserved on EmitError.cause.`,
+      { cause: err },
+    );
+  }
+  return err;
 }
 
 function emitFixtureStatus(s: MazurReceipt["fixture_status"]): string {
@@ -149,7 +261,7 @@ function emitNumericPolicy(np: MazurReceipt["numeric_policy"]): string {
   return [
     "{",
     `"number_encoding":${S(np.number_encoding)},`,
-    `"precision_significant_digits":${np.precision_significant_digits},`,
+    `"precision_significant_digits":${I(np.precision_significant_digits, "numeric_policy.precision_significant_digits")},`,
     `"rounding":${S(np.rounding)},`,
     `"tolerance":${N(np.tolerance)},`,
     `"computation_order":${S(np.computation_order)},`,
@@ -174,7 +286,7 @@ function emitBiasPolicy(bp: MazurReceipt["bias_policy"]): string {
     "{",
     `"mode":${S(bp.mode)},`,
     `"reason":${S(bp.reason)},`,
-    `"updated_in_step":${bp.updated_in_step},`,
+    `"updated_in_step":${B(bp.updated_in_step, "bias_policy.updated_in_step")},`,
     `"reconciliation":${S(bp.reconciliation)}`,
     "}",
   ].join("");
@@ -185,9 +297,9 @@ function emitTopology(t: MazurReceipt["topology"]): string {
   return [
     "{",
     `"layers":[${layers}],`,
-    `"input_size":${t.input_size},`,
-    `"hidden_size":${t.hidden_size},`,
-    `"output_size":${t.output_size},`,
+    `"input_size":${I(t.input_size, "topology.input_size")},`,
+    `"hidden_size":${I(t.hidden_size, "topology.hidden_size")},`,
+    `"output_size":${I(t.output_size, "topology.output_size")},`,
     `"activation":${S(t.activation)},`,
     `"loss":${S(t.loss)},`,
     `"bias_sharing":${S(t.bias_sharing)}`,
@@ -422,49 +534,18 @@ export function emitReceipts(
 // v0.3 emitGeneralReceipt — schema-walker for v0.2.0-schema receipts
 // =============================================================================
 
-/**
- * Canonical-emission key order for v0.2.0-schema receipts.
- *
- * Mirrors schemas/receipt.v0.2.0.json `x-order` annotation. Top-level
- * fields emit in this order, with optional fields (trace_id, step_index)
- * inserted at their declared slot iff present.
- *
- * Build-time exhaustiveness check is intentionally lighter than v0.1's
- * `_AssertEmittedKeysMatchReceiptKeys` cross-check — GeneralReceipt's
- * shape is open-ended (unit/parameter id keys on inputs/forward/etc.) so
- * a strict "every key emits" assertion would have to discriminate
- * structural-required keys from data-keyed maps. The top-level required
- * fields ARE captured below as a static array used for both ordering AND
- * a per-receipt presence check; missing required fields surface as a
- * runtime Error rather than a compile error.
- */
-const GENERAL_REQUIRED_TOPLEVEL_ORDER = [
-  "schema_version",
-  "fixture",
-  "step",
-  "fixture_status",
-  "metadata",
-  "numeric_policy",
-  "bias_policy",
-  "topology",
-  "learning_rate",
-  "unit_order",
-  "parameter_order",
-  "inputs",
-  "targets",
-  "parameters_before",
-  "forward",
-  "loss",
-  "backward",
-  "updates",
-  "parameters_after",
-  "post_update_forward",
-  "post_update_loss",
-] as const;
-// Mark as load-bearing so a future emitter rewrite can't drop it on a
-// "looks-unused" tree-shake. The constant is a single-source-of-truth
-// reference for the v0.2.0 schema's x-order at the top level.
-void GENERAL_REQUIRED_TOPLEVEL_ORDER;
+// G-042: a `GENERAL_REQUIRED_TOPLEVEL_ORDER` constant formerly lived here as a
+// claimed mirror of schemas/receipt.v0.2.0.json's top-level x-order, but it was
+// dead (only `void`-referenced — emitGeneralReceipt builds its field list
+// inline) AND divergent: it listed `unit_order` + `parameter_order` as
+// top-level fields, whereas the v0.2.0 schema's top-level x-order does NOT
+// contain them (they live inside `topology`; see receipt.v0.2.0.json `topology`
+// x-order). The schema's `additionalProperties: false` at the top level would
+// in fact REJECT a top-level unit_order/parameter_order. Keeping a dead,
+// wrong "source of truth" was a soundness hazard, so it is deleted. The
+// authoritative top-level order is the inline `parts.push(...)` sequence in
+// emitGeneralReceiptInner, byte-checked against the goldens by the
+// schema-emit-consistency + per-fixture byte-equal tests.
 
 /**
  * Emit a GeneralReceipt as one canonical JSONL line.
@@ -495,6 +576,14 @@ void GENERAL_REQUIRED_TOPLEVEL_ORDER;
  * @returns Canonical JSONL line ending in LF (`}\n`).
  */
 export function emitGeneralReceipt(r: GeneralReceipt): string {
+  try {
+    return emitGeneralReceiptInner(r);
+  } catch (err) {
+    throw wrapFormatPolicyError(err);
+  }
+}
+
+function emitGeneralReceiptInner(r: GeneralReceipt): string {
   // Build the field list in declared order. Optional fields insert at
   // their schema-declared positions. v0.6: source_framework + attestor
   // sit between fixture_status and metadata per receipt.v0.4.0.json
@@ -503,7 +592,7 @@ export function emitGeneralReceipt(r: GeneralReceipt): string {
   const parts: string[] = [
     `"schema_version":${S(r.schema_version)}`,
     `"fixture":${S(r.fixture)}`,
-    `"step":${r.step}`,
+    `"step":${I(r.step, "step")}`,
     `"fixture_status":${emitFixtureStatusV02(r.fixture_status)}`,
   ];
   if (r.source_framework !== undefined) {
@@ -525,7 +614,7 @@ export function emitGeneralReceipt(r: GeneralReceipt): string {
     parts.push(`"optimizer_config":${emitOptimizerConfig(r.optimizer_config)}`);
   }
   if (r.trace_id !== undefined) parts.push(`"trace_id":${S(r.trace_id)}`);
-  if (r.step_index !== undefined) parts.push(`"step_index":${r.step_index}`);
+  if (r.step_index !== undefined) parts.push(`"step_index":${I(r.step_index, "step_index")}`);
   if (r.batch !== undefined) parts.push(`"batch":${emitBatch(r.batch)}`);
   parts.push(`"inputs":${emitOrderedNumberMap(r.inputs, r.topology.unit_order.input)}`);
   parts.push(`"targets":${emitOrderedNumberMap(r.targets, r.topology.unit_order.output)}`);
@@ -585,7 +674,7 @@ function emitNumericPolicyV02(np: GeneralReceipt["numeric_policy"]): string {
   return [
     "{",
     `"number_encoding":${S(np.number_encoding)},`,
-    `"precision_significant_digits":${np.precision_significant_digits},`,
+    `"precision_significant_digits":${I(np.precision_significant_digits, "numeric_policy.precision_significant_digits")},`,
     `"rounding":${S(np.rounding)},`,
     `${tolerancePart},`,
     `"computation_order":${S(np.computation_order)},`,
@@ -611,7 +700,7 @@ function emitBiasPolicyV02(bp: GeneralReceipt["bias_policy"]): string {
   // but we emit only the present fields.
   const parts: string[] = [`"mode":${S(bp.mode)}`];
   if (bp.reason !== undefined) parts.push(`"reason":${S(bp.reason)}`);
-  parts.push(`"updated_in_step":${bp.updated_in_step}`);
+  parts.push(`"updated_in_step":${B(bp.updated_in_step, "bias_policy.updated_in_step")}`);
   if (bp.reconciliation !== undefined) {
     parts.push(`"reconciliation":${S(bp.reconciliation)}`);
   }
@@ -631,9 +720,9 @@ function emitTopologyV02(t: SerializedTopology): string {
   const parameters = emitTopologyParameters(t.parameters);
   const parts: string[] = [
     `"layers":[${layers}]`,
-    `"input_size":${t.input_size}`,
-    `"hidden_size":${t.hidden_size}`,
-    `"output_size":${t.output_size}`,
+    `"input_size":${I(t.input_size, "topology.input_size")}`,
+    `"hidden_size":${I(t.hidden_size, "topology.hidden_size")}`,
+    `"output_size":${I(t.output_size, "topology.output_size")}`,
     `"unit_order":${unitOrder}`,
     `"parameter_order":${parameterOrder}`,
     `"parameters":${parameters}`,
@@ -687,13 +776,24 @@ function emitOrderedNumberMap(
 ): string {
   const parts: string[] = [];
   for (const key of order) {
-    if (!(key in map)) {
+    // io-B-003: use a direct lookup + numeric-value check rather than `key in
+    // map`. `in` walks the prototype chain (an inherited "toString"/"valueOf"
+    // would falsely satisfy it) and accepts a present-but-non-numeric value,
+    // which would then reach the number formatter and throw a less-clear
+    // error. Checking the resolved value is a finite number here (a) matches
+    // the sibling emitOrderedForwardMap / emitOrderedSignalMap guards and
+    // (b) fails loudly at the right path with an actionable hint. Valid
+    // receipts are unaffected (every ordered key resolves to a real number),
+    // so all shipped goldens stay byte-equal.
+    const value = map[key];
+    if (typeof value !== "number") {
       throw new Error(
-        `emitOrderedNumberMap: missing required key '${key}' in ordered number map. ` +
-          `Hint: every id in the receipt's unit_order/parameter_order must have a numeric value.`,
+        `emitOrderedNumberMap: missing or non-numeric value for key '${key}' in ordered number map ` +
+          `(got ${value === undefined ? "undefined" : typeof value}). ` +
+          `Hint: every id in the receipt's unit_order/parameter_order must map to a finite numeric value.`,
       );
     }
-    parts.push(`${S(key)}:${N(map[key]!)}`);
+    parts.push(`${S(key)}:${N(value)}`);
   }
   return `{${parts.join(",")}}`;
 }
@@ -753,7 +853,7 @@ function emitLossGeneral(
 // v0.9 — emit Batch block. Top-level x-order ["size", "sample_order", "reduction"].
 function emitBatch(b: NonNullable<GeneralReceipt["batch"]>): string {
   const sampleOrder = b.sample_order.map((sid) => S(sid)).join(",");
-  return `{"size":${b.size},"sample_order":[${sampleOrder}],"reduction":${S(b.reduction)}}`;
+  return `{"size":${I(b.size, "batch.size")},"sample_order":[${sampleOrder}],"reduction":${S(b.reduction)}}`;
 }
 
 // v0.9 — emit per_sample block. Keys iterate batch.sample_order canonically
@@ -950,7 +1050,7 @@ function emitOptimizerConfig(oc: OptimizerConfig): string {
   if (oc.weight_decay !== undefined) {
     parts.push(`"weight_decay":${N(oc.weight_decay)}`);
   }
-  if (oc.t !== undefined) parts.push(`"t":${oc.t}`);
+  if (oc.t !== undefined) parts.push(`"t":${I(oc.t, "optimizer_config.t")}`);
   // v0.9.2 sgd_momentum field (emitted only when present).
   if (oc.momentum !== undefined) parts.push(`"momentum":${N(oc.momentum)}`);
   // v0.9.3 sgd_momentum widening — emit nesterov only when true (default

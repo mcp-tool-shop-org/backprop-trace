@@ -28,11 +28,18 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { runMazurStep } from "../src/engine.js"
-import { runGeneralStep, type GeneralInput } from "../src/general-engine.js"
+import {
+  runGeneralStep,
+  runBatchedGeneralStep,
+  MAX_BATCH_SAMPLES,
+  type GeneralInput,
+  type BatchedGeneralInput,
+} from "../src/general-engine.js"
 import {
   IRIS_INPUT,
   MAZUR_INPUT,
   MAZUR_TOPOLOGY,
+  SOFTMAX_CE_INPUT,
   XOR_INPUT,
 } from "../src/mazur.js"
 
@@ -279,5 +286,341 @@ test("runGeneralStep(IRIS_INPUT) — 4 inputs, 3 hidden, 3 outputs", () => {
     r.parameters_after.b_output,
     r.parameters_before.b_output,
     "iris b_output unchanged",
+  )
+})
+
+// ===========================================================================
+// G-009 — CE+softmax targets must sum to 1 (latent false-PASS surface)
+//
+// The collapsed output error signal y_u - p_u is the correct descent gradient
+// ONLY when targets sum to 1. Non-normalized targets emit a WRONG collapsed
+// gradient that Rule 14 (engine-recompute) reproduces byte-for-byte → false
+// PASS. runGeneralStep must reject non-normalized CE+softmax targets at the
+// boundary.
+//
+// Non-vacuity / mutation that turns this RED again: delete the
+// `assertTargetsNormalizedForSoftmaxCE(input)` call in runGeneralStep (or
+// change the `if (Math.abs(targetSum - 1) > NORMALIZATION_ATOL)` guard to a
+// no-op). With the gate removed the engine accepts the 0.9-sum input and emits
+// a receipt instead of throwing, so `assert.throws` fails.
+// ===========================================================================
+
+test("G-009: runGeneralStep throws on CE+softmax targets summing to 0.9", () => {
+  // Build a non-normalized CE+softmax input inline by overriding the targets of
+  // the shipped softmax-ce fixture so they sum to 0.9 (a one-hot 1 demoted to
+  // 0.9, the other two left at 0). Every other field stays valid so the ONLY
+  // defect under test is non-normalized targets.
+  const badInput: GeneralInput = {
+    ...SOFTMAX_CE_INPUT,
+    targets: { o1: 0.9, o2: 0, o3: 0 }, // sum = 0.9, NOT a probability distribution
+  }
+  // Sanity: confirm the construction actually sums to 0.9 (guards the fixture
+  // against silent drift if SOFTMAX_CE_INPUT's output unit order ever changes).
+  const sum = badInput.targets.o1! + badInput.targets.o2! + badInput.targets.o3!
+  assert.strictEqual(sum, 0.9, "test fixture must have targets summing to 0.9")
+
+  assert.throws(
+    () => runGeneralStep(badInput),
+    /cross_entropy_softmax targets must sum to 1/,
+    "runGeneralStep must reject non-normalized CE+softmax targets (sum=0.9) at the boundary",
+  )
+})
+
+test("G-009: runGeneralStep accepts normalized CE+softmax golden (targets sum to 1)", () => {
+  // Regression-safety: the shipped softmax-ce fixture has one-hot targets
+  // summing to exactly 1.0 and MUST still pass the normalization gate.
+  const sum =
+    SOFTMAX_CE_INPUT.targets.o1! +
+    SOFTMAX_CE_INPUT.targets.o2! +
+    SOFTMAX_CE_INPUT.targets.o3!
+  assert.strictEqual(sum, 1, "SOFTMAX_CE_INPUT targets must sum to exactly 1")
+  assert.doesNotThrow(
+    () => runGeneralStep(SOFTMAX_CE_INPUT),
+    "the normalized softmax-ce golden input must still run without throwing",
+  )
+})
+
+// ===========================================================================
+// G-010 — batched reduction:'none' must reject size > 1
+//
+// reduce() handles reduction:'none' by returning vals[0], silently discarding
+// every sample after the first for BOTH the reduced gradient and loss. A
+// 3-sample 'none' batch yields parameters_after byte-identical to a 1-sample
+// batch on s0; Rule 14 reproduces it and Rule 18 skips for non-mean/sum →
+// false assurance an N-sample update occurred. runBatchedGeneralStep must
+// reject reduction:'none' with size > 1.
+//
+// Non-vacuity / mutation that turns this RED again: delete the
+// `if (input.batch.reduction === "none" && input.batch.size > 1) throw ...`
+// guard in runBatchedGeneralStep. Without it the 3-sample 'none' batch returns
+// a receipt (silently using only s0) instead of throwing, so `assert.throws`
+// fails.
+// ===========================================================================
+
+test("G-010: runBatchedGeneralStep throws on a 3-sample reduction:'none' batch", () => {
+  // Build a 3-sample batch over the XOR topology (real, validated). Three
+  // DISTINCT samples so that "only the first survives" is observably wrong:
+  // if reduction silently kept s0 the other two inputs would be discarded.
+  const badBatch: BatchedGeneralInput = {
+    topology: XOR_INPUT.topology,
+    learning_rate: XOR_INPUT.learning_rate,
+    parameters_before: { ...XOR_INPUT.parameters_before },
+    numeric_policy: XOR_INPUT.numeric_policy,
+    bias_policy: XOR_INPUT.bias_policy,
+    batch: {
+      size: 3,
+      sample_order: ["s0", "s1", "s2"],
+      reduction: "none",
+    },
+    per_sample: {
+      s0: { inputs: { x1: 1, x2: 0 }, targets: { y: 1 } },
+      s1: { inputs: { x1: 0, x2: 1 }, targets: { y: 1 } },
+      s2: { inputs: { x1: 1, x2: 1 }, targets: { y: 0 } },
+    },
+  }
+  assert.throws(
+    () => runBatchedGeneralStep(badBatch),
+    /batch\.reduction 'none' is invalid for batch\.size > 1/,
+    "runBatchedGeneralStep must reject reduction:'none' for a multi-sample batch (size=3)",
+  )
+})
+
+test("G-010: runBatchedGeneralStep accepts a single-sample reduction:'none' batch", () => {
+  // Regression-safety: reduction:'none' is well-defined and lossless when
+  // size === 1, so it MUST still be accepted (kept in the schema enum for echo).
+  const okBatch: BatchedGeneralInput = {
+    topology: XOR_INPUT.topology,
+    learning_rate: XOR_INPUT.learning_rate,
+    parameters_before: { ...XOR_INPUT.parameters_before },
+    numeric_policy: XOR_INPUT.numeric_policy,
+    bias_policy: XOR_INPUT.bias_policy,
+    batch: {
+      size: 1,
+      sample_order: ["s0"],
+      reduction: "none",
+    },
+    per_sample: {
+      s0: { inputs: { x1: 1, x2: 0 }, targets: { y: 1 } },
+    },
+  }
+  assert.doesNotThrow(
+    () => runBatchedGeneralStep(okBatch),
+    "single-sample reduction:'none' is lossless and must still be accepted",
+  )
+})
+
+// ===========================================================================
+// G-021 — receipt.step must equal step_index + 1 (not hardcoded 1)
+//
+// The GeneralReceipt docstring (and the receipt.v0.4.0 schema convention) say
+// multi-step records set step = step_index + 1 (step_index is 0-indexed).
+// runGeneralStep / runBatchedGeneralStep historically hardcoded `step: 1`,
+// which is correct ONLY for the step_index-0 (or step_index-absent) case. A
+// step_index=1 record emitting step=1 mislabels the record's position in the
+// multi-step bundle — a metadata defect on every record after the first.
+//
+// Single-step receipts (step_index absent → 0 + 1 = 1) and the step_index=0
+// case (0 + 1 = 1) stay byte-unchanged; only step_index >= 1 changes.
+//
+// Non-vacuity / mutation that turns these RED again: revert the fix to a
+// literal `step: 1`. The step_index=1 case then emits step=1 and the
+// assertion `step === 2` fails.
+// ===========================================================================
+
+test("G-021: runGeneralStep with step_index=1 emits step=2", () => {
+  const r = runGeneralStep({ ...XOR_INPUT, trace_id: "a".repeat(32), step_index: 1 })
+  assert.strictEqual(
+    r.step,
+    2,
+    "a step_index=1 record must emit step = step_index + 1 = 2 (GeneralReceipt docstring + receipt.v0.4.0 convention)",
+  )
+  // step_index is echoed unchanged (0-indexed); step is 1-indexed.
+  assert.strictEqual(r.step_index, 1, "step_index is echoed verbatim (0-indexed)")
+})
+
+test("G-021: runGeneralStep with step_index=0 emits step=1 (unchanged)", () => {
+  const r = runGeneralStep({ ...XOR_INPUT, trace_id: "a".repeat(32), step_index: 0 })
+  assert.strictEqual(
+    r.step,
+    1,
+    "step_index=0 must emit step=1 (0 + 1) — byte-unchanged from the v0.1 single-step convention",
+  )
+})
+
+test("G-021: runGeneralStep with step_index absent emits step=1 (single-step unchanged)", () => {
+  const r = runGeneralStep(XOR_INPUT)
+  assert.strictEqual(
+    r.step,
+    1,
+    "an engine-authored single-step receipt (step_index absent) must still emit step=1 ((step_index ?? 0) + 1)",
+  )
+})
+
+test("G-021: runBatchedGeneralStep with step_index=3 emits step=4", () => {
+  const r = runBatchedGeneralStep({
+    topology: XOR_INPUT.topology,
+    learning_rate: XOR_INPUT.learning_rate,
+    parameters_before: { ...XOR_INPUT.parameters_before },
+    numeric_policy: XOR_INPUT.numeric_policy,
+    bias_policy: XOR_INPUT.bias_policy,
+    trace_id: "b".repeat(32),
+    step_index: 3,
+    batch: {
+      size: 2,
+      sample_order: ["s0", "s1"],
+      reduction: "mean",
+    },
+    per_sample: {
+      s0: { inputs: { x1: 1, x2: 0 }, targets: { y: 1 } },
+      s1: { inputs: { x1: 0, x2: 1 }, targets: { y: 1 } },
+    },
+  })
+  assert.strictEqual(
+    r.step,
+    4,
+    "a batched step_index=3 record must emit step = step_index + 1 = 4",
+  )
+})
+
+// ===========================================================================
+// G-039 — runBatchedGeneralStep must reject batch.size < 1
+//
+// With size:0 the per-sample-runs map is empty, firstReceipt =
+// perSampleReceipts[0]! derefs undefined → cryptic "Cannot read properties of
+// undefined (reading 'updates')". A clear path-naming boundary error is owed
+// at the top of the function instead.
+//
+// Non-vacuity / mutation that turns this RED again: delete the
+// `if (input.batch.size < 1) throw ...` guard. Without it, size:0 throws the
+// cryptic undefined-deref TypeError (not the clear message), so the
+// message-matching assert.throws fails.
+// ===========================================================================
+
+test("G-039: runBatchedGeneralStep throws a clear error on batch.size = 0", () => {
+  const badBatch: BatchedGeneralInput = {
+    topology: XOR_INPUT.topology,
+    learning_rate: XOR_INPUT.learning_rate,
+    parameters_before: { ...XOR_INPUT.parameters_before },
+    numeric_policy: XOR_INPUT.numeric_policy,
+    bias_policy: XOR_INPUT.bias_policy,
+    batch: {
+      size: 0,
+      sample_order: [],
+      reduction: "mean",
+    },
+    per_sample: {},
+  }
+  assert.throws(
+    () => runBatchedGeneralStep(badBatch),
+    /batch\.size must be >= 1/,
+    "runBatchedGeneralStep must reject batch.size = 0 with a clear path-naming error (not a cryptic undefined deref)",
+  )
+})
+
+// ===========================================================================
+// core-B-001 — runBatchedGeneralStep must cap batch.size (verifier-owned)
+//
+// Rule 14 (checkRule14EngineRecomputeDifferential) and runBatchedGeneralStep
+// run the engine ONCE PER SAMPLE with no cap on batch.size / per_sample length
+// (the schema has minimum:1, no maximum). An untrusted batch.size:100000 ->
+// ~10h CPU + OOM (100k per-sample receipts). A verifier-owned MAX_BATCH_SAMPLES
+// cap is checked at runBatchedGeneralStep's boundary BEFORE the per-sample
+// engine loop runs, emitting a clear "batch exceeds verifier recompute cap"
+// failure instead of running the engine N times — mirroring the
+// NUMERIC_TOLERANCE_CEILING pattern (a verifier-owned limit, not a hang/OOM).
+//
+// Non-vacuity / mutation that turns this RED: delete the
+// `if (input.batch.size > MAX_BATCH_SAMPLES) throw ...` guard. Without it a
+// size > cap batch attempts the full per-sample engine loop (the
+// hang/OOM the cap prevents) instead of throwing the cap message.
+// ===========================================================================
+
+test("core-B-001: MAX_BATCH_SAMPLES is exported and sane (>= the canonical batch size 4)", () => {
+  assert.ok(
+    Number.isInteger(MAX_BATCH_SAMPLES) && MAX_BATCH_SAMPLES >= 4,
+    `MAX_BATCH_SAMPLES must be an integer at least as large as the canonical batched ` +
+      `golden's batch size (4); got ${String(MAX_BATCH_SAMPLES)}`,
+  )
+})
+
+test("core-B-001: runBatchedGeneralStep rejects batch.size over the cap with a clear cap message (does NOT run the engine N times)", () => {
+  // Declare a batch ONE PAST the cap. We construct the sample_order +
+  // per_sample map cheaply (plain object construction — no engine runs) so the
+  // cap guard, which fires BEFORE the per-sample engine loop, is the only
+  // expensive work avoided. The cap MUST fire before any runGeneralStep call.
+  const overCap = MAX_BATCH_SAMPLES + 1
+  const sampleOrder: string[] = new Array(overCap)
+  const perSample: Record<string, { inputs: { x1: number; x2: number }; targets: { y: number } }> = {}
+  for (let i = 0; i < overCap; i++) {
+    const sid = `s${i}`
+    sampleOrder[i] = sid
+    perSample[sid] = { inputs: { x1: 1, x2: 0 }, targets: { y: 1 } }
+  }
+  const tooBig: BatchedGeneralInput = {
+    topology: XOR_INPUT.topology,
+    learning_rate: XOR_INPUT.learning_rate,
+    parameters_before: { ...XOR_INPUT.parameters_before },
+    numeric_policy: XOR_INPUT.numeric_policy,
+    bias_policy: XOR_INPUT.bias_policy,
+    batch: {
+      size: overCap,
+      sample_order: sampleOrder,
+      reduction: "mean",
+    },
+    per_sample: perSample,
+  }
+  const started = Date.now()
+  assert.throws(
+    () => runBatchedGeneralStep(tooBig),
+    (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      assert.match(
+        msg,
+        /cap|exceeds verifier|recompute cap|MAX_BATCH_SAMPLES|batch.*exceeds/i,
+        `over-cap batch must throw a verifier-owned cap diagnostic; got: ${msg}`,
+      )
+      // The message must state both the offending size and the cap so the
+      // caller can fix it (mirrors NUMERIC_TOLERANCE_CEILING messaging).
+      assert.match(
+        msg,
+        new RegExp(String(MAX_BATCH_SAMPLES)),
+        "cap message must state the cap value",
+      )
+      assert.match(msg, new RegExp(String(overCap)), "cap message must state the offending batch.size")
+      return true
+    },
+    "an over-cap batch.size must throw a clear cap error, not run the engine N times",
+  )
+  // The cap fires before the per-sample loop, so this returns near-instantly.
+  // A generous bound (the loop on overCap samples would take many seconds-to-
+  // minutes); this proves we did NOT enter the engine loop.
+  assert.ok(
+    Date.now() - started < 5000,
+    "the cap must short-circuit BEFORE the per-sample engine loop (near-instant reject)",
+  )
+})
+
+test("core-B-001: runBatchedGeneralStep accepts a small legit batch (cap does not false-FAIL real batches)", () => {
+  // A 2-sample batch is far under the cap and must still run cleanly — the cap
+  // is a wall against adversarial sizes, not a regression on legit batched use.
+  const okBatch: BatchedGeneralInput = {
+    topology: XOR_INPUT.topology,
+    learning_rate: XOR_INPUT.learning_rate,
+    parameters_before: { ...XOR_INPUT.parameters_before },
+    numeric_policy: XOR_INPUT.numeric_policy,
+    bias_policy: XOR_INPUT.bias_policy,
+    batch: {
+      size: 2,
+      sample_order: ["s0", "s1"],
+      reduction: "mean",
+    },
+    per_sample: {
+      s0: { inputs: { x1: 1, x2: 0 }, targets: { y: 1 } },
+      s1: { inputs: { x1: 0, x2: 1 }, targets: { y: 1 } },
+    },
+  }
+  assert.doesNotThrow(
+    () => runBatchedGeneralStep(okBatch),
+    "a small batch (size 2, well under the cap) must still reconcile-recompute cleanly",
   )
 })

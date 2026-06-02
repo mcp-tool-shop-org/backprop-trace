@@ -1,0 +1,24 @@
+# CPU-only PyTorch + NumPy pin for the torch-e2e CI lane (ci-future-B-001).
+#
+# WHY PINNED: the torch-e2e lane validates the LIVE PyTorch helper
+# (scripts/extract/pytorch.py) against real torch. If torch / numpy float
+# unpinned, a silent upstream point-release can change tensor APIs, optimizer
+# state layout, or float64 rounding and turn this lane red (or worse, green on
+# a regression) for reasons unrelated to the PR under test. Pinning makes the
+# live-helper validation reproducible: the lane re-runs byte-for-byte across
+# time, per the PIN_PER_STEP workflow standard.
+#
+# WHY THESE VERSIONS: torch 2.5.1 is the latest stable CPU wheel published on
+# https://download.pytorch.org/whl/cpu that the helper's APIs (float64 casts,
+# SGD/Adam/AdamW state, per-param-group flags) are validated against. numpy is
+# capped below 2.2 to match torch 2.5.1's tested ABI.
+#
+# HOW TO BUMP: change a pin here, run the torch-e2e lane, confirm
+# test/import-pytorch-helper.torch-e2e.test.ts still passes, and note the bump
+# in CHANGELOG. Do NOT loosen to unbounded ranges — that defeats the purpose.
+#
+# NOTE: this file pins ONLY the CI validation environment. It is NOT a runtime
+# dependency of @mcptoolshop/backprop-trace (the npm package ships no Python
+# deps; the helper is copied into the user's own torch environment).
+torch==2.5.1
+numpy==2.1.3

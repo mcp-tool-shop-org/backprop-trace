@@ -41,17 +41,20 @@ function loadGoldenMutated(): GoldenLike {
   return receipt;
 }
 
-test("reconciler reports Rule 3 failure when h1.signal_value is mutated", (t) => {
+test("reconciler reports Rule 3 failure when h1.signal_value is mutated", () => {
   const receipt = loadGoldenMutated();
   const result = reconcileReceipt(receipt);
 
-  if (result.ok) {
-    t.skip(
-      `TODO upstream: engine agent has not implemented Rule 3 (hidden_error_signal consistency). ` +
-        `Reconciler accepted the in-memory mutation silently.`,
-    );
-    return;
-  }
+  // G-012: Rule 3 is implemented. A silent accept of a 1e-6 signal_value
+  // mutation (above the 1e-9 tolerance) IS the soundness failure this test
+  // guards — assert rejection rather than skipping it into a green pass.
+  assert.strictEqual(
+    result.ok,
+    false,
+    "hidden_error_signal mutation (1e-6, above tolerance) must be rejected — " +
+      "silent accept is the soundness failure this test guards",
+  );
+  if (result.ok) return; // type narrowing
 
   const rule3 = result.failures.find(
     (f: ReconciliationFailure) =>

@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 /**
- * bp — backprop-trace CLI (v0.7.0 surface)
+ * bp — backprop-trace CLI
  *
  * Subcommand surface:
  *
- *   bp reconcile receipt <file>      Reconcile a receipt against the 16 rules
- *                                    (Rules 1-8 per-receipt math, 9-10 multi-step,
- *                                    11 softmax normalization, 12 loss formula,
- *                                    13 GATED dual-form, 14 engine-recompute
- *                                    differential, 15 skip-basis, 16 GATED
- *                                    attestation digest binding).
+ *   bp reconcile receipt <file>      Reconcile a receipt against the
+ *                                    reconciliation rules (per-receipt math,
+ *                                    multi-step parameter-chain + trace-identity,
+ *                                    softmax normalization, loss formula, GATED
+ *                                    dual-form, engine-recompute differential,
+ *                                    skip-basis, GATED attestation digest +
+ *                                    trace-bundle binding, batch reduction,
+ *                                    optimizer-state, and optimizer recurrences).
+ *                                    See docs/reconciliation.md for the full,
+ *                                    authoritative rule list and numbering.
  *                                    Exit 0 if all applicable rules pass within
  *                                    tolerance; exit 1 with stderr describing failures.
  *
@@ -25,8 +29,8 @@
  *                                    observer-mode imports, arbitrary user-
  *                                    authored topology). Composes schema-validate
  *                                    (auto-detects v0.2.0 / v0.3.0 / v0.4.0) +
- *                                    Rules 1-16 as applicable + engine reproduction
- *                                    (engine-authored) or Rule 14 differential
+ *                                    the applicable reconciliation rules + engine
+ *                                    reproduction (engine-authored) or Rule 14 differential
  *                                    (observer-mode imports). Skips Mazur-specific
  *                                    checks (byte-equal vs Mazur golden, published-
  *                                    anchor drift).
@@ -89,7 +93,11 @@
  *   1  reconciliation or verification failure (or import differential disagreement)
  *   2  usage or I/O error (missing file, permission denied, malformed JSON, …)
  *   3  invalid CLI argument (unknown flag, malformed --color value, …)
- *   4  reserved (framework adapter declared but not implemented)
+ *   4  reserved; never emitted by the current surface. Held for a future
+ *      "framework adapter declared but not implemented" state — all shipped
+ *      adapters (pytorch / jax / tensorflow) are implemented, so nothing
+ *      returns 4 today. (cli-B-005: the prior wording read as if 4 were a
+ *      live outcome.)
  *
  * The CLI is itself a consumer of the public library API — every domain
  * primitive comes from "../index.js" (the published barrel) so the surface
@@ -187,13 +195,37 @@ const FLAG_TOKENS = new Set([
   "--check",
 ]);
 
+/**
+ * Is `token` shaped like a CLI flag (and therefore NOT a valid value for a
+ * value-bearing flag)? The bare `-` stdin sentinel and the bare `--`
+ * separator are explicitly NOT flag-shaped — they are legitimate value tokens
+ * in this CLI's grammar. cli-B-006 helper.
+ */
+function isFlagShaped(token: string | undefined): boolean {
+  return (
+    typeof token === "string" &&
+    token.startsWith("-") &&
+    token !== "-" &&
+    token !== "--"
+  );
+}
+
 function valueFlag(flag: string): string | undefined {
   // Supports both `--flag value` and `--flag=value`.
   const eqPrefix = `${flag}=`;
   for (let i = 0; i < rawArgv.length; i += 1) {
     const token = rawArgv[i] ?? "";
     if (token.startsWith(eqPrefix)) return token.slice(eqPrefix.length);
-    if (token === flag) return rawArgv[i + 1];
+    if (token === flag) {
+      // cli-B-006: missing-value guard. If `--flag` is the LAST token, or the
+      // next token is itself a flag (e.g. `bp ... --out --json`), the value is
+      // absent — return undefined rather than silently swallowing the next
+      // flag as the value (which previously produced a file literally named
+      // "--json"). The `-` / `--` sentinels are still accepted as values.
+      const next = rawArgv[i + 1];
+      if (next === undefined || isFlagShaped(next)) return undefined;
+      return next;
+    }
   }
   return undefined;
 }
@@ -229,14 +261,15 @@ function stripFlags(args: string[]): string[] {
     if (FLAG_TOKENS.has(a)) continue;
     if (a.startsWith("--color")) continue;
     if (a === "--out") {
-      // skip the next token (the value)
-      i += 1;
+      // cli-B-006: consume the next token as the value ONLY if it is a real
+      // value (not absent, not another flag) — mirrors valueFlag's guard so a
+      // following flag like `--json` is NOT swallowed and stays parseable.
+      if (!isFlagShaped(args[i + 1]) && args[i + 1] !== undefined) i += 1;
       continue;
     }
     if (a.startsWith("--out=")) continue;
     if (a === "--topology") {
-      // skip the next token (the value)
-      i += 1;
+      if (!isFlagShaped(args[i + 1]) && args[i + 1] !== undefined) i += 1;
       continue;
     }
     if (a.startsWith("--topology=")) continue;
@@ -337,6 +370,33 @@ function verboseLog(message: string): void {
 // =============================================================================
 
 /**
+ * Read all of stdin as UTF-8. cli-B-007: when the `-` sentinel is used but
+ * stdin is an interactive TTY (no piped input), `readFileSync(0, "utf-8")`
+ * blocks until the user manually sends EOF (Ctrl+D / Ctrl+Z) — which reads as
+ * a silent hang. Detect that case up front and exit with an actionable Tier-1
+ * envelope telling the user how to feed stdin, instead of hanging. When stdin
+ * IS piped (the normal `echo '{...}' | bp validate -` case) isTTY is false and
+ * the read proceeds unchanged.
+ */
+function readStdinText(): string {
+  if (process.stdin.isTTY) {
+    exitWithUsageError(
+      "no data on stdin: the '-' argument means 'read from stdin', but stdin is a " +
+        "terminal (nothing is piped in).",
+      "STDIN_IS_TTY",
+      2,
+      {
+        hint:
+          "pipe a receipt in, e.g. `cat receipt.jsonl | bp ... -` or " +
+          "`echo '{...}' | bp ... -`; or pass a file path instead of '-'.",
+        retryable: false,
+      },
+    );
+  }
+  return readFileSync(0, "utf-8");
+}
+
+/**
  * Read and parse a receipt file. Supports `.json` (whole-file JSON) and
  * `.jsonl` (one JSON record per line, v0.1 = exactly one record).
  *
@@ -355,7 +415,7 @@ function verboseLog(message: string): void {
  */
 function readReceipt(file: string): unknown {
   if (file === "-") {
-    const raw = readFileSync(0, "utf-8");
+    const raw = readStdinText();
     return JSON.parse(raw);
   }
 
@@ -411,7 +471,7 @@ function readReceipt(file: string): unknown {
 function readMultiRecordJsonl(file: string): unknown[] {
   let raw: string;
   if (file === "-") {
-    raw = readFileSync(0, "utf-8");
+    raw = readStdinText();
   } else {
     raw = readFileSync(file, "utf-8");
   }
@@ -503,16 +563,60 @@ function exitOnReadError(err: unknown, file: string): never {
       },
     );
   }
-  // Unknown I/O failure — preserve the stack for developer visibility
-  // in human mode; emit a structured fallback in JSON mode.
-  if (jsonMode) {
-    const message = err instanceof Error ? err.message : String(err);
-    exitWithUsageError(`unexpected error reading ${file}: ${message}`, "IO_ERROR", 2, {
-      hint: "this is an unexpected I/O error; retry after checking the path and file permissions.",
-      retryable: true,
-    });
+  // cli-B-001: a routine multi-step training trace can be a >512MB JSONL.
+  // readFileSync(path, "utf-8") throws ERR_STRING_TOO_LONG once the file
+  // exceeds V8's max string length (~512MB, buffer.constants.MAX_STRING_LENGTH);
+  // a buffer read past buffer.constants.MAX_LENGTH throws ERR_FS_FILE_TOO_LARGE.
+  // Before this branch the human path hit the catch-all `throw err` and dumped a
+  // raw Node stack, and the JSON path mislabeled it IO_ERROR / retryable:true —
+  // misleading, since re-reading the same oversized file can never succeed. Map
+  // both to a Tier-1 INPUT_TOO_LARGE envelope naming the ~512MB single-string
+  // limit, with an actionable hint and retryable:false.
+  if (codeStr === "ERR_STRING_TOO_LONG" || codeStr === "ERR_FS_FILE_TOO_LARGE") {
+    exitWithUsageError(
+      `input too large to read: ${file}. A single file read is capped at ~512MB ` +
+        `(V8's maximum string length); this JSONL exceeds it.`,
+      "INPUT_TOO_LARGE",
+      2,
+      {
+        hint:
+          "split the JSONL into smaller files and verify in batches " +
+          "(e.g. 'bp verify multi' over each chunk), or stream a single step at a time.",
+        retryable: false,
+      },
+    );
   }
-  throw err;
+  // Catch-all: any remaining I/O failure. NEVER surface a raw Node stack to a
+  // CLI user (the historic `throw err` did exactly that in human mode). Emit a
+  // structured Tier-1 envelope in BOTH human and JSON mode. retryable is set by
+  // error class: a small allow-list of transient errnos (resource-exhaustion /
+  // contention that may clear on a retry) is retryable; everything else,
+  // including unknown failures, is not.
+  const RETRYABLE_ERRNOS = new Set([
+    "EAGAIN",
+    "EBUSY",
+    "EMFILE",
+    "ENFILE",
+    "ENOMEM",
+    "ETIMEDOUT",
+    "EINTR",
+  ]);
+  const retryable = typeof codeStr === "string" && RETRYABLE_ERRNOS.has(codeStr);
+  const message = err instanceof Error ? err.message : String(err);
+  exitWithUsageError(
+    `could not read ${file}: ${message}`,
+    "IO_ERROR",
+    2,
+    {
+      hint: retryable
+        ? "this looks like a transient I/O error (resource contention); retry shortly."
+        : "verify the path is a readable file; if this persists, the file or filesystem may be damaged.",
+      // cause carries the underlying errno (when present) so CI consumers can
+      // branch on the specific failure without parsing the message string.
+      ...(typeof codeStr === "string" ? { cause: codeStr } : {}),
+      retryable,
+    },
+  );
 }
 
 /**
@@ -565,7 +669,9 @@ function describeReceipt(receipt: unknown): { schemaVersion?: string; fixtureId?
  * this in v0.3.
  */
 function formatValue(v: unknown): string {
-  if (typeof v === "number") return String(v);
+  // Both numeric and non-numeric values coerce via String(); kept as a
+  // single named renderer so callers don't inline String() at each site
+  // (and so a future per-type rendering can land in one place).
   return String(v);
 }
 
@@ -580,13 +686,48 @@ function formatDeltaOrTolerance(v: unknown): string {
   return String(v);
 }
 
+/**
+ * The noun for the compared quantity in a given rule's failure readout.
+ *
+ * The historic renderer hardcoded "gradient" for EVERY rule, which is wrong
+ * for the many rules that do not compare a gradient: Rule 1 compares an output
+ * error signal, Rule 11 a softmax probability sum, Rule 12 a loss, Rules 16/17
+ * digests, and so on. We derive a per-rule noun so each failure reads
+ * correctly. Rules whose compared quantity genuinely IS a gradient keep
+ * "gradient"; everything else falls back to the neutral "value".
+ *
+ * Only rules with a clearly-correct specific noun are listed; the default is
+ * "value" (always accurate, never misleading). This is intentionally
+ * conservative — a wrong specific noun would be worse than a neutral one.
+ */
+function ruleValueNoun(rule: number): string {
+  switch (rule) {
+    // Rule 4 compares update.gradient == product(optimizer.factors): the
+    // stored/recomputed quantity literally IS the gradient.
+    case 4:
+      return "gradient"
+    default:
+      return "value"
+  }
+}
+
 function renderFailure(f: ReconciliationFailure): string {
   const label = RULE_LABELS[f.rule] ?? "rule mismatch";
+  // Per-rule wording: the compared-quantity noun is derived from the rule so
+  // non-gradient rules (Rule 1 signal, 11 softmax sum, 12 loss, 16/17 digests)
+  // no longer mislabel their values as "gradient". The full per-rule nature of
+  // the mismatch is also named on the header line via RULE_LABELS[f.rule].
+  const noun = ruleValueNoun(f.rule);
+  // Right-pad the two value labels to a fixed column so the readout stays
+  // aligned regardless of the noun's length (e.g. "gradient" vs "value").
+  const VALUE_COL = 21;
+  const storedLabel = `stored ${noun}:`.padEnd(VALUE_COL);
+  const recomputedLabel = `recomputed ${noun}:`.padEnd(VALUE_COL);
   const lines = [
     `Rule ${f.rule}: ${label} on ${f.parameter_id ?? "(unknown parameter)"}`,
     `  field_path:          ${f.field_path}`,
-    `  stored gradient:     ${formatValue(f.stored)}`,
-    `  recomputed gradient: ${formatValue(f.recomputed)}`,
+    `  ${storedLabel}${formatValue(f.stored)}`,
+    `  ${recomputedLabel}${formatValue(f.recomputed)}`,
     `  delta:               ${formatDeltaOrTolerance(f.delta)}`,
     `  tolerance:           ${formatDeltaOrTolerance(f.tolerance)}`,
   ];
@@ -609,7 +750,7 @@ function usageText(): string {
     "",
     "Usage:",
     "  Reconcile / verify:",
-    "    bp reconcile receipt <file>     Reconcile a receipt against the 16 rules",
+    "    bp reconcile receipt <file>     Reconcile a receipt against the reconciliation rules",
     "    bp verify mazur [<file>]        Full Mazur gate (v0.1 receipts)",
     "    bp verify general <file>        Generalized verify (v0.2+ receipts; softmax+CE; observer-mode)",
     "    bp verify multi <file.jsonl>    Multi-record verify (Rules 1-8 per record + Rules 9, 10)",
@@ -657,7 +798,7 @@ function usageText(): string {
     "  1  reconciliation/verification failure (or import differential disagreement)",
     "  2  usage or I/O error",
     "  3  invalid CLI argument",
-    "  4  reserved (framework adapter declared but not implemented)",
+    "  4  reserved (not emitted today; held for a future unimplemented-adapter state)",
     "",
     "EXAMPLES",
     "  bp reconcile receipt fixtures/mazur.golden.jsonl",
@@ -686,12 +827,12 @@ function receiptUsageText(): string {
   return [
     "Usage: bp reconcile receipt <file> [--json] [--verbose]",
     "",
-    "  Reconcile the math claims in a receipt against the 16 rules in",
-    "  docs/reconciliation.md (Rules 1-8 per-receipt math, Rules 9-10",
-    "  multi-step, Rule 11 softmax normalization, Rule 12 loss formula,",
-    "  Rule 13 GATED dual-form, Rule 14 engine-recompute differential",
-    "  for observer-mode imports, Rule 15 skip-basis, Rule 16 GATED",
-    "  attestation digest binding).",
+    "  Reconcile the math claims in a receipt against the reconciliation",
+    "  rules in docs/reconciliation.md (per-receipt math, multi-step",
+    "  parameter-chain + trace-identity, softmax normalization, loss",
+    "  formula, GATED dual-form, engine-recompute differential for",
+    "  observer-mode imports, skip-basis, GATED attestation digest",
+    "  binding, batch reduction, optimizer-state, and optimizer recurrences).",
     "",
     "  <file>  Path to a receipt JSON document. Accepted extensions:",
     "            .json   — parsed as a single JSON document.",
@@ -719,9 +860,16 @@ function verifyGeneralUsageText(): string {
     "  Generalized verify gate for v0.2+ receipts (XOR, iris, softmax+CE,",
     "  observer-mode imports). Composes:",
     "    1. Schema validation (auto-detects v0.2.0 / v0.3.0 / v0.4.0)",
-    "    2. Reconciliation against Rules 1-16 as applicable",
-    "    3. Engine reproduction (engine-authored) or Rule 14 differential",
-    "       (observer-mode imported) via verifyGeneralEngineReproduces",
+    "    2. Reconciliation against the applicable reconciliation rules. For observer-mode",
+    "       receipts (fixture_status.authoring_state=\"external_imported\") this",
+    "       is where Rule 14 (engine-recompute differential within",
+    "       attestor.differential_tolerance) fires — the governing soundness",
+    "       gate for imported foreign-framework math.",
+    "    3. Engine reproduction (byte-equality recompute). RUN only for",
+    "       engine-authored receipts. SKIPPED for observer-mode receipts:",
+    "       their canonical bytes carry foreign framework math that the engine",
+    "       will not byte-match by design, so Rule 14 (step 2) is the gate",
+    "       instead. The SKIP line names the reconcile/Rule-14 outcome.",
     "",
     "  This subcommand intentionally skips Mazur-specific checks:",
     "    - No byte-equal vs a Mazur golden fixture",
@@ -788,7 +936,7 @@ function verifyUsageText(): string {
     "",
     "  Full gate per docs/reconciliation.md:264. Composes:",
     "    1. Schema validation against schemas/receipt.v0.1.0.json",
-    "    2. Reconciliation against the 8 rules",
+    "    2. Reconciliation against the applicable reconciliation rules",
     "    3. Engine reproduction (re-run the engine, compare receipts)",
     "    4. Byte equality against fixtures/mazur.golden.jsonl",
     "    5. Fixture status enum checks",
@@ -1322,17 +1470,75 @@ function importPytorchUsageText(): string {
     "         for audit, but the verifier-side gate has flagged it.",
     "    2  Usage / I/O / schema-validation error.",
     "    3  Invalid CLI argument.",
-    "    4  Reserved: framework adapter declared but not implemented.",
+    "    (Exit 4 is reserved for an unimplemented adapter and never occurs",
+    "     here — the PyTorch adapter is implemented.)",
     "",
   ].join("\n");
 }
 
 /**
- * Levenshtein-light suggestion for unknown top-level subcommand. Hand-
- * rolled because the v0.3 surface still has only four real top-level
- * tokens (reconcile, verify, generate, validate). The example string
- * for each top-level verb summarizes the full subnoun set so a user
- * who typed `bp verfy` sees the three valid `verify` shapes inline.
+ * Damerau-Levenshtein (optimal string alignment) edit distance between two
+ * strings: the minimum number of single-character insertions, deletions,
+ * substitutions, OR adjacent transpositions to turn `a` into `b`. The
+ * transposition case (over plain Levenshtein) is what lets `recouncile` →
+ * `reconcile` and `verifu` → `verify` register as near-misses — a swap counts
+ * as ONE edit, not two. O(len(a)·len(b)) time / O(len(b)) space; fine for the
+ * handful of short subcommand tokens here.
+ */
+function damerauLevenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  // Full (m+1)x(n+1) matrix in a flat Int32Array. A typed-array element access
+  // is typed `number` (not `number | undefined`) even under
+  // noUncheckedIndexedAccess, so the recurrence stays clean. The tokens are
+  // short subcommand names, so the O(m·n) allocation is negligible.
+  const w = n + 1;
+  const d = new Int32Array((m + 1) * w);
+  for (let j = 0; j <= n; j += 1) d[j] = j; // first row: 0..n
+  for (let i = 1; i <= m; i += 1) d[i * w] = i; // first column: 0..m
+  for (let i = 1; i <= m; i += 1) {
+    for (let j = 1; j <= n; j += 1) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      // The `!` assertions are sound: every index here is in [0, (m+1)*w) and
+      // every cell was initialized by the row/column seeding above or a prior
+      // iteration. Under noUncheckedIndexedAccess, Int32Array element access is
+      // typed `number | undefined`, so we assert the known-defined value.
+      let v = Math.min(
+        d[(i - 1) * w + j]! + 1, // deletion
+        d[i * w + (j - 1)]! + 1, // insertion
+        d[(i - 1) * w + (j - 1)]! + cost, // substitution
+      );
+      // Adjacent transposition (optimal string alignment):
+      // a[i-1] a[i-2] == b[j-2] b[j-1].
+      if (
+        i > 1 &&
+        j > 1 &&
+        a.charCodeAt(i - 1) === b.charCodeAt(j - 2) &&
+        a.charCodeAt(i - 2) === b.charCodeAt(j - 1)
+      ) {
+        v = Math.min(v, d[(i - 2) * w + (j - 2)]! + 1);
+      }
+      d[i * w + j] = v;
+    }
+  }
+  return d[m * w + n]!;
+}
+
+/**
+ * Damerau-Levenshtein suggestion for an unknown top-level subcommand. Three
+ * passes, in priority order:
+ *   1. EXACT-or-`unknown.startsWith(verb)` — the user's literal typed prefix
+ *      (`validat` -> `validate`, `validate-inp` -> `validate-input`).
+ *   2. `verb.startsWith(unknown)` — short prefixes (`gen` -> `generate`).
+ *   3. Nearest edit-distance match within a length-scaled threshold — typos
+ *      and transpositions that are NOT prefixes (`recouncile` -> `reconcile`,
+ *      `verifu` -> `verify`, `genrate` -> `generate`). cli-B-004: the docstring
+ *      historically promised "Levenshtein-light" but only passes 1-2 (prefix)
+ *      existed; pass 3 makes the promise real.
+ * The example string for each top-level verb summarizes the full subnoun set so
+ * a user who typed `bp verfy` sees the valid `verify` shapes inline.
  */
 function suggestSubcommand(unknown: string): string | null {
   // `validate` is a proper prefix of `validate-input`. Two-pass match:
@@ -1378,6 +1584,29 @@ function suggestSubcommand(unknown: string): string | null {
     }
   }
   if (bestPrefix) return bestPrefix.example;
+
+  // Pass 3 (typo / transposition bias): no prefix relationship in either
+  // direction. Fall back to the nearest Damerau-Levenshtein match so a
+  // mistyped verb still resolves (`recouncile` -> `reconcile`, `verifu` ->
+  // `verify`, `genrate` -> `generate`). Threshold scales with the candidate
+  // length (ceil(len/3), min 2) so short verbs ('verify') tolerate ~2 edits
+  // and longer ones ('validate-input') a few more, WITHOUT collapsing every
+  // garbage token onto a suggestion. Ties broken by the smallest distance,
+  // then the shortest verb (the more canonical guess).
+  let bestFuzzy: { verb: string; example: string; dist: number } | null = null;
+  for (const c of candidates) {
+    const dist = damerauLevenshtein(unknown, c.verb);
+    const threshold = Math.max(2, Math.ceil(c.verb.length / 3));
+    if (dist > threshold) continue;
+    if (
+      bestFuzzy === null ||
+      dist < bestFuzzy.dist ||
+      (dist === bestFuzzy.dist && c.verb.length < bestFuzzy.verb.length)
+    ) {
+      bestFuzzy = { verb: c.verb, example: c.example, dist };
+    }
+  }
+  if (bestFuzzy) return bestFuzzy.example;
   return null;
 }
 
@@ -1451,10 +1680,36 @@ type VerifyCheck = {
   status: VerifyCheckStatus;
   message?: string;
   evidence?: unknown;
+  /**
+   * LOW (--strict over-rejection): a SKIP that is CORRECT-by-design and must
+   * NOT be counted as a failure under `--strict`. The canonical case is the
+   * engine-reproduce SKIP for observer-mode (external_imported) receipts —
+   * the byte-equality recompute is N/A on foreign framework math by design,
+   * and Rule 14 (the engine-recompute differential) is the real gate that
+   * already ran during reconcile. Other skips remain strict-failing.
+   *
+   * Only meaningful on `status === "skip"`; ignored otherwise. Absent (not
+   * `false`) on the normal path so the JSON report stays unchanged for every
+   * check that is not deliberately strict-exempt.
+   */
+  strictExempt?: boolean;
 };
 type VerifyReport = {
   overall: "pass" | "fail" | "warn";
   checks: VerifyCheck[];
+  /**
+   * G-006: machine-readable signal that a self-declared math-gate skip was
+   * detected (reconcileReceipt returned math_gate_skipped). Present only when
+   * a receipt self-asserted
+   * fixture_status.verification_state === "engine_recompute_skipped_with_basis"
+   * (Rule 14, the only math gate on observer-mode imports, returned early).
+   * A consumer MUST NOT treat such a report as fully verified — the strongest
+   * math gate did not run; the receipt is trusted on its declared basis only.
+   * Absent on the normal fully-verified path.
+   */
+  math_gate_skipped?: boolean;
+  /** G-006: the concrete rule numbers skipped via self-assertion (e.g. [14]). */
+  skipped_rules?: number[];
 };
 
 const VALID_AUTHORING_STATES = new Set([
@@ -1774,15 +2029,19 @@ function finalizeReport(
 ): VerifyReport {
   let hasFail = false;
   let hasWarn = false;
-  let hasSkip = false;
+  // LOW: only NON-strict-exempt skips arm the --strict gate. A correct-by-design
+  // observer-mode engine-reproduce SKIP (strictExempt) must not flip --strict to
+  // fail — that skip means "Rule 14 is the gate and it ran," not "a check was
+  // dodged." Every other skip still counts.
+  let hasStrictFailingSkip = false;
   for (const c of checks) {
     if (c.status === "fail") hasFail = true;
     else if (c.status === "warn") hasWarn = true;
-    else if (c.status === "skip") hasSkip = true;
+    else if (c.status === "skip" && c.strictExempt !== true) hasStrictFailingSkip = true;
   }
   let overall: VerifyReport["overall"];
   if (hasFail) overall = "fail";
-  else if (opts.strict && (hasWarn || hasSkip)) overall = "fail";
+  else if (opts.strict && (hasWarn || hasStrictFailingSkip)) overall = "fail";
   else if (opts.warnAsFail && hasWarn) overall = "fail";
   else if (hasWarn) overall = "warn";
   else overall = "pass";
@@ -1980,7 +2239,7 @@ function runGenerateIris(): void {
  */
 function readInputConfigText(file: string): string {
   try {
-    if (file === "-") return readFileSync(0, "utf-8");
+    if (file === "-") return readStdinText();
     return readFileSync(file, "utf-8");
   } catch (err) {
     exitOnReadError(err, file === "-" ? "<stdin>" : file);
@@ -2301,6 +2560,13 @@ function runValidateInput(file: string): void {
  *   1  — Import succeeded; differential check DISAGREED. Receipt still
  *         emitted so the operator can audit the disagreement.
  *   2  — Sidecar invalid or I/O error.
+ *
+ * cli-B-003 stream contract (--json mode): STDOUT carries the emitted receipt
+ * bytes (when no --out) and NOTHING else, so it stays parseable as a receipt.
+ * The JSON RESULT envelope ({ok, differential} on success/disagreement, or
+ * {ok:false, error} when the import threw) ALWAYS goes to STDERR — success and
+ * failure alike — so a CI consumer reads one stream for the summary regardless
+ * of outcome. Pattern: `bp import pytorch x.jsonl --json >receipt.jsonl 2>summary.json`.
  */
 function runImportFramework(
   file: string,
@@ -2342,7 +2608,9 @@ function runImportFramework(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (jsonMode) {
-      process.stdout.write(
+      // cli-B-003: result envelope to STDERR (same stream as the success
+      // envelope below) — STDOUT is reserved for the receipt payload.
+      process.stderr.write(
         `${JSON.stringify({
           ok: false,
           error: { kind: "IMPORT_FAILED", message },
@@ -2359,8 +2627,14 @@ function runImportFramework(
   }
 
   if (outPath !== undefined && outPath.length > 0) {
-    const { writeFileSync } = require("node:fs") as typeof import("node:fs");
-    writeFileSync(outPath, result.emittedBytes);
+    // cli-B-002: wrap the write so a failed --out (EACCES / ENOSPC / EISDIR /
+    // EROFS) surfaces a Tier-1 envelope via exitOnReadError instead of a raw
+    // stack — matching every other writeFileSync call site in this CLI.
+    try {
+      writeFileSync(outPath, result.emittedBytes);
+    } catch (err) {
+      exitOnReadError(err, outPath);
+    }
     verboseLog(`wrote ${outPath}`);
   } else {
     process.stdout.write(result.emittedBytes);
@@ -2388,7 +2662,12 @@ function runImportFramework(
   }
 
   if (jsonMode) {
-    process.stdout.write(
+    // cli-B-003: result envelope to STDERR (same stream as the success
+    // envelope above) so a CI consumer reads ONE stream for the summary
+    // regardless of outcome. STDOUT already carries the receipt bytes (when
+    // no --out); mixing the envelope onto STDOUT would make the receipt
+    // stream unparseable.
+    process.stderr.write(
       `${JSON.stringify({
         ok: false,
         differential: {
@@ -2478,6 +2757,12 @@ function runImportTensorflow(file: string): void {
  *         record, mid-stream framework swap, mid-stream trace_id swap,
  *         non-sequential step_index).
  *   3  — Invalid CLI argument.
+ *
+ * cli-B-003 stream contract (--json mode): identical to the single-step runner.
+ * STDOUT carries the emitted receipt stream (when no --out) and nothing else;
+ * the JSON RESULT envelope — success, ≥1-disagreement, or import-threw — ALWAYS
+ * goes to STDERR so a CI consumer reads one stream for the summary regardless of
+ * outcome.
  */
 function runImportFrameworkStream(
   file: string,
@@ -2523,7 +2808,9 @@ function runImportFrameworkStream(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (jsonMode) {
-      process.stdout.write(
+      // cli-B-003: result envelope to STDERR (same stream as success +
+      // disagreement envelopes) — STDOUT is reserved for the receipt stream.
+      process.stderr.write(
         `${JSON.stringify({
           ok: false,
           error: { kind: "IMPORT_STREAM_FAILED", message },
@@ -2540,8 +2827,14 @@ function runImportFrameworkStream(
   }
 
   if (outPath !== undefined && outPath.length > 0) {
-    const { writeFileSync } = require("node:fs") as typeof import("node:fs");
-    writeFileSync(outPath, result.emittedBytes);
+    // cli-B-002: wrap the write so a failed --out surfaces a Tier-1 envelope
+    // via exitOnReadError instead of a raw stack (parity with every other
+    // writeFileSync call site).
+    try {
+      writeFileSync(outPath, result.emittedBytes);
+    } catch (err) {
+      exitOnReadError(err, outPath);
+    }
     verboseLog(
       `wrote ${outPath} (${result.steps.length} receipts, bundle_root_digest=${result.bundleRootDigest})`,
     );
@@ -2578,7 +2871,10 @@ function runImportFrameworkStream(
     .filter((x) => !x.s.differentialPassed)
     .map((x) => x.i);
   if (jsonMode) {
-    process.stdout.write(
+    // cli-B-003: result envelope to STDERR (same stream as the success
+    // envelope above) so the summary is on one stream regardless of outcome;
+    // STDOUT carries the emitted receipt stream.
+    process.stderr.write(
       `${JSON.stringify({
         ok: false,
         steps: result.steps.length,
@@ -2728,45 +3024,146 @@ function runVerifyGeneral(opts: {
     });
   }
 
-  // 4. Engine reproduction via the generalized engine path. Library
-  // agent exposes verifyGeneralEngineReproduces; it consumes the
-  // receipt's topology declaration (unit_order + parameter_order +
-  // activation choices) to drive the engine, then compares the emitted
-  // bytes against the receipt's canonical form.
-  type GeneralEngineRepro = {
-    matches: boolean;
-    firstDifferingByte: number;
-    ourBytes: { length: number };
-    theirBytes: { length: number };
-  };
-  const verifyGeneralEngineReproduces = requireLibExport<
-    (r: unknown) => GeneralEngineRepro
-  >("verifyGeneralEngineReproduces");
-  try {
-    const engineRepro = verifyGeneralEngineReproduces(typedReceipt);
-    if (engineRepro.matches) {
-      checks.push({ name: "engine-reproduce", status: "pass" });
-    } else {
-      checks.push({
-        name: "engine-reproduce",
-        status: "fail",
-        message: `engine output diverges from receipt at byte ${engineRepro.firstDifferingByte}`,
-        evidence: {
-          first_differing_byte: engineRepro.firstDifferingByte,
-          our_length: engineRepro.ourBytes?.length,
-          their_length: engineRepro.theirBytes?.length,
-        },
-      });
-    }
-  } catch (err) {
+  // 3b. G-006 — math-gate self-skip downgrade (NON-PASS by default).
+  //
+  // reconcileReceipt flags math_gate_skipped:true + skipped_rules:[14] when the
+  // receipt self-declares fixture_status.verification_state ===
+  // "engine_recompute_skipped_with_basis" — Rule 14 (the ONLY independent math
+  // gate on observer-mode imports) returned early, so the receipt's foreign math
+  // was NEVER recomputed. reconcile can still be ok:true (the per-receipt rules
+  // hold internally), but for a verifier with an inverted threat model that is
+  // NOT a clean PASS: the strongest gate was skipped on the receipt's own say-so.
+  //
+  // Emit a DISTINCT, visible math-gate check with status "fail" so the default
+  // outcome is overall:"fail" / exit 1, naming the skipped rule(s). No shipped
+  // golden uses this verification_state (the observer goldens all declare
+  // "engine_recompute_matched_within_tolerance"), so this never breaks a golden.
+  const mathGateSkipped = reconciliation.math_gate_skipped === true;
+  const mathGateSkippedRules = reconciliation.skipped_rules;
+  if (mathGateSkipped) {
+    const ruleList =
+      mathGateSkippedRules && mathGateSkippedRules.length > 0
+        ? mathGateSkippedRules.join(", ")
+        : "14";
     checks.push({
-      name: "engine-reproduce",
+      name: "math-gate",
       status: "fail",
-      message: err instanceof Error ? err.message : String(err),
+      message:
+        `receipt self-declares fixture_status.verification_state=` +
+        `"engine_recompute_skipped_with_basis" — the engine-recompute differential ` +
+        `(Rule ${ruleList}), the only independent math gate on observer-mode imports, ` +
+        `was SKIPPED on the receipt's own say-so. This is NOT a verified PASS: the ` +
+        `foreign framework math was never recomputed. The receipt is trusted on its ` +
+        `declared attestor.skip_basis alone. Re-import without the skip (let Rule 14 ` +
+        `run) to obtain a verified result, or treat this receipt as unverified.`,
+      evidence: { math_gate_skipped: true, skipped_rules: mathGateSkippedRules ?? [14] },
     });
   }
 
-  return finalizeReport(checks, opts);
+  // 4. Engine reproduction — gated on authoring_state (G-011).
+  //
+  // The byte-equality engine-reproduce check (verifyGeneralEngineReproduces)
+  // re-runs the backprop-trace engine and asserts the produced canonical bytes
+  // are byte-identical to the receipt's. That is the correct soundness gate for
+  // ENGINE-AUTHORED receipts (fixture_status.authoring_state in
+  // {engine_generated, engine_generated_general, ...}) — those receipts ARE the
+  // engine's own canonical output, so byte-equality is the strongest possible
+  // check.
+  //
+  // For OBSERVER-MODE receipts (authoring_state === "external_imported") the
+  // canonical bytes carry FOREIGN framework math (PyTorch / JAX / TensorFlow):
+  // different FP rounding, optimizer-state representation, etc. The engine
+  // recompute will, BY DESIGN, not byte-match those bytes — so running
+  // verifyGeneralEngineReproduces here produces a guaranteed false FAIL on every
+  // legitimate import (it fails SAFE — never accepts a broken receipt — but
+  // makes the shipped observer-mode goldens unverifiable via this command).
+  //
+  // The correct gate for observer-mode is Rule 14 (engine-recompute
+  // *differential* within attestor.differential_tolerance), which fires inside
+  // reconcileReceipt above (step 3) — exactly mirroring Rule 14's own
+  // authoring_state !== "external_imported" no-op gating at
+  // reconcile.ts:checkRule14EngineRecomputeDifferential. So here we SKIP the
+  // byte-equality recompute for observer-mode and surface the Rule 14 outcome
+  // (carried by the `reconcile` check) rather than emitting a misleading FAIL.
+  const fixtureStatus = (typedReceipt as {
+    fixture_status?: { authoring_state?: unknown; verification_state?: unknown };
+  } | null)?.fixture_status;
+  const authoringState =
+    typeof fixtureStatus?.authoring_state === "string"
+      ? fixtureStatus.authoring_state
+      : undefined;
+
+  if (authoringState === "external_imported") {
+    // Observer-mode: byte-equality engine-reproduce is N/A (foreign math).
+    // Rule 14 — the engine-recompute differential — is the governing gate and
+    // was already evaluated in step 3 (reconcile). Surface that outcome so the
+    // report is honest about WHY byte-equality was skipped.
+    const verificationState =
+      typeof fixtureStatus?.verification_state === "string"
+        ? fixtureStatus.verification_state
+        : undefined;
+    checks.push({
+      name: "engine-reproduce",
+      status: "skip",
+      // LOW: this SKIP is correct-by-design for observer-mode receipts (foreign
+      // framework math never byte-matches the engine; Rule 14 is the real gate
+      // and ran during reconcile). Mark it strict-exempt so `--strict` does NOT
+      // over-reject a legitimate observer-mode golden. Other skips still fail
+      // under --strict.
+      strictExempt: true,
+      message:
+        `observer-mode receipt (authoring_state="external_imported"): byte-equality ` +
+        `engine-reproduce is N/A — canonical bytes carry foreign framework math. ` +
+        `Soundness gate is Rule 14 (engine-recompute differential within ` +
+        `attestor.differential_tolerance), evaluated under the 'reconcile' check ` +
+        `above (reconcile=${reconciliation.ok ? "pass" : "fail"}` +
+        `${verificationState ? `, verification_state="${verificationState}"` : ""}).`,
+    });
+  } else {
+    // Engine-authored receipt: byte-equality is the correct, strongest gate.
+    type GeneralEngineRepro = {
+      matches: boolean;
+      firstDifferingByte: number;
+      ourBytes: { length: number };
+      theirBytes: { length: number };
+    };
+    const verifyGeneralEngineReproduces = requireLibExport<
+      (r: unknown) => GeneralEngineRepro
+    >("verifyGeneralEngineReproduces");
+    try {
+      const engineRepro = verifyGeneralEngineReproduces(typedReceipt);
+      if (engineRepro.matches) {
+        checks.push({ name: "engine-reproduce", status: "pass" });
+      } else {
+        checks.push({
+          name: "engine-reproduce",
+          status: "fail",
+          message: `engine output diverges from receipt at byte ${engineRepro.firstDifferingByte}`,
+          evidence: {
+            first_differing_byte: engineRepro.firstDifferingByte,
+            our_length: engineRepro.ourBytes?.length,
+            their_length: engineRepro.theirBytes?.length,
+          },
+        });
+      }
+    } catch (err) {
+      checks.push({
+        name: "engine-reproduce",
+        status: "fail",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  const report = finalizeReport(checks, opts);
+  // G-006: surface the machine-readable math-gate-skip signal on the report so a
+  // --json consumer can SEE the gate was skipped (in addition to the distinct
+  // failing math-gate check + the non-PASS overall).
+  if (mathGateSkipped) {
+    report.math_gate_skipped = true;
+    report.skipped_rules = mathGateSkippedRules ?? [14];
+  }
+  return report;
 }
 
 // =============================================================================
@@ -2786,6 +3183,21 @@ type VerifyMultiReport = {
   record_count: number;
   per_record: MultiSubReport[];
   cross_record_checks: VerifyCheck[];
+  /**
+   * FIX-1: machine-readable signal that at least one record in the bundle
+   * self-declared the engine-recompute math gate was skipped
+   * (reconcileReceipt / reconcileMultiStep returned math_gate_skipped). Present
+   * only when a record self-asserted fixture_status.verification_state ===
+   * "engine_recompute_skipped_with_basis" — Rule 14, the only math gate on
+   * observer-mode imports, returned early. A consumer MUST NOT treat such a
+   * report as fully verified: the strongest gate was skipped on the bundle's own
+   * say-so. Absent (not false / not []) on the normal fully-verified path, so
+   * existing --json consumers that ignore these fields are unaffected. Mirrors
+   * the same fields on the single-receipt VerifyReport.
+   */
+  math_gate_skipped?: boolean;
+  /** Concrete rule numbers skipped via self-assertion (currently [14]). */
+  skipped_rules?: number[];
 };
 
 /**
@@ -2819,6 +3231,18 @@ function runVerifyMulti(opts: {
   const perRecord: MultiSubReport[] = [];
   const typedReceipts: unknown[] = [];
 
+  // FIX-1 (cross-wave seam): step indices whose per-record reconcile reported a
+  // self-declared math-gate skip (reconcileReceipt returned math_gate_skipped:
+  // true because the record self-asserted fixture_status.verification_state ===
+  // "engine_recompute_skipped_with_basis", so Rule 14 — the ONLY independent
+  // math gate on observer-mode imports — returned early). A record can still
+  // reconcile ok:true with this flag set; for a verifier with an inverted threat
+  // model that is NOT a clean PASS, exactly as for the single-receipt
+  // `verify general` path. We collect the skipped steps here and emit a distinct
+  // NON-PASS math-gate check below so a self-skipped bundle does not exit 0.
+  const mathGateSkippedSteps: number[] = [];
+  const mathGateSkippedRulesSet = new Set<number>();
+
   // 2. Per-record schema + reconcile loop. Collect typed receipts for
   // the cross-record pass; if a record fails schema, skip its reconcile
   // step (it's already failed; running reconcile would crash on missing
@@ -2841,6 +3265,17 @@ function runVerifyMulti(opts: {
     let reconcileCheck: VerifyCheck;
     if (validation.ok) {
       const r = reconcileReceipt(validation.receipt);
+      // Capture the self-declared math-gate skip per record (additive, optional
+      // field on the reconcile result; absent on the normal fully-verified
+      // path). This is detected directly off the per-record reconcile so the
+      // multi-step gate does NOT depend on reconcileMultiStep aggregating the
+      // signal — we ALSO read the aggregated flag below when present.
+      if (r.math_gate_skipped === true) {
+        mathGateSkippedSteps.push(i);
+        for (const rule of r.skipped_rules ?? [14]) {
+          mathGateSkippedRulesSet.add(rule);
+        }
+      }
       reconcileCheck = r.ok
         ? { name: `reconcile[${i}]`, status: "pass" }
         : {
@@ -2881,14 +3316,40 @@ function runVerifyMulti(opts: {
         "skipped — at least one record failed schema validation; multi-step rules require all records to be structurally valid",
     });
   } else {
+    // FIX-1: the result type carries OPTIONAL math-gate-skip diagnostics
+    // (math_gate_skipped / skipped_rules). reconcileMultiStep aggregates the
+    // self-declared skip across its per-receipt phase; reading it here keeps the
+    // multi-step gate in lockstep with the cross-record helper. Absent on the
+    // normal path, so older helper builds that don't set it are handled too (the
+    // per-record detection above is the independent floor).
     type MultiStepResult =
-      | { ok: true }
-      | { ok: false; failures: ReconciliationFailure[] };
+      | { ok: true; math_gate_skipped?: boolean; skipped_rules?: number[] }
+      | {
+          ok: false;
+          failures: ReconciliationFailure[];
+          math_gate_skipped?: boolean;
+          skipped_rules?: number[];
+        };
     const reconcileMultiStep = requireLibExport<
       (receipts: unknown[]) => MultiStepResult
     >("reconcileMultiStep");
     try {
       const multi = reconcileMultiStep(typedReceipts);
+      // Fold the aggregated skip signal into the same accumulators the
+      // per-record loop populated (Set/array de-dupe handle the overlap).
+      if (multi.math_gate_skipped === true) {
+        for (const rule of multi.skipped_rules ?? [14]) {
+          mathGateSkippedRulesSet.add(rule);
+        }
+        // No per-step index from the aggregate; the per-record loop already
+        // recorded the concrete step(s). If only the aggregate fired (a future
+        // helper that detects a skip the per-record path missed), ensure the
+        // math-gate check below still fires by seeding a sentinel-free flag.
+        if (mathGateSkippedSteps.length === 0 && mathGateSkippedRulesSet.size > 0) {
+          // mark "bundle-level" skip with no specific step index
+          mathGateSkippedSteps.push(-1);
+        }
+      }
       if (multi.ok) {
         crossChecks.push({ name: "multi-step-rules-9-10", status: "pass" });
       } else {
@@ -2914,15 +3375,65 @@ function runVerifyMulti(opts: {
     }
   }
 
+  // 3b. FIX-1 — math-gate self-skip downgrade (NON-PASS by default), mirroring
+  // the single-receipt `verify general` path (see runVerifyGeneral step 3b /
+  // G-006). If ANY record self-declared the engine-recompute skip
+  // (math_gate_skipped, detected per-record above and/or aggregated by
+  // reconcileMultiStep), the bundle's foreign math was NEVER recomputed on at
+  // least one step. reconcile can still be ok per record (the internal rules
+  // hold), but for a verifier with an inverted threat model that is NOT a clean
+  // PASS: the strongest gate was skipped on the bundle's own say-so. Emit a
+  // DISTINCT, visible math-gate check with status "fail" so the default outcome
+  // is overall:"fail" / exit 1, naming the skipped step(s) and rule(s). No
+  // shipped multi-step golden uses this verification_state (the observer goldens
+  // all declare "engine_recompute_matched_within_tolerance"), so this never
+  // breaks a golden.
+  const mathGateSkipped = mathGateSkippedSteps.length > 0;
+  const mathGateSkippedRules =
+    mathGateSkippedRulesSet.size > 0
+      ? Array.from(mathGateSkippedRulesSet).sort((a, b) => a - b)
+      : [14];
+  const mathGateCheck: VerifyCheck | null = mathGateSkipped
+    ? {
+        name: "math-gate",
+        status: "fail",
+        message:
+          `${mathGateSkippedSteps.length} record(s) in the bundle self-declare ` +
+          `fixture_status.verification_state=` +
+          `"engine_recompute_skipped_with_basis" — the engine-recompute ` +
+          `differential (Rule ${mathGateSkippedRules.join(", ")}), the only ` +
+          `independent math gate on observer-mode imports, was SKIPPED on the ` +
+          `bundle's own say-so. This is NOT a verified PASS: the foreign ` +
+          `framework math was never recomputed for those step(s). Re-import ` +
+          `without the skip (let Rule 14 run) to obtain a verified result, or ` +
+          `treat this bundle as unverified.`,
+        evidence: {
+          math_gate_skipped: true,
+          // step -1 is the bundle-level sentinel (aggregate fired without a
+          // concrete per-record index); filter it from the human-facing list.
+          skipped_steps: mathGateSkippedSteps.filter((s) => s >= 0),
+          skipped_rules: mathGateSkippedRules,
+        },
+      }
+    : null;
+
   // 4. Compute overall verdict using the same gating logic as verify
   // mazur / verify general — but over the union of all per-record +
-  // cross-record checks.
+  // cross-record checks (plus the math-gate downgrade, when it fired).
   const allChecks: VerifyCheck[] = [];
   for (const sub of perRecord) {
     allChecks.push(sub.schema, sub.reconcile);
   }
   for (const c of crossChecks) {
     allChecks.push(c);
+  }
+  if (mathGateCheck) {
+    allChecks.push(mathGateCheck);
+    // Surface the math-gate fail in the cross_record_checks list too so the
+    // rendered report AND --json envelope show it (renderVerifyMultiReport and
+    // the JSON consumer both iterate cross_record_checks for bundle-level
+    // checks; the math-gate skip is bundle-level, not per-record).
+    crossChecks.push(mathGateCheck);
   }
   const rolled = finalizeReport(allChecks, opts);
 
@@ -2931,6 +3442,9 @@ function runVerifyMulti(opts: {
     record_count: records.length,
     per_record: perRecord,
     cross_record_checks: crossChecks,
+    ...(mathGateSkipped
+      ? { math_gate_skipped: true, skipped_rules: mathGateSkippedRules }
+      : {}),
   };
 }
 
@@ -3063,18 +3577,80 @@ function runReconcileReceipt(file: string): void {
   // (Schema-only validation lives in `bp validate`; `bp verify mazur`
   // composes schema + reconcile + engine-reproduce + byte-equal.)
   const result = reconcileReceipt(receipt);
-  if (result.ok) {
+
+  // G-006: a receipt can self-declare that the engine-recompute differential
+  // (Rule 14 — the ONLY independent math gate on observer-mode imports) was
+  // skipped, via fixture_status.verification_state ===
+  // "engine_recompute_skipped_with_basis". reconcileReceipt honors the skip
+  // (by design) but flags math_gate_skipped:true + skipped_rules:[14]. The
+  // per-receipt rules can still hold (result.ok === true), but the foreign math
+  // was NEVER recomputed — for a verifier with an inverted threat model that is
+  // NOT a clean PASS. So a skipped math gate is NON-PASS by DEFAULT here:
+  //   - the --json envelope carries math_gate_skipped + skipped_rules and
+  //     ok:false (the skip is not a verified pass),
+  //   - the exit code is 1 (not 0).
+  // No shipped golden uses this verification_state, so nothing breaks.
+  const mathGateSkipped = result.math_gate_skipped === true;
+  const skippedRules = result.skipped_rules ?? (mathGateSkipped ? [14] : undefined);
+
+  if (result.ok && !mathGateSkipped) {
     if (jsonMode) {
       process.stdout.write(`${JSON.stringify({ ok: true })}\n`);
     }
     process.exit(0);
   }
+
+  if (result.ok && mathGateSkipped) {
+    // Reconciled clean per-receipt, BUT the math gate was self-skipped — not a
+    // verified PASS. Distinct, visible NON-PASS outcome (exit 1).
+    if (jsonMode) {
+      process.stdout.write(
+        `${JSON.stringify({
+          ok: false,
+          math_gate_skipped: true,
+          skipped_rules: skippedRules,
+          failures: [],
+        })}\n`,
+      );
+    } else {
+      const useColor = shouldUseColor(process.stderr);
+      process.stderr.write(
+        `${color("not verified: math gate skipped", `${BOLD}${RED}`, useColor)}\n\n`,
+      );
+      process.stderr.write(
+        `  The receipt self-declares fixture_status.verification_state=\n` +
+          `  "engine_recompute_skipped_with_basis": the engine-recompute differential\n` +
+          `  (Rule ${(skippedRules ?? [14]).join(", ")}), the only independent math gate on observer-mode\n` +
+          `  imports, was SKIPPED on the receipt's own say-so. The per-receipt rules\n` +
+          `  reconcile, but the foreign framework math was never recomputed — this is\n` +
+          `  NOT a verified PASS. The receipt is trusted on its declared\n` +
+          `  attestor.skip_basis alone.\n\n`,
+      );
+    }
+    process.exit(1);
+  }
+
+  // result.ok === false from here. TypeScript cannot combine the two compound
+  // `result.ok && ...` guards above into a clean narrowing, so assert it
+  // explicitly — this branch is logically unreachable (both result.ok === true
+  // cases process.exit above).
+  if (result.ok) process.exit(1);
   if (jsonMode) {
     // Failures envelope — keep ReconciliationFailure shape as-is so
     // downstream consumers see the same field names as the reconciler.
-    process.stdout.write(
-      `${JSON.stringify({ ok: false, failures: result.failures })}\n`,
-    );
+    // G-006: also carry the skip signal when a failing receipt ALSO self-skipped
+    // the math gate (additive; consumers that ignore it are unaffected).
+    const envelope: {
+      ok: false;
+      failures: ReconciliationFailure[];
+      math_gate_skipped?: boolean;
+      skipped_rules?: number[];
+    } = { ok: false, failures: result.failures };
+    if (mathGateSkipped) {
+      envelope.math_gate_skipped = true;
+      envelope.skipped_rules = skippedRules;
+    }
+    process.stdout.write(`${JSON.stringify(envelope)}\n`);
     process.exit(1);
   }
   const useColor = shouldUseColor(process.stderr);
@@ -3532,38 +4108,42 @@ if (argv[0] === "import") {
         );
       }
       runImportPytorchStream(file);
-    }
-    const file = argv[2];
-    if (typeof file !== "string" || file.length === 0) {
-      if (jsonMode) {
+    } else {
+      // Single-step path. Guarded as the `else` of the `multi` check so the
+      // (process.exit()-terminal) stream runner above cannot fall through
+      // into this branch — G-049 hardening (no module-scope `return`).
+      const file = argv[2];
+      if (typeof file !== "string" || file.length === 0) {
+        if (jsonMode) {
+          exitWithUsageError(
+            "missing required argument <sidecar-file> for 'import pytorch'. Run 'bp import pytorch --help' for usage.",
+            "MISSING_FILE_ARG",
+          );
+        }
+        process.stderr.write(importPytorchUsageText());
+        process.exit(2);
+      }
+      if (file === "--help" || file === "-h") {
+        process.stdout.write(importPytorchUsageText());
+        process.exit(0);
+      }
+      if (file.startsWith("-") && file !== "-" && file !== "--") {
         exitWithUsageError(
-          "missing required argument <sidecar-file> for 'import pytorch'. Run 'bp import pytorch --help' for usage.",
-          "MISSING_FILE_ARG",
+          `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
+            `Use 'bp import pytorch --help' for usage.`,
+          "INVALID_FILE_ARG",
+          3,
         );
       }
-      process.stderr.write(importPytorchUsageText());
-      process.exit(2);
+      runImportPytorch(file);
     }
-    if (file === "--help" || file === "-h") {
-      process.stdout.write(importPytorchUsageText());
-      process.exit(0);
-    }
-    if (file.startsWith("-") && file !== "-" && file !== "--") {
-      exitWithUsageError(
-        `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
-          `Use 'bp import pytorch --help' for usage.`,
-        "INVALID_FILE_ARG",
-        3,
-      );
-    }
-    runImportPytorch(file);
   }
 
   // v0.6.1: bp import jax — thin wrapper over the same observer-mode
   // pipeline as bp import pytorch. Same trust model, same Rule 14, same
   // observer-mode v0.4.0 receipt; only the source_framework name +
   // extractor identity differ.
-  if (framework === "jax") {
+  else if (framework === "jax") {
     if (argv[2] === "multi") {
       const file = argv[3];
       if (typeof file !== "string" || file.length === 0) {
@@ -3589,37 +4169,40 @@ if (argv[0] === "import") {
         );
       }
       runImportJaxStream(file);
-    }
-    const file = argv[2];
-    if (typeof file !== "string" || file.length === 0) {
-      if (jsonMode) {
+    } else {
+      // Single-step path — guarded as the `else` of the `multi` check
+      // (G-049 hardening; see the pytorch branch for rationale).
+      const file = argv[2];
+      if (typeof file !== "string" || file.length === 0) {
+        if (jsonMode) {
+          exitWithUsageError(
+            "missing required argument <sidecar-file> for 'import jax'. Run 'bp import jax --help' for usage.",
+            "MISSING_FILE_ARG",
+          );
+        }
+        process.stderr.write(importJaxUsageText());
+        process.exit(2);
+      }
+      if (file === "--help" || file === "-h") {
+        process.stdout.write(importJaxUsageText());
+        process.exit(0);
+      }
+      if (file.startsWith("-") && file !== "-" && file !== "--") {
         exitWithUsageError(
-          "missing required argument <sidecar-file> for 'import jax'. Run 'bp import jax --help' for usage.",
-          "MISSING_FILE_ARG",
+          `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
+            `Use 'bp import jax --help' for usage.`,
+          "INVALID_FILE_ARG",
+          3,
         );
       }
-      process.stderr.write(importJaxUsageText());
-      process.exit(2);
+      runImportJax(file);
     }
-    if (file === "--help" || file === "-h") {
-      process.stdout.write(importJaxUsageText());
-      process.exit(0);
-    }
-    if (file.startsWith("-") && file !== "-" && file !== "--") {
-      exitWithUsageError(
-        `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
-          `Use 'bp import jax --help' for usage.`,
-        "INVALID_FILE_ARG",
-        3,
-      );
-    }
-    runImportJax(file);
   }
 
   // v0.7.0: bp import tensorflow — third adapter on the v0.6 framework-
   // trace pattern. Same dispatch shape as pytorch and jax above; only the
   // source_framework name + extractor identity + library export differ.
-  if (framework === "tensorflow") {
+  else if (framework === "tensorflow") {
     if (argv[2] === "multi") {
       const file = argv[3];
       if (typeof file !== "string" || file.length === 0) {
@@ -3645,42 +4228,52 @@ if (argv[0] === "import") {
         );
       }
       runImportTensorflowStream(file);
-    }
-    const file = argv[2];
-    if (typeof file !== "string" || file.length === 0) {
-      if (jsonMode) {
+    } else {
+      // Single-step path — guarded as the `else` of the `multi` check
+      // (G-049 hardening; see the pytorch branch for rationale).
+      const file = argv[2];
+      if (typeof file !== "string" || file.length === 0) {
+        if (jsonMode) {
+          exitWithUsageError(
+            "missing required argument <sidecar-file> for 'import tensorflow'. Run 'bp import tensorflow --help' for usage.",
+            "MISSING_FILE_ARG",
+          );
+        }
+        process.stderr.write(importTensorflowUsageText());
+        process.exit(2);
+      }
+      if (file === "--help" || file === "-h") {
+        process.stdout.write(importTensorflowUsageText());
+        process.exit(0);
+      }
+      if (file.startsWith("-") && file !== "-" && file !== "--") {
         exitWithUsageError(
-          "missing required argument <sidecar-file> for 'import tensorflow'. Run 'bp import tensorflow --help' for usage.",
-          "MISSING_FILE_ARG",
+          `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
+            `Use 'bp import tensorflow --help' for usage.`,
+          "INVALID_FILE_ARG",
+          3,
         );
       }
-      process.stderr.write(importTensorflowUsageText());
-      process.exit(2);
+      runImportTensorflow(file);
     }
-    if (file === "--help" || file === "-h") {
-      process.stdout.write(importTensorflowUsageText());
-      process.exit(0);
-    }
-    if (file.startsWith("-") && file !== "-" && file !== "--") {
-      exitWithUsageError(
-        `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
-          `Use 'bp import tensorflow --help' for usage.`,
-        "INVALID_FILE_ARG",
-        3,
-      );
-    }
-    runImportTensorflow(file);
   }
 
-  // Unknown framework.
-  const knownFrameworks = ["pytorch", "jax", "tensorflow"];
-  exitWithUsageError(
-    `unknown framework '${framework}' for 'bp import'. Known: ${knownFrameworks.join(", ")}. ` +
-      `bp does NOT auto-detect framework from file contents — name it explicitly. ` +
-      `Run 'bp import --help' for the current import surface.`,
-    "UNKNOWN_FRAMEWORK",
-    2,
-  );
+  // Unknown framework. Reached only when none of the framework branches
+  // above matched — the else-if chain + else guarantees a matched branch
+  // (whose terminal runImport*/runImport*Stream call process.exit()s)
+  // cannot fall through into this error. See G-049: at module scope `return`
+  // is not available, so mutual exclusion is enforced structurally via
+  // else-if rather than an early return after each terminal runner.
+  else {
+    const knownFrameworks = ["pytorch", "jax", "tensorflow"];
+    exitWithUsageError(
+      `unknown framework '${framework}' for 'bp import'. Known: ${knownFrameworks.join(", ")}. ` +
+        `bp does NOT auto-detect framework from file contents — name it explicitly. ` +
+        `Run 'bp import --help' for the current import surface.`,
+      "UNKNOWN_FRAMEWORK",
+      2,
+    );
+  }
 }
 
 // -----------------------------------------------------------------------------

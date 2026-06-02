@@ -20,10 +20,17 @@ on:
   pull_request:
     branches: [main]
 
+# ci-future-B-008: cancel superseded runs on the same ref (e.g. rapid PR
+# pushes) so the 3-OS pack-smoke matrix doesn't pile up.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   pack-smoke:
     name: pack-smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15  # ci-future-B-007: bound a hung pack/install/CLI smoke
     strategy:
       fail-fast: false
       matrix:

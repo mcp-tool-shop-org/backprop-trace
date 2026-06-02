@@ -15,9 +15,9 @@
 
 A deterministic 26-rule verifier for neural-network training steps. You hand it a receipt naming every factor that contributed to one gradient update; the reconciler re-derives every claim and rejects on disagreement. In the Csmith/CompCert lineage of *"the oracle must not consult the artifact it judges."*
 
-> **Status: mid-v0 (v0.11.0) — first publishable version.** CPU-only. Verifier covers SGD + Adam + AdamW + PyTorch-style SGD momentum (classical + Nesterov + dampening).
+> **Status: mid-v0 (v0.12.0) — soundness-hardening release.** CPU-only. Verifier covers SGD + Adam + AdamW + PyTorch-style SGD momentum (classical + Nesterov + dampening).
 > Live PyTorch helper (`scripts/extract/pytorch.py`) covers the same optimizer matrix. Observer-only — [Rule 14](./docs/reconciliation.md) is the authority.
-> v0.11 is the first npm-published release; v1.0 still gated on [real-world fixture + adopter validation + multi-framework live helpers](#whats-not-in-this-version-yet). See [`docs/live-helpers.md`](./docs/live-helpers.md) before production use.
+> v0.11 was the first npm-published release; v0.12.0 hardens soundness after a full adversarial audit — verifier-owned tolerance ceilings (a receipt can no longer widen its own pass band), marker-gated Rule 14, multi-step self-skip closed, and resource caps. 792 tests, 12 trust invariants. v1.0 still gated on [a real-world fixture + adopter validation](#whats-not-in-this-version-yet). See [`docs/live-helpers.md`](./docs/live-helpers.md) before production use.
 
 ## 30-second quickstart
 
@@ -155,24 +155,25 @@ Full statements + adversarial fixtures: [`docs/reconciliation.md`](./docs/reconc
 
 ## Determinism scope
 
-Contractual on Node 22.x × {ubuntu, macos, windows} × backprop-trace 0.10.x: byte-equal goldens (Mazur, XOR, iris, softmax+CE, multi-step, batched, external sidecars); the Mazur anchor `post_update_loss.total = 0.29102777369359933`; per-rule reconciliation within `atol=1e-12`, `rtol=1e-9` for engine-authored.
+Contractual on Node 22.x × {ubuntu, macos, windows} × backprop-trace 0.12.x: byte-equal goldens (Mazur, XOR, iris, softmax+CE, multi-step, batched, external sidecars); the Mazur anchor `post_update_loss.total = 0.29102777369359933`; per-rule reconciliation within `atol=1e-12`, `rtol=1e-9` for engine-authored.
 
 NOT contractual: cross-engine (Bun, Deno, browsers); cross-Node-major (24.x+); arbitrary V8 minor bumps. A `Math.exp(-0.5)` canary fires on every CI cell as a V8 fdlibm drift siren.
 
 ## What's not in this version (yet)
 
-backprop-trace v0.11.0 is the first npm-published version but **still mid-v0**. The engine, reconciler, canonical-emission contract, external ingestion path, and PyTorch live helper are real and stable. v1.0 requires these to close:
+backprop-trace v0.12.0 hardens soundness but is **still mid-v0**. The engine, reconciler, canonical-emission contract, external ingestion path, and PyTorch live helper are real and stable. The roadmap below is ordered by usage × verification-feasibility — each line is gated on a closed-form CPU recompute the reconciler can actually own:
 
+- **SGD coupled-L2 weight decay** — the documented Rule 7 third branch (`grad += lambda*theta` before the momentum buffer). Highest-demand gap; closed-form CPU recompute. *v0.13.*
+- **NAdam (+ optionally RAdam)** — cheap Adam variants. Then **LR-schedule verification**, which composes with every optimizer. *v0.14.*
+- **Real-world hero fixture** — Mazur 2-2-2 + softmax+CE + sgd_momentum-Mazur are today's heroes; a tiny conv→ReLU→dense net, byte-reproducible on CPU, is the v1.0 gate. *v1.0.*
+- **Adopter validation** — no external researcher case study, no course adoption, no compliance bundle in the wild yet. *v1.0 gate.*
+- **JAX live helper** — hand-authored JAX/TF sidecars already import via Rule 14; a live helper using `jax.make_jaxpr(grad)` gives a stronger trust boundary than PyTorch eager (CPU + `jax_enable_x64` + pinned XLA). *v1.0.*
+- **AMSGrad / global-norm gradient clipping / per-group LRs / Lion** — each gated on a receipt/reconciler extension. *Later.*
 - **Heterogeneous multi-framework traces** — single-framework bundles only; mixed-framework streams not supported. *May stay out of scope.*
-- **Producer-identity binding on multi-step traces** — Rule 17 catches bundle-integrity failures, not producer authenticity. Combine with Rule 16 / Sigstore / out-of-band attestation. Operator surface, not a built-in.
-- **SGD coupled-L2 weight decay** — Rule 7 third branch; *v0.11.*
-- **AMSGrad / NAdam / RAdam / Lion / per-parameter groups / LR schedules / gradient clipping / mixed precision** — *v0.10+.*
-- **Per-sample gradients in batched receipts** — reduced gradients only today; per-sample decomposition useful for influence audits. *v0.10.x / v0.11.*
 - **Heterogeneous batch sizes across steps** — fixed batch_size per stream. *May stay out of scope.*
-- **JAX / TensorFlow live helpers** — hand-authored sidecars work; live helpers are *v0.11 (JAX, adopter-pull triggered) / v0.12+ (TF).*
-- **Real-world fixture** — Mazur 2-2-2 + softmax+CE + sgd_momentum-Mazur are the heroes; small CNN / transformer-block fixture is *v0.11.*
-- **Adopter validation** — no external researcher case study, no course adoption, no compliance bundle in the wild. *v0.12 before v1.0.*
-- **GPU determinism** — out of scope and likely permanent (cuDNN ConvolutionBackwardFilter atomics defeat bit-exactness per [CMU SEI](https://www.sei.cmu.edu/blog/the-myth-of-machine-learning-reproducibility-and-randomness-for-acquisitions-and-testing-evaluation-verification-and-validation/)). The product position is the deterministic CPU corner.
+- **Per-sample gradients in batched receipts** — reduced gradients only today; per-sample decomposition is useful for influence audits but not yet exposed. *Later.*
+- **Producer-identity binding on multi-step traces** — Rule 17 catches bundle-integrity failures, not producer authenticity. Combine with Rule 16 / Sigstore / out-of-band attestation. Operator surface, not a built-in.
+- **GPU / fused-kernel bit-determinism** — out of scope and permanent. Floating-point non-associativity makes bit-exactness unattainable across fused/parallel kernels ([arXiv:2408.05148](https://arxiv.org/abs/2408.05148); cuDNN ConvolutionBackwardFilter atomics per [CMU SEI](https://www.sei.cmu.edu/blog/the-myth-of-machine-learning-reproducibility-and-randomness-for-acquisitions-and-testing-evaluation-verification-and-validation/)). The product is the deterministic CPU corner.
 
 If your workflow depends on any of these, this isn't the right version for you yet.
 

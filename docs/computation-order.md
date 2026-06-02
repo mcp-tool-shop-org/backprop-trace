@@ -227,6 +227,37 @@ ship the object form with the v0.3 defaults.
 **Per-rule overrides** are reserved for v0.3.x — v0.3.0 uses the single
 top-level `numeric_policy.tolerance` for every rule.
 
+## Verifier-owned tolerance ceiling (v0.12.0)
+
+The tolerance fields above are *declared by the receipt* — and a verifier
+that lets the artifact it judges set its own pass band is not sound. The
+v0.12.0 audit found exactly this hole: a receipt could declare an
+arbitrarily loose `numeric_policy.tolerance` (or
+`attestor.differential_tolerance`) and defeat every numeric rule. The
+fix makes tolerance **verifier-owned**:
+
+- Before any rule runs, every receipt-tolerance read routes through one
+  shared clamp helper that compares the declared value against a hard,
+  role-specific ceiling: engine numeric comparisons `{atol: 1e-8, rtol:
+  1e-6}`; observer numeric comparisons `{atol: 1e-5, rtol: 1e-3}`; the
+  Rule 14 differential `{atol: 1e-5, rtol: 1e-3}`.
+- A receipt declaring a value *above* the ceiling on either axis is
+  **rejected structurally** (a Rule 0 failure: "tolerance exceeds verifier
+  maximum"), not silently widened — an out-of-range tolerance is treated
+  as a tell, not a preference. A value at or below the ceiling is honored
+  verbatim (the clamp only ever tightens, so a *tighter*-than-default
+  receipt is respected and the legacy byte-equal scalar path is preserved).
+- The schema carries the same maxima as defense-in-depth, so a value over
+  the ceiling fails schema validation too.
+
+**Documented residual.** Within the ceiling, a deviation below the cap is
+still accepted as within-tolerance. The numeric window (~1e-6 relative)
+is sub-ppm; the differential window (~1e-3 relative) is the inherent
+cross-framework FP-drift tradeoff (legitimate float32-vs-binary64
+recompute drift can reach ~1e-4). The ceiling collapses the pre-v0.12
+*unbounded* hole; it does not make the tolerance zero. See `SECURITY.md`
+"Tolerance gaming" for the threat-model framing.
+
 ## Position in the law stack
 
 > Contract precedes engine. Formatter policy precedes runtime formatting.
@@ -264,13 +295,25 @@ environments — the substrate has to cooperate.
 - Bit-stability of values that flow through `Math.exp` (sigmoid, tanh,
   softmax) across V8 versions
 
-A `Math.exp(-0.5)` canary test fires on the CI matrix as an
+A `Math.exp(-0.5)` canary test fires on every CI cell as an
 early-warning siren if V8's fdlibm port drifts within 22.x. The test
 pins observed constants; a failure means "investigate V8 changelog,"
-not "engine bug." The v0.4 CI matrix adds one explicit
-`node-version: '22.11.0'` cell alongside the existing `22.x` cells so
-the canary observes both a moving target (`22.x`) and a fixed
-reference (`22.11.0`) on every run.
+not "engine bug."
+
+v0.4 originally added an explicit `node-version: '22.11.0'` cell as a
+fixed reference alongside the moving `22.x` cells. **That cell did its
+job and was removed.** It FIRED on `macos-latest` with 22.11.0: `bp
+generate iris` emitted bytes that differed from
+`fixtures/iris.golden.jsonl`, which was generated on Node 22.21.1 — the
+exact `Math.exp` port divergence this section warns about (fixtures are
+byte-equal on the maintainer's pinned 22.x patch, NOT contractual across
+V8 minors). Having proven the hazard real, the pinned-22.11.0 cell was
+retired. What stays is the standing observability gate: the
+`Math.exp(-0.5)` constant test runs on every cell, and the determinism
+canary job pins the matrix to `node: ['22.x', '22.21.1']` so it observes
+both a moving target (`22.x`) and a fixed reference (`22.21.1`, the exact
+patch the shipped goldens were emitted on). `.nvmrc` pins `22.21.1` so
+local contributors reproduce the goldens' byte-for-byte environment.
 
 ### Out of scope for v0.4
 

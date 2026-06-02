@@ -6,25 +6,37 @@ on:
   pull_request:
     branches: [main]
 
+# ci-future-B-008: cancel superseded runs on the same ref so rapid PR pushes
+# don't stack the full multi-OS test + canary + torch matrix.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: test (node ${{ matrix.node }} / ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20  # ci-future-B-007: bound a hung typecheck/build/test
     strategy:
       fail-fast: false
       matrix:
-        # v0.4 added a pinned 22.11.0 cell as Agent E's "early-warning siren"
-        # for V8 fdlibm Math.exp drift within Node 22.x minor bumps. The
-        # canary FIRED on macos-latest with 22.11.0: bp generate iris
-        # produces bytes that differ from fixtures/iris.golden.jsonl (which
-        # was emitted on Node 22.21.1). That's exactly the Math.exp port
-        # divergence the Determinism boundary doc warns about — fixtures
-        # are byte-equal on the maintainer's pinned 22.x patch, NOT
-        # contractual across V8 minors. Mission accomplished; canary
-        # removed since it's done its job. The Math.exp(-0.5) constant
-        # test still runs on every cell as the standing observability gate.
+        # Routine unit-test matrix is ubuntu-only, per the org GitHub-Actions
+        # rule (never macos-latest [~10x cost], avoid windows-latest [~2x] for a
+        # CPU-only Node tool) — G-033. ubuntu Node 22.x is the CONTRACTUAL
+        # determinism platform: byte-exact goldens AND the bp-examples-print
+        # byte-identity check are guaranteed here, NOT cross-OS (Determinism
+        # boundary doc). The former macos cell existed to DETECT V8 fdlibm
+        # Math.exp drift — it already did its job (caught the 22.11.0 drift),
+        # and a cross-OS byte-identity check on macos is a non-contract (it was
+        # failing on a CRLF/line-ending artifact, not a logic defect — the same
+        # suite is green on ubuntu + windows). Cross-OS coverage that IS
+        # OS-relevant (tarball + child_process + bundled-file resolution) lives
+        # in pack-smoke.yml, which STAYS 3-OS. The Math.exp(-0.5) canary + the
+        # byte-equal job (ubuntu) remain the standing determinism gates; re-add
+        # a manual workflow_dispatch 3-OS cell if cross-OS drift re-detection is
+        # ever wanted.
         node: ['22.x']
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: pnpm/action-setup@v4
@@ -49,8 +61,25 @@ jobs:
           FORCE_COLOR: '0'
 
   byte-equal:
-    name: byte-equal vs golden
+    name: byte-equal vs golden (node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20  # ci-future-B-007: bound a hung build/test/diff
+    strategy:
+      fail-fast: false
+      matrix:
+        # ci-future-B-003: the determinism canary observes BOTH a moving
+        # target and a FIXED reference on every run, per
+        # docs/computation-order.md "Determinism boundary" (the v0.4 design
+        # intent). `.nvmrc` pins the same reference patch for local repro.
+        #   - '22.x'    — moving target: an early-warning siren for V8 fdlibm
+        #                 Math.exp drift WITHIN the 22.x line.
+        #   - '22.21.1' — FIXED reference: the exact patch the shipped goldens
+        #                 (fixtures/mazur.golden.jsonl) + the math-exp canary
+        #                 constants were emitted on. Expected to PASS byte-equal;
+        #                 a RED here means the golden itself drifted, not V8.
+        # ubuntu-only (the contractual byte-equal matrix is Node-pinned, not
+        # OS-pinned for this canary), so this is 2 jobs — within the org cap.
+        node: ['22.x', '22.21.1']
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: pnpm/action-setup@v4
@@ -59,7 +88,7 @@ jobs:
         # spec with ERR_PNPM_BAD_PM_VERSION.
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '22.x'
+          node-version: ${{ matrix.node }}
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       # v0.10.2: build before test, same reason as the test job above.
@@ -70,16 +99,24 @@ jobs:
           FORCE_COLOR: '0'
       - name: verify mazur.generated.jsonl matches golden
         shell: bash
+        # ci-future-B-002: this gate is NON-VACUOUS by construction. The
+        # mazur engine test (test/mazur.engine.test.ts) writes
+        # tmp/mazur.generated.jsonl UNCONDITIONALLY via writeFileSync, so the
+        # file MUST exist after `pnpm test`. If it does not, the determinism
+        # gate has lost its input and CANNOT go RED on a real drift — that is
+        # a gate failure, not a skip. Fail loudly instead of silently passing.
         run: |
           if [ -f tmp/mazur.generated.jsonl ]; then
             diff fixtures/mazur.golden.jsonl tmp/mazur.generated.jsonl
           else
-            echo "tmp/mazur.generated.jsonl not produced by test suite; skipping diff" >&2
+            echo "FAIL: determinism gate cannot run — golden not produced (tmp/mazur.generated.jsonl missing after pnpm test). A gate that cannot go RED is not a gate." >&2
+            exit 1
           fi
 
   audit:
     name: dependency audit (pnpm audit, moderate+)
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # ci-future-B-007: bound a hung audit/registry call
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: pnpm/action-setup@v4
@@ -89,8 +126,58 @@ jobs:
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       # shipcheck D3: dependency-CVE scanning runs in CI. CodeQL (separate
-      # workflow) handles SAST; this job handles dep-side CVEs. moderate-
-      # level threshold is the org-wide default — backprop-trace has only
-      # 1 runtime dep (ajv) + 3 devDeps, so any moderate+ CVE warrants
-      # immediate attention.
-      - run: pnpm audit --audit-level=moderate
+      # workflow) handles SAST; this job handles dep-side CVEs.
+      #
+      # ci-future-B-005: scoped to --prod so the gate blocks on SHIPPED deps
+      # only (the single runtime dep, ajv). The full tree includes devDeps
+      # (tsx / typescript) that never reach a user's install; a dev-tool
+      # advisory blocking an unrelated PR is noise, not a real supply-chain
+      # signal. Two-tier:
+      #   1. BLOCKING: prod tree at moderate+ (what users actually receive).
+      #   2. VISIBLE (non-blocking): full tree incl. devDeps, reported but
+      #      never failing CI (`|| true`) so dev-tool advisories surface in
+      #      logs without gating contributors.
+      - name: dependency audit (prod — blocking)
+        run: pnpm audit --prod --audit-level=moderate
+      - name: dependency audit (full tree incl. devDeps — visible, non-blocking)
+        run: pnpm audit --audit-level=moderate || true
+
+  torch-e2e:
+    # G-017 — validate the LIVE PyTorch helper's REAL emission path against
+    # real torch. The rest of CI runs torchless, so the torch-gated test
+    # (test/import-pytorch-helper.torch-e2e.test.ts) SKIPS there; this job
+    # installs CPU torch so it actually runs. Catches latent helper bugs that
+    # hand-authored fixtures can't (per-neuron bias structure, factor
+    # decomposition, sign conventions, Adam/AdamW state semantics) plus the
+    # boundary rejections (amsgrad / maximize / dampening / multi-param-group).
+    # ubuntu-latest, single OS (CPU torch only). Runs on the normal triggers.
+    name: torch end-to-end (live helper)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25  # ci-future-B-007: torch wheel install dominates; bound it
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # CPU-only torch wheel — no CUDA, fast install, deterministic on CPU.
+      # ci-future-B-001: versions are PINNED in scripts/extract/requirements-cpu.txt
+      # so the live-helper validation is reproducible (PIN_PER_STEP). An
+      # unpinned `pip install torch numpy` lets an upstream point-release change
+      # tensor/optimizer semantics under us; the pin freezes the validation env.
+      - name: install CPU torch (pinned)
+        run: python -m pip install --upgrade pip && python -m pip install -r scripts/extract/requirements-cpu.txt --index-url https://download.pytorch.org/whl/cpu
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # Run ONLY the torch-gated suite. BP_TORCH_PYTHON points the test at the
+      # interpreter that has torch installed; the test would otherwise skip.
+      - name: torch-gated live-helper end-to-end test
+        run: node --import tsx --test test/import-pytorch-helper.torch-e2e.test.ts
+        env:
+          BP_TORCH_PYTHON: python
+          NO_COLOR: '1'
+          FORCE_COLOR: '0'

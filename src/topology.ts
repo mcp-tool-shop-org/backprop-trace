@@ -100,6 +100,35 @@ export type Topology = {
 }
 
 /**
+ * core-B-003 — VERIFIER-OWNED TOPOLOGY SIZE CEILING.
+ *
+ * The per-layer size bound (input/hidden/output_size <= 64) lives ONLY in the
+ * JSON schema. The exported `assertTopologyValid` / `runGeneralStep` had no such
+ * cap, so a library caller — or the schema-less reconcile / Rule-14 engine-
+ * recompute path — could pass an enormous topology and trigger the engine's
+ * O(input_size * hidden_size + hidden_size * output_size) weight materialization
+ * to hang or OOM with no diagnosable error.
+ *
+ * This ceiling is the engine-level wall against that: `assertTopologyValid`
+ * checks it at the TOP, BEFORE the O(n^2) fan-in validation, and throws a clear
+ * "exceeds verifier maximum" Error (mirroring NUMERIC_TOLERANCE_CEILING in
+ * reconcile.ts — a verifier-owned limit, not a hang/OOM/crash).
+ *
+ * The value (512) sits an order of magnitude ABOVE the schema's per-layer 64 —
+ * generous headroom for any legitimate topology the engine targets (canonical
+ * Mazur 2-2-2 / XOR 2-2-1 / iris 4-3-3 are two-plus orders under it) — but a
+ * hard ceiling against adversarial sizes: 512x512 fully-connected is ~262k
+ * weights, the largest the single-threaded CPU engine should ever materialize
+ * in one step. INCLUSIVE maximum: a size EXACTLY at the ceiling validates;
+ * anything strictly larger on any dimension is rejected.
+ *
+ * Exported so tests can pin the value (a silent raise re-opens the hang/OOM
+ * surface; a silent lower could false-FAIL a legitimate large topology — both
+ * are regressions and must surface in CI).
+ */
+export const TOPOLOGY_SIZE_CEILING = 512 as const
+
+/**
  * Validate structural invariants on a Topology literal. Throws on the
  * first violation with a path-naming Error so a malformed topology fails
  * fast at the engine boundary.
@@ -134,6 +163,29 @@ export type Topology = {
  * Returns void on success; throws on first violation.
  */
 export function assertTopologyValid(t: Topology): void {
+  // 0 (core-B-003). Verifier-owned size ceiling — checked FIRST, before the
+  // O(n^2) fan-in validation below, so an adversarial size is rejected with a
+  // clear cap message instead of attempting (and hanging/OOMing on) the weight
+  // materialization. INCLUSIVE maximum: at-ceiling validates, strictly-larger
+  // is rejected. Each dimension named separately so the caller knows which to
+  // shrink.
+  for (const [dim, size] of [
+    ["input_size", t.input_size],
+    ["hidden_size", t.hidden_size],
+    ["output_size", t.output_size],
+  ] as const) {
+    if (size > TOPOLOGY_SIZE_CEILING) {
+      throw new Error(
+        `Topology: ${dim} (${size}) exceeds verifier maximum TOPOLOGY_SIZE_CEILING (${TOPOLOGY_SIZE_CEILING}). ` +
+          `Hint: the single-threaded CPU engine materializes O(input_size*hidden_size + ` +
+          `hidden_size*output_size) weights per step; an unbounded size would hang or OOM ` +
+          `rather than fail cleanly. The ceiling is an inclusive maximum well above the ` +
+          `schema's per-layer 64 bound. Reduce ${dim} to <= ${TOPOLOGY_SIZE_CEILING}, or split ` +
+          `the network into smaller verifiable steps.`,
+      )
+    }
+  }
+
   // 1. Size matches unit_order arrays
   if (t.unit_order.input.length !== t.input_size) {
     throw new Error(
@@ -312,6 +364,24 @@ export function assertTopologyValid(t: Topology): void {
     assertPerNeuronBiasCoverage(t.parameters, "output_bias", t.unit_order.output, "output")
   }
 
+  // 6b (G-020). Unique WIRING + complete fan-in.
+  //
+  // Sections 5/6 above proved every weight's from_unit/to_unit resolve to
+  // declared units in the correct adjacent layers, and that parameter IDS are
+  // unique. They did NOT prove the (from_unit, to_unit) EDGES are unique, nor
+  // that each downstream unit is fed by the right NUMBER of weights. Two
+  // distinct-id weights on the same edge double-count that edge in the forward
+  // net sum (and the update phase writes two parameters for one wire); a unit
+  // with the wrong fan-in silently drops or duplicates a term in its net sum.
+  // Both produce a wrong-but-self-consistent receipt that the reconciler's
+  // engine-recompute reproduces byte-for-byte (a false PASS — the worst defect
+  // class for this verifier), so they are rejected at the topology boundary.
+  //
+  //   (a) no two weight parameters share an edge (from_unit -> to_unit);
+  //   (b) each hidden unit is fed by EXACTLY input_size input_to_hidden weights;
+  //   (c) each output unit is fed by EXACTLY hidden_size hidden_to_output weights.
+  assertUniqueWiringAndFanIn(t)
+
   // 7. Activations
   const supportedHiddenActivations: readonly string[] = ["sigmoid", "identity", "relu"]
   const supportedOutputActivations: readonly string[] = ["sigmoid", "identity", "relu", "softmax"]
@@ -452,6 +522,90 @@ function assertPerNeuronBiasCoverage(
       throw new Error(
         `Topology: per_neuron bias coverage error — ${layerName} unit '${u}' has no ${role} parameter serving it. ` +
           `Hint: per_neuron means every unit in unit_order.${layerName} MUST appear in exactly one ${role} parameter's applies_to_units.`,
+      )
+    }
+  }
+}
+
+/**
+ * G-020 — wiring uniqueness + fan-in completeness.
+ *
+ * Runs after the per-parameter structural checks (which already guaranteed
+ * every weight resolves to declared units in the correct adjacent layers).
+ * Enforces three invariants the id-uniqueness + resolvability checks miss:
+ *
+ *   (a) No two weight parameters occupy the same directed edge
+ *       (from_unit -> to_unit). A duplicate edge double-counts that wire in
+ *       the forward net sum and the update phase writes two parameters for a
+ *       single connection.
+ *   (b) Each hidden unit is fed by EXACTLY `input_size` input_to_hidden
+ *       weights (a fully-connected input->hidden layer; the only topology
+ *       family the engine's findWeight-per-(input,hidden) forward loop
+ *       supports — a missing wire would make findWeight throw mid-forward,
+ *       and an extra one is already caught by (a)).
+ *   (c) Each output unit is fed by EXACTLY `hidden_size` hidden_to_output
+ *       weights (fully-connected hidden->output layer; same rationale).
+ *
+ * Throws on the first violation with a path-naming Error.
+ */
+function assertUniqueWiringAndFanIn(t: Topology): void {
+  // (a) Unique edges. Key on the explicit pair (with a NUL separator so unit
+  // ids containing the separator can't collide). Track BOTH endpoints in the
+  // error for a diagnostic that names the offending wire.
+  const seenEdges = new Map<string, ParameterId>()
+  // (b)/(c) Fan-in tallies keyed by downstream unit.
+  const hiddenFanIn = new Map<UnitId, number>()
+  const outputFanIn = new Map<UnitId, number>()
+  for (const u of t.unit_order.hidden) hiddenFanIn.set(u, 0)
+  for (const u of t.unit_order.output) outputFanIn.set(u, 0)
+
+  for (const p of t.parameters) {
+    if (p.role !== "input_to_hidden_weight" && p.role !== "hidden_to_output_weight") {
+      continue
+    }
+    // from_unit/to_unit guaranteed present + resolvable by sections 5/6.
+    const edgeKey = `${p.from_unit!} ${p.to_unit!}`
+    const prior = seenEdges.get(edgeKey)
+    if (prior !== undefined) {
+      throw new Error(
+        `Topology: weight parameters '${prior}' and '${p.id}' share the same edge ` +
+          `(from_unit='${p.from_unit}', to_unit='${p.to_unit}'). ` +
+          `Hint: each directed (from_unit -> to_unit) connection MUST be carried by ` +
+          `exactly one weight parameter — a duplicate edge double-counts that wire in ` +
+          `the forward net sum and emits two updates for one connection.`,
+      )
+    }
+    seenEdges.set(edgeKey, p.id)
+    if (p.role === "input_to_hidden_weight") {
+      hiddenFanIn.set(p.to_unit!, hiddenFanIn.get(p.to_unit!)! + 1)
+    } else {
+      outputFanIn.set(p.to_unit!, outputFanIn.get(p.to_unit!)! + 1)
+    }
+  }
+
+  // (b) Every hidden unit fed by exactly input_size weights.
+  for (const u of t.unit_order.hidden) {
+    const fanIn = hiddenFanIn.get(u)!
+    if (fanIn !== t.input_size) {
+      throw new Error(
+        `Topology: hidden unit '${u}' has input fan-in ${fanIn} but input_size is ${t.input_size}. ` +
+          `Hint: the engine forward pass requires a fully-connected input->hidden layer — ` +
+          `every hidden unit MUST be fed by exactly input_size input_to_hidden weights ` +
+          `(one from each input unit). Missing or extra incoming weights silently change ` +
+          `the unit's net sum.`,
+      )
+    }
+  }
+  // (c) Every output unit fed by exactly hidden_size weights.
+  for (const u of t.unit_order.output) {
+    const fanIn = outputFanIn.get(u)!
+    if (fanIn !== t.hidden_size) {
+      throw new Error(
+        `Topology: output unit '${u}' has hidden fan-in ${fanIn} but hidden_size is ${t.hidden_size}. ` +
+          `Hint: the engine forward pass requires a fully-connected hidden->output layer — ` +
+          `every output unit MUST be fed by exactly hidden_size hidden_to_output weights ` +
+          `(one from each hidden unit). Missing or extra incoming weights silently change ` +
+          `the unit's net sum.`,
       )
     }
   }

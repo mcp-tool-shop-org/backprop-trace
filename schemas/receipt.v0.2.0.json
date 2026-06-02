@@ -13,7 +13,7 @@
     "step_index is OPTIONAL at top level (0-based integer); present iff trace_id is present",
     "topology.input_size, hidden_size, output_size widened from const 2 to integer 1-64 (v0.3 soft cap)",
     "topology.activation enum widened from [sigmoid] to [sigmoid, identity, relu]",
-    "topology.bias_sharing still [per_layer] only (per_neuron deferred to v0.4)",
+    "topology.bias_sharing at v0.2.0-initial was [per_layer] only; per_neuron was added by the v0.4 in-place widening (see x-changes-from-v0.2.0-initial below) so the live enum is now [per_layer, per_neuron]",
     "topology.loss still [half_squared_error] only",
     "optimizer.name still [sgd] only",
     "parameters_before / parameters_after / inputs / targets / forward / backward.{output,hidden}_error_signals / post_update_forward / post_update_loss.per_output all converted from fixed-key Mazur objects to {additionalProperties: ...} for arbitrary unit/parameter ids; key-set conformance to parameter_order/unit_order enforced at runtime by the validator (not by the schema)",
@@ -178,11 +178,11 @@
               "required": ["atol", "rtol"],
               "additionalProperties": false,
               "properties": {
-                "atol": { "type": "number", "minimum": 0 },
-                "rtol": { "type": "number", "minimum": 0 }
+                "atol": { "type": "number", "minimum": 0, "maximum": 1e-5 },
+                "rtol": { "type": "number", "minimum": 0, "maximum": 1e-3 }
               }
             },
-            { "type": "number", "minimum": 0 }
+            { "type": "number", "minimum": 0, "maximum": 1e-5 }
           ]
         },
         "computation_order": { "const": "schema_defined" },

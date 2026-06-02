@@ -12,12 +12,38 @@ This page is the operator-facing complement to [SECURITY.md](https://github.com/
 When `bp verify <subject>` exits 0, you have a verifier-checked claim that:
 
 1. The receipt's schema is well-formed (Ajv against `schemas/receipt.v0.X.0.json`)
-2. Every numerical claim in the receipt is internally consistent — the named factors recompute the claimed value within hybrid tolerance
-3. For observer-mode receipts (imported from a foreign framework via `bp import`), the engine independently recomputes the step from the sidecar's named factors and AGREES within differential tolerance (Rule 14)
+2. Every numerical claim in the receipt is internally consistent — the named factors recompute the claimed value within a **verifier-owned** hybrid tolerance (the receipt cannot widen this; see the ceiling model below)
+3. For observer-mode receipts (imported from a foreign framework via `bp import`), the engine independently recomputes the step from the sidecar's named factors and AGREES within differential tolerance (Rule 14) — and that agreement is **complete**, covering every engine-updated parameter, not just the fields the sidecar chose to present
 4. For multi-step bundles, the parameter chain is intact (Rule 9) and the trace identity is consistent (Rule 10)
 5. For helper-emitted sidecars, the helper's `helper` block is structurally valid — name, version, source_hash, framework info, runtime info, extraction timestamp all present and well-typed
 
 That's all. It's a strong claim about **per-step structural consistency** under deterministic CPU.
+
+## The trust invariants (v0.12.0)
+
+v0.12.0 codified **12 trust invariants** — the properties a verifier must hold for its PASS verdict to mean anything. Each now has a non-vacuous test proving it (a test that would actually fail if the invariant broke, not a test that passes trivially). The load-bearing ones:
+
+- **A receipt cannot widen its own pass band.** Comparison tolerance is clamped to a verifier-owned ceiling *before any rule runs*. A receipt may request a tighter tolerance; it can never loosen past the floor.
+- **An import cannot dodge re-derivation.** Rule 14 fires on the presence of observer markers (`source_framework` / `import_provenance`), so stripping or relabeling `authoring_state` cannot turn off the only math gate on imported traces.
+- **A self-declared skip is never a PASS.** A multi-step trace that announces its own math gate was skipped is treated as NON-PASS on every path — the verifier does not take the producer's word that a check can be safely skipped.
+- **Agreement implies completeness.** Rule 14 asserts the update set covers every engine-updated parameter and `parameters_after == topology.parameter_order` — a sidecar cannot pass by omitting the parameters it got wrong.
+- **An unrecognized optimizer is rejected, not skipped.** A name outside `{sgd, sgd_momentum, adam, adamw}` is a Rule 0 structural reject — the update-equation rules are never silently bypassed.
+- **The verifier never throws on adversarial input.** `reconcileReceipt` always returns a structured result; malformed input becomes a failure record, not an exception. Oversized input becomes a structured `INPUT_TOO_LARGE` error, not a raw stack trace.
+- **Oversized inputs fail cleanly, not via OOM/hang.** Verifier-owned caps (`MAX_BATCH_SAMPLES`, `TOPOLOGY_SIZE_CEILING`) reject before the engine spins up an unbounded recompute.
+
+The full set (plus the anti-circularity, byte-equality, and per-framework-discipline invariants documented elsewhere in this handbook) is enforced by the 792-test suite.
+
+## The residual tolerance windows (what "within tolerance" admits)
+
+A consistency verifier compares floating-point recomputations, so "PASS" means "agrees **within a bounded window**," not "bit-identical." Those windows are now verifier-owned ceilings — a receipt cannot widen them — but they are non-zero by necessity, and an honest threat model names them:
+
+| Comparison path | Ceiling (`atol`, `rtol`) | Why it's non-zero |
+|---|---|---|
+| Engine-authored numeric rules | `1e-8`, `1e-6` | Engine recompute order vs. emitted decimal-string round-trip; tightest band. |
+| Observer-mode numeric rules | `1e-5`, `1e-3` | Foreign-framework FP drift + float32 sidecars carry legitimate last-place divergence from Node binary64. |
+| Rule 14 differential | `1e-5`, `1e-3` | Same: the engine (binary64) vs. a foreign producer's claimed values. |
+
+**The residual risk:** a crafted receipt whose error is real but smaller than the ceiling would pass. The ceilings are set as tight as legitimate FP drift allows — the observer/differential band is the looser one precisely because foreign frameworks need it; engine-authored receipts get the tight `1e-8`/`1e-6` band. Tightening further would false-FAIL honest float32 imports (the v0.12.0 fix went the other way — it stopped false-FAILing them). This is the inherent floor of a deterministic-CPU consistency verifier; it is documented, not hidden. If you find a receipt that exploits a window to pass with a meaningful error, that is the in-scope vulnerability class (see "Coordinated disclosure" below).
 
 ## What backprop-trace does NOT prove
 
@@ -35,9 +61,9 @@ The doctrinal anchor is [Csmith (Yang/Chen/Eide/Regehr, PLDI 2011)](https://doi.
 
 backprop-trace applies this in three places:
 
-1. **The reconciler does not read `fixture_status`** — the receipt's lifecycle metadata (authoring_state, verification_state, canonical) is operator-facing only. Reading it to decide whether to reject would let an attacker bypass the verifier by mutating one metadata field. Every bad fixture must be reject-by-math.
+1. **The reconciler does not read `fixture_status` to decide whether to reject** — the receipt's lifecycle metadata (authoring_state, verification_state, canonical) is operator-facing only. Reading it as gate logic would let an attacker bypass the verifier by mutating one metadata field. Every bad fixture must be reject-by-math. v0.12.0 closed the last seam here: Rule 14 used to *gate* on `authoring_state === "external_imported"`, so stripping that field disabled the import math gate. It now gates on the presence of observer markers (`source_framework` / `import_provenance`) — a structural fact of being an import, not a self-declared label.
 
-2. **The importer's Rule 14 does not trust the foreign framework's claims** — the engine recomputes from named factors and disagrees on bytewise difference. The foreign claim is treated as suspect input, exactly as Randoop ([Pacheco et al. ICSE 2007](https://doi.org/10.1109/ICSE.2007.37)) and syzkaller treat their generators' outputs.
+2. **The importer's Rule 14 does not trust the foreign framework's claims** — the engine recomputes from named factors and disagrees on difference beyond the verifier-owned ceiling. The foreign claim is treated as suspect input, exactly as Randoop ([Pacheco et al. ICSE 2007](https://doi.org/10.1109/ICSE.2007.37)) and syzkaller treat their generators' outputs. Crucially, the *tolerance* of that comparison is also verifier-owned (clamped to `DIFFERENTIAL_TOLERANCE_CEILING`) — a sidecar cannot request a pass band wide enough to wave its own divergence through.
 
 3. **The live PyTorch helper does not predict the verifier's verdict** — no field named `rule14_passed` / `verification_passed` / `expected_outcome` / `differential_passed`. The schema's `additionalProperties: false` enforces this — the helper would fail validation if it tried. Rule 14 owns the verdict.
 
@@ -79,7 +105,7 @@ This caught three real distribution-integrity bugs during v0.10.2 development. T
 
 See [SECURITY.md](https://github.com/mcp-tool-shop-org/backprop-trace/blob/main/SECURITY.md) for the disclosure timeline (90-day standard), severity rubric, and the supported-versions table.
 
-If you find a way to construct a receipt that backprop-trace ACCEPTS but should reject — schema bypass, NaN/Infinity poisoning, canonical-emission divergence, anti-circularity violation (reconciler consulting fixture_status before completing rule checks), engine-recompute disagreement that Rule 14 missed — that's the in-scope vulnerability class. Open an issue or email per SECURITY.md.
+If you find a way to construct a receipt that backprop-trace ACCEPTS but should reject — schema bypass, NaN/Infinity poisoning, canonical-emission divergence, anti-circularity violation (reconciler consulting fixture_status before completing rule checks), engine-recompute disagreement that Rule 14 missed, a tolerance window exploited to pass a meaningful error, an import that dodges Rule 14, a self-declared skip treated as a pass, or an incomplete update set that passes — that's the in-scope vulnerability class. The five false-PASS holes v0.12.0 closed are exactly this class; an adversarial audit found them, and the bounty for more is open. Open an issue or email per SECURITY.md.
 
 ## Next steps
 

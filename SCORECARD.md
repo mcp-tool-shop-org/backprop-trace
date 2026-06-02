@@ -1,63 +1,63 @@
 # Scorecard — backprop-trace
 
 **Repo:** mcp-tool-shop-org/backprop-trace
-**Date:** 2026-05-17
-**HEAD:** `1b8855c` (v0.6.1)
+**Release:** v0.12.0 (soundness-hardening)
+**Date:** 2026-06-02
 **Type tags:** `[all]` `[npm]` `[cli]`
-**Pre-remediation audit gate result:** HARD GATE FAIL — v1.0.0 promotion blocked
+**Gate result:** hard gates A–D ✅ CLOSED within the explicit v0.x scope — **NOT a v1.0.0 promotion** (two product-completeness gaps remain)
 
-## Pre-Remediation Assessment
+> The live, item-by-item gate artifact is **[`SHIP_GATE.md`](./SHIP_GATE.md)**.
+> This scorecard is the at-a-glance roll-up; `SHIP_GATE.md` is authoritative
+> when the two disagree.
 
-| Category | Score | Notes |
-|----------|-------|-------|
-| A. Security | 8/10 | SECURITY.md content-rich; threat model implicit in README (not explicit header); supported-versions table stale (lists 0.1.x only). Zero telemetry, zero network calls, zero secret-handling. |
-| B. Error Handling | 7/10 | Exit codes documented (4-bucket); structured JSON envelope partial (`{ok:false, error:{code, message}}`); missing `hint` as separate field, no `cause?`/`retryable?`. Reconciler failures use `{rule, field_path, message}` schema, not Tier-1 shape. |
-| C. Operator Docs | 4/10 | CHANGELOG + LICENSE pass. README **FROZEN AT v0.4** — claims 10 rules (now 16), 13 subcommands (now 15+), softmax+CE "reserved for v0.5+" (shipped v0.5.0). v0.5 + v0.6 + v0.6.1 entirely invisible. --help per-subcommand spot-audit needed. |
-| D. Shipping Hygiene | 6/10 | Tarball clean (dist/, README, CHANGELOG, LICENSE, schemas/, fixtures/, docs/, SECURITY); pnpm-lock + engines.node + dependabot all pass. Missing: `verify` script, `pnpm audit` step in CI. D2 N/A pre-tag. |
-| E. Identity (soft) | 6/10 | Logo + 7 translations present. GitHub description/topics stale (mentions "10 mathematical rules"). No landing page. |
-| **Overall** | **31/50** | Hard-gate fail. v1.0.0 blocked on C1 (README rewrite, load-bearing) + D1 (verify script, trivial). |
+## v0.12.0 in one line
 
-## Key Gaps
+A soundness-hardening release after a comprehensive dogfood-swarm audit: it
+closes 5 CRITICAL false-PASS holes (a verifier accepting receipts it must
+reject — the worst defect class), adds verifier-owned tolerance ceilings and
+resource caps, and grows the suite 502 → 792 deterministic tests with 12
+trust invariants now holding non-vacuously. CPU-only; 26 reconciler rules;
+SGD / Adam / AdamW / SGD-momentum (classical + Nesterov + dampening) +
+observer-mode PyTorch/JAX/TF import (Rule 14 is the authority) + a live
+PyTorch helper.
 
-1. **C1 — README rewrite (HARD GATE FAIL).** Frozen at v0.4 mental model. Doesn't mention softmax+CE, external trace ingestion, observer-mode receipts, PyTorch/JAX import, Rules 11-16. The product as documented is materially smaller than the product as shipped. Single largest remediation deliverable.
+## Hard-gate roll-up (from SHIP_GATE.md)
 
-2. **D1 — `verify` script missing (HARD GATE FAIL).** Trivial fix: add `"verify": "pnpm typecheck && pnpm test && pnpm build"` to package.json scripts.
+| Gate | Result | Notes |
+|------|--------|-------|
+| A. Security | ✅ CLOSED | SECURITY.md content-rich; explicit README threat model; zero telemetry / zero secrets; v0.12.0 adds tolerance-gaming + provenance-laundering as named in-scope classes. |
+| B. Error handling | ✅ CLOSED | Tier-1 structured error envelope (`code`/`message`/`hint`); documented 4-bucket exit codes; no raw stacks. |
+| C. Operator docs | ✅ CLOSED | README + docs current to the 26-rule v0.12.0 surface; CHANGELOG + LICENSE present; `--help` accurate. Silent/debug logging flags `SKIP` (deferred to v1.0.x; `--verbose` covers the diagnostic need). |
+| D. Shipping hygiene | ✅ CLOSED | `verify` script; pinned `engines.node` + `.nvmrc`; committed lockfile; CI dep scanning; pack/install smoke gate. Version-matches-tag clears at the `v0.12.0` tag. |
+| E. Identity (soft) | ✅ (no block) | Logo, 8-language translations, landing page + Starlight handbook, GitHub metadata all present. |
 
-3. **B1 — Structured Error Shape partial.** Envelope has `code` + `message` only. Tier-1 spec calls for `hint`, optional `cause?` + `retryable?`. Currently hints are concatenated into message strings — harder for CI consumers to parse. Moderate refactor.
+## What still blocks v1.0.0 (product-completeness, not artifact hygiene)
 
-4. **D3 — CI dep scanning missing.** CodeQL runs SAST but no `pnpm audit` step. Trivial fix: add as a CI job.
+These are NOT shipcheck items — they are about whether the product is what a
+v1.0.0 promise would imply. Most of the original gaps have shipped (multi-step
+observer-mode, Adam/AdamW + SGD momentum, batching, the PyTorch live helper).
+Two remain:
 
-5. **Staleness sweep.** SECURITY.md supported-versions table, CONTRIBUTING.md "eight reconciler rules" line, bp.ts docstring "v0.3 surface" / "10 rules wired as of v0.3", GitHub repo description + topics, README threat-model paragraph (implicit → explicit header).
+1. **Real-world hero fixture** — a tiny conv→ReLU→dense net, byte-reproducible
+   on CPU, so cold reviewers see recognizable ML (gated to v1.0).
+2. **Adopter validation** — at least one external (or substantive internal)
+   use case: a researcher case study, a course adoption, or a compliance
+   audit bundle (gated to v1.0).
 
-## Remediation Priority
+See [`SHIP_GATE.md`](./SHIP_GATE.md#product-completeness-gaps-blocking-v100)
+for the full table with per-gap rationale, and the README's
+[What's not in this version (yet)](./README.md#whats-not-in-this-version-yet)
+section for the cold-user-facing version.
 
-| Priority | Item | Estimated effort |
-|----------|------|-----------------|
-| 1 | README full rewrite for v0.6.1 surface (incl. softmax+CE, external trace ingestion, PyTorch/JAX import, 16 rules, 15+ subcommands, full subpath import list, dedicated "Threat model" section) | 2-3 hours |
-| 2 | Add `verify` script to package.json + `pnpm audit` step to ci.yml | 15 min |
-| 3 | Refactor `exitWithUsageError` to emit Tier-1 envelope (`{ok:false, error:{code, message, hint, cause?, retryable?}}`); migrate concatenated hints to separate field; document in docs/cli.md | 60-90 min |
-| 4 | Staleness sweep: SECURITY.md versions table, CONTRIBUTING.md, bp.ts docstring, GH description + topics | 30 min |
-| 5 | --help spot-audit on all 15+ subcommands; fix any drift | 30 min |
-| 6 | Translation re-run via TranslateGemma 12B AFTER README is locked, BEFORE v1.0.0 tag | 5 min hands-on + 5-15 min compute |
-| 7 | (Optional) Add `--quiet` / `--debug` formal flags; defer to v1.0.x if scope cap exceeded | 60 min |
-| 8 | (Soft / Phase 3) Starlight handbook + landing page via @mcptoolshop/site-theme | Separate workstream |
+## Study-verified roadmap (post-v0.12.0)
 
-## Post-Remediation Targets
-
-| Category | Before | Target After |
-|----------|--------|--------------|
-| A. Security | 8/10 | 10/10 (add explicit README threat-model header + refresh SECURITY.md versions table) |
-| B. Error Handling | 7/10 | 9/10 (Tier-1 envelope with hint; defer --debug for 10/10) |
-| C. Operator Docs | 4/10 | 9/10 (README rewrite; --help spot-audit pass; defer --quiet for 10/10) |
-| D. Shipping Hygiene | 6/10 | 10/10 (verify script + pnpm audit + v1.0.0 tag matches manifest) |
-| E. Identity (soft) | 6/10 | 8/10 (refresh GH description + topics; defer landing page for 10/10 — Phase 3 of full-treatment) |
-| **Overall** | **31/50** | **46/50** (47/50 if --quiet/--debug land in scope; 50/50 once Phase 3 handbook + landing page ship) |
-
-## Decisions to Lock Before Remediation
-
-1. **v1.0.0 promotion** — shipcheck doctrine says v0.x → promote, never patch-bump. Confirms backprop-trace bumps to v1.0.0 once hard gates close.
-2. **TensorFlow timing** — defer to v1.0.x patch series post-release (per user's bias). Two adapters substantiate the "pattern generalizes" claim.
-3. **Landing page (E3)** — defer to Phase 3 of full-treatment after v1.0.0 ships. Doesn't block hard gate.
-4. **README hero example** — what's the single command that demonstrates value? Candidates: `bp generate mazur | bp reconcile receipt -` (pure backprop story) OR `bp import pytorch fixtures/external/pytorch.softmax-ce.sidecar.jsonl` (external-ingestion story). Study-swarm question.
-5. **Audience statement** — who is this for? ML practitioners debugging training? Security/audit folks verifying AI provenance? Reproducibility researchers? Determines README structure and elevator pitch. Study-swarm question.
-6. **Optional --quiet/--debug flags** — in scope for v1.0.0 or defer to v1.0.x? Recommend defer (Tier-1 envelope is the load-bearing gain; flags are cosmetic).
+- **v0.13** — SGD coupled-L2 weight decay (the documented Rule 7 third branch;
+  closed-form CPU recompute).
+- **v0.14** — NAdam (+ optionally RAdam) as cheap Adam variants, then
+  LR-schedule verification.
+- **v1.0 (gated)** — the real-world hero fixture + adopter validation above,
+  plus the JAX live helper (`jax.make_jaxpr(grad)` gives a stronger trust
+  boundary than PyTorch eager; CPU + `jax_enable_x64` + pinned XLA).
+- **Permanent scope** — GPU / fused-kernel bit-determinism is OUT (FP
+  non-associativity, arXiv:2408.05148); the product is the deterministic
+  CPU corner.

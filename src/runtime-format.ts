@@ -8,12 +8,13 @@
  * White 1990; Adams Ryu PLDI 2018). toPrecision delivers 17 significant
  * decimal digits, but per ECMA-262 §21.1.3.5 it forces scientific notation
  * when the decimal exponent e satisfies `e < -6 OR e >= 17`. For
- * backprop-trace the `e < -6` branch is the operative one (numeric_policy
- * tolerance at 1e-9 hits it); the `e >= 17` branch is unreachable because
- * the policy plain_decimal_range floors `|v| < 1e7`. scientificToPlain
- * handles both forms identically — it expands scientific to plain decimal
- * via string-and-digit arithmetic, never coercing the mantissa back through
- * a Number or parseFloat call.
+ * backprop-trace the `e < -6` branch is the operative one (the v0.3 hybrid
+ * tolerance atol default is 1e-12 — well past the -6 threshold — and small
+ * gradients/signals routinely land there too); the `e >= 17` branch is
+ * unreachable because the policy plain_decimal_range floors `|v| < 1e7`.
+ * scientificToPlain handles both forms identically — it expands scientific to
+ * plain decimal via string-and-digit arithmetic, never coercing the mantissa
+ * back through a Number or parseFloat call.
  *
  * The runtime formatter may use JS number arithmetic on the input double —
  * that is its job. scientificToPlain is restricted to string-and-digit
@@ -106,6 +107,20 @@ const MAX_ABS_SCIENTIFIC_EXPONENT = 400;
  *   range of approximately [-324, 308] and indicates a malformed caller).
  */
 export function scientificToPlain(decimal: string): string {
+  // io-B-006: scientificToPlain is a PUBLIC export; an untyped JS caller can
+  // pass a non-string. RegExp.exec coerces its argument to a string, so
+  // exec(null) would silently test "null" and then throw the misleading
+  // "input null is not in scientific notation" message (implying a malformed
+  // scientific literal, when the real bug is the wrong type). Guard the type
+  // explicitly so the failure names the actual problem and points at the
+  // intended entry point.
+  if (typeof decimal !== "string") {
+    throw new Error(
+      `scientificToPlain: expected a string in scientific notation, got ${typeof decimal} (${String(decimal)}). ` +
+        `Hint: scientificToPlain operates on toPrecision(17)-style scientific strings only. To format a JS ` +
+        `Number, call formatNumberForEngine instead — it handles the double -> string conversion for you.`,
+    );
+  }
   const m = SCIENTIFIC_REGEX.exec(decimal);
   if (m === null) {
     throw new Error(

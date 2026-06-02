@@ -14,6 +14,77 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [0.12.0] - 2026-06-02
+
+**Soundness-hardening release.** Following a comprehensive adversarial audit,
+v0.12.0 closes five classes of false-PASS — the worst defect a verifier can
+have, where it *accepts* a receipt it should reject. **NOT a v1.0.0
+promotion** — backprop-trace remains mid-v0. v1.0 is still gated on a
+real-world fixture (a tiny conv→ReLU→dense net, byte-reproducible on CPU)
+and external adopter validation.
+
+A verifier earns trust by what it refuses. v0.12.0 makes the refusals
+airtight, adds resource limits so hostile or oversized inputs fail with a
+clear message instead of an OOM or hang, and fixes two cases where valid
+receipts were wrongly rejected. The 26-rule reconciler, the optimizer matrix
+(SGD / Adam / AdamW / sgd_momentum), the schema family, and the canonical
+byte output are unchanged — this release hardens the gate, it does not move it.
+
+### Security
+
+These five holes let a crafted receipt slip past the verifier. All are closed:
+
+- **Receipt-controlled tolerance no longer defeats the numeric rules.** A
+  receipt could previously name its own comparison tolerance and widen it
+  until every numeric check passed. Tolerance ceilings are now **owned by the
+  verifier** and clamped before any rule runs (engine-authored, observer, and
+  differential paths each have their own ceiling), with schema maximums as a
+  second line of defense. A receipt can tighten its tolerance but never
+  loosen it past the verifier's floor.
+- **Rule 14 can no longer be bypassed by relabeling.** Rule 14 (engine-recompute
+  differential) is the only math gate on imported framework traces. It was
+  possible to skip it by stripping or renaming the authoring-state field;
+  it now triggers on the presence of observer markers (`source_framework` /
+  `import_provenance`), so an imported sidecar cannot dodge re-derivation.
+- **Self-declared multi-step skips are no longer treated as a pass.**
+  `bp verify multi` ignored a trace that announced its own math gate had been
+  skipped. A self-declared skip is now a NON-PASS on every path.
+- **Rule 14 now checks completeness, not just agreement.** It previously
+  confirmed the fields a sidecar *did* present were correct, but not that the
+  sidecar covered every updated parameter. It now asserts the update set
+  covers every engine-updated parameter and that the post-update parameter
+  list matches the declared topology — a sidecar can no longer pass by
+  omitting the parameters it got wrong.
+- **Unknown optimizers are now rejected, not silently skipped.** An
+  unrecognized optimizer name used to slip past the update-equation rules
+  entirely. It is now a structural rejection (Rule 0).
+
+### Robustness
+
+- **Verifier-owned resource caps.** Hard limits on batch sample count and
+  topology size (`MAX_BATCH_SAMPLES`, `TOPOLOGY_SIZE_CEILING`) turn what were
+  OOM-or-hang inputs into an actionable "limit exceeded" message.
+- **Graceful large-input handling.** Oversized strings return a structured
+  error (`ERR_STRING_TOO_LONG`) instead of a raw stack trace.
+- **`reconcileReceipt` honors its never-throws contract** — it always returns
+  a structured result, even on malformed input, so callers never have to wrap
+  it in a try/catch.
+
+### Fixed
+
+- **float32 observer receipts no longer false-FAIL.** Imported framework
+  sidecars carrying single-precision values were being rejected against a
+  double-precision tolerance; observer-path tolerances now account for
+  float32 inputs.
+- **Live PyTorch helper: per-neuron biases.** The helper now extracts
+  per-neuron bias terms correctly and is validated end-to-end against PyTorch.
+
+### Numbers
+
+- **792 tests pass** (up from 502), deterministic across the CI matrix.
+- **12 trust invariants** now hold with non-vacuous tests proving each.
+- typecheck + build green; tarball + schema family unchanged.
+
 ## [0.11.0] - 2026-05-18
 
 **First npm-published release.** **NOT a v1.0.0 promotion** — backprop-trace

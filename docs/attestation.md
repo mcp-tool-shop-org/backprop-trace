@@ -6,8 +6,11 @@ with the same field values produce identical canonical bytes, identical
 digests, and therefore are the same receipt for purposes of attestation
 and supply-chain provenance.
 
-This document describes the v0.2 attestation seam (`hashReceipt`) and the
+This document describes the attestation seam (`hashReceipt`) and the
 path forward to a full DSSE-wrapped, Rekor-logged provenance integration.
+The seam is schema-version-agnostic: `hashReceipt` re-emits any receipt
+through the canonical emitter, so it produces a stable digest for every
+receipt the engine writes today (`schema_version` `0.1.0` through `0.7.0`).
 
 ## Why canonical-byte hashing matters
 
@@ -77,15 +80,21 @@ The two load-bearing fields are:
 
 - **`subject[0].digest.sha256`** = `hashReceipt(receipt)`. This is the
   canonical identity of the artifact being attested.
-- **`predicateType`** identifies the schema of `predicate`. For
+- **`predicateType`** identifies the schema *family* of `predicate`. For
   backprop-trace, the URL `https://mcptoolshop.org/backprop-trace/receipt/v1`
-  signals that `predicate` conforms to `schemas/receipt.v0.1.0.json`.
+  signals that `predicate` is a backprop-trace receipt; the receipt's own
+  `schema_version` field (its first key) selects which concrete schema
+  validates it (`receipt.v0.1.0.json` for Mazur, `receipt.v0.2.0.json`
+  and its additively-widened successors up through `0.7.0` for the
+  generalized / multi-step / optimizer paths).
 
 A consumer that receives such a statement can:
 
-1. Look up `predicateType` to learn the receipt schema.
-2. Validate `predicate` against `schemas/receipt.v0.1.0.json` (via
-   `validateReceiptSchema` from this library).
+1. Look up `predicateType` to learn that `predicate` is a backprop-trace
+   receipt.
+2. Validate `predicate` via `validateReceiptSchema` from this library,
+   which reads the receipt's `schema_version` and dispatches to the
+   matching schema file automatically.
 3. Compute `hashReceipt(predicate)` and confirm it matches
    `subject[0].digest.sha256`.
 4. Hand the validated receipt to `reconcileReceipt` and confirm the
@@ -98,13 +107,15 @@ signing key is trusted.
 
 ## Sigstore / DSSE integration
 
-v0.2 ships the *seam* — `hashReceipt` produces the digest that goes into
-`subject[0].digest.sha256`. Wrapping the in-toto statement in a
+backprop-trace ships the *seam* — `hashReceipt` produces the digest that
+goes into `subject[0].digest.sha256`. Wrapping the in-toto statement in a
 [DSSE envelope](https://github.com/secure-systems-lab/dsse/blob/master/envelope.md)
 and submitting to a [Rekor transparency log](https://docs.sigstore.dev/logging/overview/)
-is deferred to v0.3+.
+is intentionally out of the library's current scope (the architectural
+seam is stable; the wrapper is left to the user's existing supply-chain
+tooling — see "Position in the law stack" below).
 
-The deferred work breaks into three pieces:
+The unbuilt work breaks into three pieces:
 
 1. **DSSE envelope wrapper.** Compute `PAE("application/vnd.in-toto+json", statement_bytes)`
    per the Pre-Authenticated Encoding spec, sign that PAE blob with a
@@ -115,17 +126,19 @@ The deferred work breaks into three pieces:
 3. **Rekor transparency log submission.** POST the DSSE envelope to
    Rekor, store the log index, and surface it from `bp verify`.
 
-The architectural seam is the in-toto statement shape. Once that shape
-is stable (which it is, in v0.2), the DSSE wrapper + Rekor submission is
-mechanical and does not require any change to the receipt format itself.
+The architectural seam is the in-toto statement shape. That shape is
+stable, so the DSSE wrapper + Rekor submission is mechanical and does not
+require any change to the receipt format itself.
 
-## What v0.2 does NOT do
+## What the attestation seam does NOT do
 
 - **Does not sign anything.** `hashReceipt` is a digest function, not a
-  signature. Identity binding (who attests this receipt?) is deferred.
+  signature. Identity binding (who attests this receipt?) is left to the
+  user's signing tooling.
 - **Does not emit a DSSE envelope.** The in-toto statement is described
   in this document but not produced by the library. Callers wrap manually.
-- **Does not submit to Rekor.** Transparency-log integration is v0.3+.
+- **Does not submit to Rekor.** Transparency-log integration is out of
+  scope for the library.
 
 These deferrals are deliberate: signing key management and log
 submission are operationally heavy and best handled by the user's

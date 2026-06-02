@@ -186,7 +186,7 @@ The v0.9.2 slice adds:
 - `OptimizerConfig.dampening: { const: 0 }` (RESERVED — v0.9.3 widens to
   `number` for PyTorch's `torch.optim.SGD(dampening=tau)` recurrence)
 - `OptimizerConfig.weight_decay` REJECTED via allOf if/then when name ===
-  "sgd_momentum" (SGD coupled L2 deferred to v0.10; Rule 7 third branch
+  "sgd_momentum" (SGD coupled L2 deferred to v0.13; Rule 7 third branch
   not yet implemented)
 
 SGD/Adam/AdamW receipts continue to declare their existing `schema_version`

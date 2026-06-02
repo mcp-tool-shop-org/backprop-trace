@@ -259,3 +259,188 @@ test(
     );
   },
 );
+
+// =============================================================================
+// 8. G-048 — help text must NOT understate the rule set with a stale count.
+//
+// The reconciler now implements rules 0-26, but the help strings used to say
+// "the 16 rules" (top-level + receipt usage) and "the 8 rules" (verify usage).
+// A hardcoded total drifts every time a rule is added. The fix uses neutral
+// phrasing ("the reconciliation rules" / "the applicable reconciliation
+// rules") and points at docs/reconciliation.md as the authoritative list.
+//
+// These tests pin the NEGATIVE invariant: the help surface must not advertise
+// a specific stale total like "16 rules" / "8 rules". (We avoid asserting an
+// exact current count so the test does not itself become a drift source the
+// next time a rule lands.)
+// =============================================================================
+
+test("G-048: top-level --help does not advertise a stale fixed rule total", () => {
+  const { status, stdout } = runBp(["--help"]);
+  assert.strictEqual(status, 0, "bp --help must exit 0");
+  assert.doesNotMatch(
+    stdout,
+    /\b16 rules\b/,
+    `top-level help must not hardcode 'the 16 rules' (stale total); got: ${JSON.stringify(stdout)}`,
+  );
+  assert.doesNotMatch(
+    stdout,
+    /\b8 rules\b/,
+    `top-level help must not hardcode 'the 8 rules' (stale total); got: ${JSON.stringify(stdout)}`,
+  );
+  // Positive: neutral phrasing is present somewhere in the surface.
+  assert.match(
+    stdout,
+    /reconciliation rules/i,
+    `top-level help should describe 'reconciliation rules' (neutral phrasing); got: ${JSON.stringify(stdout)}`,
+  );
+});
+
+test("G-048: 'reconcile receipt --help' does not advertise a stale fixed rule total", () => {
+  const { status, stdout } = runBp(["reconcile", "receipt", "--help"]);
+  assert.strictEqual(status, 0, "subcommand --help must exit 0");
+  assert.doesNotMatch(
+    stdout,
+    /\b16 rules\b/,
+    `receipt usage must not hardcode 'the 16 rules' (stale total); got: ${JSON.stringify(stdout)}`,
+  );
+  assert.match(
+    stdout,
+    /reconciliation\s+rules/i,
+    `receipt usage should describe 'reconciliation rules' (neutral phrasing); got: ${JSON.stringify(stdout)}`,
+  );
+});
+
+test("G-048: 'verify mazur --help' does not advertise the stale '8 rules' total", () => {
+  const { status, stdout } = runBp(["verify", "mazur", "--help"]);
+  assert.strictEqual(status, 0, "verify mazur --help must exit 0");
+  assert.doesNotMatch(
+    stdout,
+    /\b8 rules\b/,
+    `verify usage must not hardcode 'the 8 rules' (stale total); got: ${JSON.stringify(stdout)}`,
+  );
+});
+
+test("G-048: top-level --help header carries the LIVE package version, not a frozen one", () => {
+  // The CLI synopsis header reads `bp — backprop-trace CLI v<version>`. Pin
+  // that it reflects the current package.json version so the surface header
+  // can never silently freeze at an old release (the same staleness class as
+  // the removed 'v0.7.0 surface' source-comment marker). Read the version
+  // dynamically so this test never drifts on a version bump.
+  const version = readPackageVersion();
+  const { status, stdout } = runBp(["--help"]);
+  assert.strictEqual(status, 0, "bp --help must exit 0");
+  assert.match(
+    stdout,
+    new RegExp(`backprop-trace CLI v${version.replace(/\./g, "\\.")}\\b`),
+    `help header must carry the live version v${version}; got prefix: ${JSON.stringify(stdout.slice(0, 120))}`,
+  );
+  // And must not have frozen at the historic v0.7.0 surface label.
+  assert.doesNotMatch(
+    stdout,
+    /v0\.7\.0 surface/,
+    `help output must not contain the stale 'v0.7.0 surface' marker`,
+  );
+});
+
+// =============================================================================
+// cli-B-004 — 'did you mean' must do real edit-distance matching (Damerau-
+// Levenshtein), not prefix-only. A transposed/typo'd subcommand that is NOT a
+// prefix of (or prefixed by) a real verb must still suggest the nearest verb.
+// =============================================================================
+
+test("cli-B-004: transposed 'recouncile' suggests 'reconcile'", () => {
+  const { status, stderr, stdout } = runBp(["recouncile", "receipt", "x.json"]);
+  // Unknown command → usage error, exit 2, suggestion on stderr.
+  assert.strictEqual(status, 2, `unknown command must exit 2 (got ${status})`);
+  const out = stderr + stdout;
+  assert.match(
+    out,
+    /Did you mean 'bp reconcile receipt/,
+    `'recouncile' must fuzzy-match to reconcile; got: ${JSON.stringify(out.slice(0, 200))}`,
+  );
+});
+
+test("cli-B-004: typo'd 'verifu' suggests 'verify'", () => {
+  const { status, stderr, stdout } = runBp(["verifu", "mazur"]);
+  assert.strictEqual(status, 2);
+  const out = stderr + stdout;
+  assert.match(
+    out,
+    /Did you mean 'bp verify /,
+    `'verifu' must fuzzy-match to verify; got: ${JSON.stringify(out.slice(0, 200))}`,
+  );
+});
+
+test("cli-B-004: typo'd 'genrate' (transposition) suggests 'generate'", () => {
+  const { status, stderr, stdout } = runBp(["genrate", "mazur"]);
+  assert.strictEqual(status, 2);
+  const out = stderr + stdout;
+  assert.match(
+    out,
+    /Did you mean 'bp generate /,
+    `'genrate' must fuzzy-match to generate; got: ${JSON.stringify(out.slice(0, 200))}`,
+  );
+});
+
+test("cli-B-004: existing prefix behavior is preserved ('gen' → 'generate')", () => {
+  // Regression guard: pass 1/2 (prefix) must still win for short prefixes so
+  // the new edit-distance pass does not change established behavior.
+  const { status, stderr, stdout } = runBp(["gen"]);
+  assert.strictEqual(status, 2);
+  const out = stderr + stdout;
+  assert.match(out, /Did you mean 'bp generate /, `'gen' must still prefix-match generate; got: ${JSON.stringify(out.slice(0, 200))}`);
+});
+
+test("cli-B-004: a far-off garbage token does NOT force a misleading suggestion", () => {
+  // The threshold must not collapse arbitrary input onto a verb. 'zzzzzzzz' is
+  // beyond edit distance of every verb → no 'Did you mean', just the plain
+  // unknown-command message.
+  const { status, stderr, stdout } = runBp(["zzzzzzzz"]);
+  assert.strictEqual(status, 2);
+  const out = stderr + stdout;
+  assert.doesNotMatch(
+    out,
+    /Did you mean/,
+    `far-off garbage must not produce a suggestion; got: ${JSON.stringify(out.slice(0, 200))}`,
+  );
+  assert.match(out, /unknown command 'zzzzzzzz'/);
+});
+
+// =============================================================================
+// cli-B-005 — exit-code-4 doc drift. Exit 4 is reserved and NEVER emitted by
+// the current surface (all three framework adapters are implemented). The help
+// must not advertise it as a live "declared but not implemented" outcome.
+// =============================================================================
+
+test("cli-B-005: top-level help does not advertise exit 4 as a live unimplemented-adapter outcome", () => {
+  const { status, stdout } = runBp(["--help"]);
+  assert.strictEqual(status, 0);
+  // The stale wording read "4  reserved (framework adapter declared but not
+  // implemented)" — implying it can occur. The corrected line must mark it as
+  // not-emitted / reserved-only.
+  assert.doesNotMatch(
+    stdout,
+    /4\s+reserved \(framework adapter declared but not implemented\)/,
+    `top-level help must not advertise exit 4 with the stale 'declared but not implemented' wording; got: ${JSON.stringify(stdout)}`,
+  );
+  // Exit 4 is still mentioned (it IS a reserved code) but as not-emitted.
+  assert.match(
+    stdout,
+    /4\s+reserved/,
+    "top-level help should still note exit 4 is reserved",
+  );
+});
+
+test("cli-B-005: 'bp import pytorch --help' does not list exit 4 as an outcome (pytorch is implemented)", () => {
+  const { status, stdout } = runBp(["import", "pytorch", "--help"]);
+  assert.strictEqual(status, 0);
+  // The pytorch adapter IS implemented, so exit 4 can never occur here. The
+  // help must not list "4  Reserved: framework adapter declared but not
+  // implemented." as one of this command's exit codes.
+  assert.doesNotMatch(
+    stdout,
+    /^\s*4\s+Reserved: framework adapter declared but not implemented\.\s*$/m,
+    `pytorch import help must not list exit 4 as an outcome; got: ${JSON.stringify(stdout)}`,
+  );
+});

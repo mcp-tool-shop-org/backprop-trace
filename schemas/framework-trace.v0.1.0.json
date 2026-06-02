@@ -69,7 +69,7 @@
     "topology": { "$ref": "#/$defs/Topology" },
     "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
     "numeric_policy": {
-      "description": "OPTIONAL. The importer applies sensible defaults (precision_significant_digits=9, round_half_to_even, tolerance={atol:1e-12, rtol:1e-8}) when this block is absent. When present, it must match the receipt schema NumericPolicy shape.",
+      "description": "OPTIONAL. The importer applies float32-grade defaults (precision_significant_digits=9, round_half_to_even, tolerance={atol:1e-6, rtol:1e-4} — DEFAULT_NUMERIC_POLICY_FOR_OBSERVER, FIX-3b) when this block is absent; the live framework helpers omit it so imported receipts inherit that default. When present, it must match the receipt schema NumericPolicy shape (numeric_policy.tolerance maximum is the observer bound {atol:1e-5, rtol:1e-3}; the reconciler's authoring-aware clamp enforces the tighter engine bound on engine-authored receipts).",
       "$ref": "#/$defs/NumericPolicy"
     },
     "bias_policy": {
@@ -116,9 +116,9 @@
           "oneOf": [
             {
               "type": "object", "required": ["atol", "rtol"], "additionalProperties": false,
-              "properties": { "atol": { "type": "number", "minimum": 0 }, "rtol": { "type": "number", "minimum": 0 } }
+              "properties": { "atol": { "type": "number", "minimum": 0, "maximum": 1e-5 }, "rtol": { "type": "number", "minimum": 0, "maximum": 1e-3 } }
             },
-            { "type": "number", "minimum": 0 }
+            { "type": "number", "minimum": 0, "maximum": 1e-5 }
           ]
         },
         "computation_order": { "const": "schema_defined" },

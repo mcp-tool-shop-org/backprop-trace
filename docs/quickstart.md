@@ -16,8 +16,9 @@ Or:
 npm install @mcptoolshop/backprop-trace
 ```
 
-Requirements: Node 22.x (pinned in `engines`). v0.3 is V8/Node 22 only
-— see `Determinism scope` in the README for why.
+Requirements: Node 22.x (pinned in `engines`; `.nvmrc` pins the exact
+patch the goldens were emitted on). backprop-trace is V8/Node 22 only —
+see `Determinism scope` in the README for why.
 
 ## 2. Reconcile the Mazur golden receipt — exit 0
 
@@ -31,9 +32,13 @@ echo $?
 ```
 
 No stderr output; exit 0. The receipt's math is internally consistent
-under all eight per-record rules (Rule 4 wired in v0.1; Rules 1, 2, 3,
-5, 6, 7, 8 wired in v0.2; Rules 9 + 10 in v0.3 are multi-record and
-skip on this single-record file).
+under the eight core arithmetic rules (Rule 4 wired in v0.1; Rules 1, 2,
+3, 5, 6, 7, 8 wired in v0.2). The reconciler now has 26 rules in total,
+but the rest are gated: the cross-record rules (9, 10, …) skip on this
+single-record file, and the softmax / optimizer / observer rules skip
+because this Mazur SGD receipt doesn't declare those features. See
+[`docs/reconciliation.md`](./reconciliation.md) for the full gating
+matrix.
 
 ## 3. Reconcile the bad-gradient fixture — exit 1
 
@@ -61,17 +66,18 @@ CompCert lineage in the same doc for the academic precedent.
 
 ```bash
 npx bp --version
-# 0.3.0
+# 0.12.0
 
 npx bp --help
 # Usage:
-#   bp reconcile receipt <file>     Reconcile a receipt against the 10 rules
+#   bp reconcile receipt <file>     Reconcile a receipt against the 26 rules
 #   bp verify mazur [<file>]        Full gate (Mazur): schema + reconcile + ...
 #   bp verify general <file>        Generalized verify gate (v0.2.0-schema)
-#   bp verify multi <file.jsonl>    Multi-record verify (Rules 9, 10)
+#   bp verify multi <file.jsonl>    Multi-record verify (cross-record Rules 9, 10, ...)
 #   bp generate mazur               Re-run Mazur engine, emit canonical bytes
 #   bp generate xor                 Re-run XOR engine, emit canonical bytes
 #   bp generate iris                Re-run iris engine, emit canonical bytes
+#   bp import pytorch <file>        Import a PyTorch sidecar to an observer receipt
 #   bp validate <file>              Schema-validate a receipt
 #   bp --version                    Print version
 #   bp --help                       Print this message
@@ -125,7 +131,8 @@ you need: `@mcptoolshop/backprop-trace/reconcile`,
 
 v0.3 generalizes the engine beyond Mazur 2-2-2. The XOR-sigmoid 2-2-1
 and iris-sigmoid 4-3-3 topologies ship as canonical fixtures and the
-same 10-rule reconciler verifies them.
+same reconciler (26 rules; the same core arithmetic rules fire here)
+verifies them.
 
 ### CLI: generate + verify in one pipe
 
@@ -154,7 +161,7 @@ import {
 
 const receipt = runGeneralStep(XOR_INPUT);
 
-// Reconcile per-record (Rules 1-8 from the 10-rule set).
+// Reconcile per-record (the core arithmetic rules 1-8 fire on this receipt).
 const result = reconcileReceipt(receipt);
 if (!result.ok) { console.error(result.failures); process.exit(1); }
 
@@ -193,8 +200,8 @@ trace_id / step_index contract.
 
 ## Where to go next
 
-- **`docs/reconciliation.md`** — the ten reconciler rules in full.
-  Quick-reference table at the top; v0.3 wires Rules 1-10.
+- **`docs/reconciliation.md`** — all 26 reconciler rules in full.
+  Quick-reference table at the top with the per-rule gating matrix.
 - **`docs/canonical-emission.md`** — the byte-level encoding contract.
   Why schema-defined key order, not alphabetical. What `x-order` does.
 - **`docs/computation-order.md`** — IEEE 754 ordering rules. Why FMA

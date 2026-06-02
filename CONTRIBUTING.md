@@ -29,7 +29,7 @@ Read it. Every PR is judged against it.
 
 ## Rule for new reconciler rules
 
-Each of the **sixteen** reconciler rules (as of v0.6+ — see `docs/reconciliation.md` for the full list, including Rules 11/12/13 for softmax+CE in v0.5 and Rules 14/15/16 for observer-mode imports in v0.6) must ship with a **deliberately-broken fixture** demonstrating rejection *before* the rule code lands. This is the Csmith pattern (Yang, Chen, Eide, Regehr — PLDI 2011, https://users.cs.utah.edu/~regehr/papers/pldi11-preprint.pdf): adversarial corpora prove a verifier; passing tests do not.
+Each of the **26** reconciler rules (see `docs/reconciliation.md` for the full list and gating matrix — Rules 11/12/13 for softmax+CE in v0.5, Rules 14/15/16 for observer-mode imports in v0.6, Rules 17–19 for bundles + batching, and Rules 20–26 for the Adam / AdamW / SGD-momentum optimizer recurrences and their multi-step chains) must ship with a **deliberately-broken fixture** demonstrating rejection *before* the rule code lands. This is the Csmith pattern (Yang, Chen, Eide, Regehr — PLDI 2011, https://users.cs.utah.edu/~regehr/papers/pldi11-preprint.pdf): adversarial corpora prove a verifier; passing tests do not.
 
 **The anti-circularity ratchet:** the reconciler MUST detect the rule violation BEFORE consulting `fixture_status` metadata. A receipt cannot self-declare "I am broken — please trust me." The verifier's reading order is part of the contract.
 

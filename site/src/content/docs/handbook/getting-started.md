@@ -40,7 +40,7 @@ npx bp verify mazur
 This runs the full Mazur gate on the bundled fixture (`fixtures/mazur.golden.jsonl`):
 
 1. **Schema validate** the receipt (Ajv against `schemas/receipt.v0.1.0.json`)
-2. **Reconcile** — all 26 rules pass within hybrid tolerance (`atol=1e-12`, `rtol=1e-9`)
+2. **Reconcile** — all 26 rules pass within hybrid tolerance (`atol=1e-12`, `rtol=1e-9` for this engine-authored receipt; the verifier clamps any requested tolerance to a fixed ceiling first, so a receipt can never loosen its own pass band — see [Architecture](./architecture/#the-tolerance-ceiling-model-v0120))
 3. **Engine-reproduce** — re-run `runMazurStep(MAZUR_INPUT)` and compare bytewise
 4. **Byte-equal vs golden** — the canonical bytes match the committed fixture
 5. **Fixture status** enum sanity

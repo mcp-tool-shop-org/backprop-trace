@@ -238,13 +238,13 @@
           "$ref": "#/$defs/AttestorIdentity"
         },
         "differential_tolerance": {
-          "description": "Hybrid tolerance applied to Rule 14 (engine-recompute differential). Looser than engine-authored receipt tolerance because foreign FP precision drifts across CUDA kernels, JIT compilers, vector instructions. Each receipt declares its own tolerance so the verifier knows what claim is being made.",
+          "description": "Hybrid tolerance applied to Rule 14 (engine-recompute differential). Looser than engine-authored receipt tolerance because foreign FP precision drifts across CUDA kernels, JIT compilers, vector instructions. Each receipt declares its own tolerance so the verifier knows what claim is being made. Upper-bounded (atol <= 1e-5, rtol <= 1e-3) so a receipt cannot loosen the check that judges it (G-004 defense-in-depth; the reconciler clamp is the load-bearing gate).",
           "type": "object",
           "additionalProperties": false,
           "required": ["atol", "rtol"],
           "properties": {
-            "atol": { "type": "number", "minimum": 0 },
-            "rtol": { "type": "number", "minimum": 0 }
+            "atol": { "type": "number", "minimum": 0, "maximum": 1e-5 },
+            "rtol": { "type": "number", "minimum": 0, "maximum": 1e-3 }
           }
         },
         "import_provenance": {
@@ -328,11 +328,11 @@
               "required": ["atol", "rtol"],
               "additionalProperties": false,
               "properties": {
-                "atol": { "type": "number", "minimum": 0 },
-                "rtol": { "type": "number", "minimum": 0 }
+                "atol": { "type": "number", "minimum": 0, "maximum": 1e-5 },
+                "rtol": { "type": "number", "minimum": 0, "maximum": 1e-3 }
               }
             },
-            { "type": "number", "minimum": 0 }
+            { "type": "number", "minimum": 0, "maximum": 1e-5 }
           ]
         },
         "computation_order": { "const": "schema_defined" },

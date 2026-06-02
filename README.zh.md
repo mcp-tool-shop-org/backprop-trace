@@ -15,9 +15,9 @@
 
 这是一种用于神经网络训练步骤的、具有 26 条规则的确定性验证器。 您需要提供一个包含所有对梯度更新做出贡献的因素的记录；验证器会重新推导每个声明，如果发现不一致，则会拒绝。 这遵循了 *"预言机不应检查它所判断的对象"* 的原则。
 
-> **状态：mid-v0 (v0.11.0) — 首次可发布版本。** 仅支持 CPU。 验证器覆盖了 SGD + Adam + AdamW + PyTorch 风格的 SGD 动量（经典 + Nesterov + 阻尼）。
-> 实时 PyTorch 辅助工具 (`scripts/extract/pytorch.py`) 覆盖了相同的优化器矩阵。 仅作为观察者使用 — [第 14 条规则](./docs/reconciliation.md) 具有权威性。
-> v0.11 是第一个通过 npm 发布的版本；v1.0 仍然需要 [实际场景测试 + 用户验证 + 多框架实时辅助工具](#whats-not-in-this-version-yet) 的支持。 在生产环境中使用之前，请参阅 [`docs/live-helpers.md`](./docs/live-helpers.md)。
+**状态：mid-v0 (v0.12.0) — 增强鲁棒性的版本。** 仅支持 CPU。 验证器覆盖了 SGD + Adam + AdamW + PyTorch 风格的 SGD 动量（经典 + Nesterov + 阻尼）。
+实时 PyTorch 辅助工具 (`scripts/extract/pytorch.py`) 覆盖了相同的优化器矩阵。 仅提供观察功能 — [规则 14](./docs/reconciliation.md) 具有最高权威性。
+v0.11 是第一个通过 npm 发布的版本；v0.12.0 在全面对抗性审计后增强了鲁棒性 — 验证器拥有容差上限（一个收据不再能够扩大自身的通过范围），标记控制的规则 14，多步自跳已关闭，以及资源限制。 包含 792 个测试用例，12 个信任不变性。 v1.0 版本仍然需要 [一个真实的用例 + 用户验证](#whats-not-in-this-version-yet)。 在生产环境中使用之前，请参阅 [`docs/live-helpers.md`](./docs/live-helpers.md)。
 
 ## 30 秒快速入门
 
@@ -161,18 +161,19 @@ const { receipt: imported, differentialPassed } =
 
 ## 以下内容不在此版本中（但将来可能会包含）：
 
-backprop-trace v0.11.0 是第一个通过 npm 发布的版本，但**仍然处于 v0 阶段**。引擎、重构器、规范化输出合约、外部数据导入路径以及 PyTorch 实时辅助工具都是真实且稳定的。要达到 v1.0，需要解决以下问题：
+backprop-trace v0.12.0 增强了鲁棒性，但仍然处于 **mid-v0** 阶段。 引擎、重构器、规范发射合约、外部导入路径以及 PyTorch 实时辅助工具都是真实且稳定的。 以下路线图按使用频率 × 验证可行性排序 — 每一项都依赖于重构器可以实际拥有的闭式 CPU 重计算：
 
-- **异构多框架跟踪** — 仅支持单框架捆绑包；不支持混合框架流。*可能超出范围。*
-- **多步跟踪中的生产者身份绑定** — 规则 17 检测捆绑包完整性问题，而不是生产者身份验证。与规则 16 / Sigstore / 外部证明相结合。这是一个操作层面的功能，不是内置的。
-- **SGD 结合 L2 权重衰减** — 规则 7 的第三个分支；*v0.11。*
-- **AMSGrad / NAdam / RAdam / Lion / 针对每个参数的组 / 学习率调度 / 梯度裁剪 / 混合精度** — *v0.10+。*
-- **批量接收中的每个样本梯度** — 目前仅支持降阶梯度；每个样本的分解对于影响审计很有用。*v0.10.x / v0.11。*
-- **跨步的异构批次大小** — 每个流的批次大小是固定的。*可能超出范围。*
-- **JAX / TensorFlow 实时辅助工具** — 手动编写的辅助模块可以工作；实时辅助工具是 *v0.11 (JAX，由 adopter-pull 触发) / v0.12+ (TF)*。
-- **真实世界的测试用例** — Mazur 2-2-2 + softmax+CE + sgd_momentum-Mazur 是关键；小型 CNN / transformer 块测试用例是 *v0.11*。
-- **用户验证** — 没有外部研究案例，没有课程采用，没有在实际应用中的合规性捆绑包。*在 v1.0 之前需要完成。*
-- **GPU 确定性** — 超出范围，并且很可能永远无法实现 (cuDNN ConvolutionBackwardFilter 的原子操作会破坏位精确性，参见 [CMU SEI](https://www.sei.cmu.edu/blog/the-myth-of-machine-learning-reproducibility-and-randomness-for-acquisitions-and-testing-evaluation-verification-and-validation/))。产品的定位是具有确定性的 CPU 环境。
+- **SGD 结合 L2 权重衰减** — 记录中的规则 7 的第三个分支 (`grad += lambda*theta`，在动量缓冲区之前)。 需求最高的改进；闭式 CPU 重计算。 *v0.13*。
+- **NAdam (+ 可选的 RAdam)** — Adam 的变体，成本较低。 然后是 **学习率调度验证**，它与所有优化器结合使用。 *v0.14*。
+- **真实的用例** — Mazur 2-2-2 + softmax+CE + sgd_momentum-Mazur 是今天的英雄；一个微小的 conv→ReLU→dense 网络，在 CPU 上可字节可重现，是 v1.0 的一个关键条件。 *v1.0*。
+- **用户验证** — 尚未有外部研究案例、课程采用或合规性捆绑包。 *v1.0 的一个关键条件*。
+- **JAX 实时辅助工具** — 手动编写的 JAX/TF 接口已经通过规则 14 导入；使用 `jax.make_jaxpr(grad)` 的实时辅助工具比 PyTorch eager 模式（CPU + `jax_enable_x64` + 固定的 XLA）提供更强的信任边界。 *v1.0*。
+- **AMSGrad / 全局范数梯度裁剪 / 每个组的学习率 / Lion** — 每项都依赖于一个收据/重构器扩展。 *后续版本*。
+- **异构多框架跟踪** — 仅支持单框架捆绑包；不支持混合框架流。 *可能超出范围*。
+- **跨步骤的异构批次大小** — 每个流的批次大小是固定的。 *可能超出范围*。
+- **批次收据中的每个样本梯度** — 目前仅支持降阶梯度；每个样本分解对于影响审计很有用，但尚未公开。 *后续版本*。
+- **多步跟踪上的生产者身份绑定** — 规则 17 检测捆绑包完整性问题，而不是生产者身份验证。 与规则 16 / Sigstore / 异地证明相结合。 这是一个操作接口，而不是内置功能。
+- **GPU / 融合内核的位确定性** — 超出范围且永久。 浮点数的非结合性使得在融合/并行内核中实现位精确性是不可能实现的 ([arXiv:2408.05148](https://arxiv.org/abs/2408.05148); cuDNN ConvolutionBackwardFilter 原子操作，参见 [CMU SEI](https://www.sei.cmu.edu/blog/the-myth-of-machine-learning-reproducibility-and-randomness-for-acquisitions-and-testing-evaluation-verification-and-validation/))。 产品的重点是确定性的 CPU 部分。
 
 如果您的工作流程依赖于上述任何一项，那么这个版本可能不适合您。
 

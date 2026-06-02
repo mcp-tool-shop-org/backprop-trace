@@ -46,9 +46,14 @@
   ],
   "allOf": [
     {
-      "x-purpose": "Co-presence guard: trace_id and step_index.",
+      "x-purpose": "Co-presence guard: trace_id and step_index are all-or-nothing (neither for single-step, both for multi-step). The 'neither' branch is a SINGLE object with allOf of two separate `not` clauses — NOT two `not` keys in one object (JSON.parse keeps only the last duplicate key, which silently collapsed the trace_id half of the guard and let a trace_id-without-step_index sidecar slip through). Mirrors the receipt schemas' separate-not pattern.",
       "anyOf": [
-        { "not": { "required": ["trace_id"] }, "not": { "required": ["step_index"] } },
+        {
+          "allOf": [
+            { "not": { "required": ["trace_id"] } },
+            { "not": { "required": ["step_index"] } }
+          ]
+        },
         { "required": ["trace_id", "step_index"] }
       ]
     },
@@ -432,9 +437,9 @@
           "oneOf": [
             {
               "type": "object", "required": ["atol", "rtol"], "additionalProperties": false,
-              "properties": { "atol": { "type": "number", "minimum": 0 }, "rtol": { "type": "number", "minimum": 0 } }
+              "properties": { "atol": { "type": "number", "minimum": 0, "maximum": 1e-5 }, "rtol": { "type": "number", "minimum": 0, "maximum": 1e-3 } }
             },
-            { "type": "number", "minimum": 0 }
+            { "type": "number", "minimum": 0, "maximum": 1e-5 }
           ]
         },
         "computation_order": { "const": "schema_defined" },

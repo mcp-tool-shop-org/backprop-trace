@@ -684,6 +684,51 @@ function assertFiniteGeneralInput(input: GeneralInput): void {
 }
 
 /**
+ * v0.12 (G-009) — for cross_entropy_softmax, assert the targets form a valid
+ * probability distribution (sum to 1) over the output units.
+ *
+ * WHY THIS IS A SOUNDNESS GATE, NOT A CONVENIENCE CHECK:
+ * The collapsed CE+softmax output error signal emitted by runGeneralStep is
+ * signal_u = y_u - p_u. The TRUE descent gradient is y_u - p_u * sum_j(y_j);
+ * the collapsed form equals it ONLY when sum_j(y_j) === 1. If a caller passes
+ * non-normalized targets (e.g. summing to 0.9), the engine would emit a WRONG
+ * collapsed gradient — and because Rule 14 (reconciler engine-recompute) runs
+ * the SAME code, the receipt and the re-derivation AGREE on the wrong number,
+ * producing a FALSE PASS (the worst defect class for this verifier). The
+ * dual_form (y_u - p_u*sum_j y_j) would catch it via Rule 13, but Rule 13
+ * silently skips when an externally-authored receipt omits dual_form.
+ *
+ * Closing the latent false-PASS surface means rejecting non-normalized
+ * classification targets at the engine boundary — they are themselves a defect.
+ *
+ * Tolerance: 1e-9 absolute. Targets are user-supplied (typically the exact
+ * integer 1 for one-hot, or exact fractions for soft labels); 1e-9 admits
+ * benign FP representation error while rejecting genuine non-normalization
+ * like 0.9 or 2.0. assertFiniteGeneralInput has already guaranteed every
+ * output-unit target is present and finite, so the sum is well-defined.
+ */
+function assertTargetsNormalizedForSoftmaxCE(input: GeneralInput): void {
+  if (input.topology.loss !== "cross_entropy_softmax") return
+  let targetSum = 0
+  for (const uid of input.topology.unit_order.output) {
+    targetSum = targetSum + input.targets[uid]!
+  }
+  const NORMALIZATION_ATOL = 1e-9
+  if (Math.abs(targetSum - 1) > NORMALIZATION_ATOL) {
+    throw new Error(
+      `runGeneralStep: cross_entropy_softmax targets must sum to 1 over ` +
+        `topology.unit_order.output (got sum=${targetSum}, tolerance=${NORMALIZATION_ATOL}). ` +
+        `Hint: the collapsed CE+softmax error signal y_u - p_u is the correct ` +
+        `descent gradient ONLY when targets form a probability distribution ` +
+        `(sum_j y_j === 1). Non-normalized targets would emit a wrong collapsed ` +
+        `gradient that the reconciler's engine-recompute (Rule 14) reproduces ` +
+        `byte-for-byte — a false PASS. Normalize the targets (one-hot, or soft ` +
+        `labels summing to 1) before running the step.`,
+    )
+  }
+}
+
+/**
  * v0.9.1 — boundary validation for Adam/AdamW optimizer config + state.
  *
  * Fail-loud at the engine boundary so misconfigured callers get a clear
@@ -1067,6 +1112,9 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
   assertTopologyValid(input.topology)
   assertSupportedPolicy(input)
   assertFiniteGeneralInput(input)
+  // G-009: reject non-normalized CE+softmax targets (latent false-PASS surface).
+  // MUST run after assertFiniteGeneralInput so every output target is present + finite.
+  assertTargetsNormalizedForSoftmaxCE(input)
   assertOptimizerConfig(input)
 
   const t = input.topology
@@ -1796,8 +1844,11 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
 
   // --- Observability hook (mirrors src/engine.ts BPT_DEBUG behavior) ---
   if (process.env["BPT_DEBUG"] === "1") {
+    // G-021: reflect the actual 1-indexed step (step_index + 1) in the
+    // observability line so debug output matches the emitted receipt.step.
+    // stderr only — not part of any golden's bytes.
     process.stderr.write(
-      `[bpt:general-engine] step=1 post_update_loss.total=${postUpdateTotal}\n`,
+      `[bpt:general-engine] step=${(input.step_index ?? 0) + 1} post_update_loss.total=${postUpdateTotal}\n`,
     )
   }
 
@@ -1828,7 +1879,12 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
   const receipt: GeneralReceipt = {
     schema_version: schemaVersionForReceipt,
     fixture: input.fixture ?? "general-engine-first-run",
-    step: 1,
+    // G-021: step is 1-indexed; step_index is 0-indexed. A multi-step record
+    // sets step = step_index + 1 (GeneralReceipt.step docstring + receipt
+    // schema convention). Single-step callers leave step_index undefined →
+    // (undefined ?? 0) + 1 = 1, byte-identical to the v0.1 single-step
+    // convention. step_index=0 → 1 (unchanged); step_index=N → N+1.
+    step: (input.step_index ?? 0) + 1,
     fixture_status: {
       authoring_state: "engine_generated",
       verification_state: "engine_reproduced_byte_equal",
@@ -1928,6 +1984,37 @@ export type BatchedGeneralInput = Omit<GeneralInput, "inputs" | "targets"> & {
 }
 
 /**
+ * core-B-001 — VERIFIER-OWNED BATCHED-RECOMPUTE CAP.
+ *
+ * runBatchedGeneralStep runs the engine ONCE PER SAMPLE in batch.sample_order,
+ * and the reconciler's Rule 14 (engine-recompute differential) re-runs that same
+ * batched recompute on observer-mode imports. The schema bounds batch.size at
+ * minimum:1 with NO maximum, so an untrusted batch.size:100000 would spin up
+ * ~100k per-sample receipts → hours of CPU + OOM, with no diagnosable error —
+ * the verifier hanging on the artifact it judges.
+ *
+ * This cap is the wall against that: runBatchedGeneralStep checks it at the
+ * boundary BEFORE the per-sample engine loop, and reconcile.ts's Rule 14 dispatch
+ * checks it BEFORE calling runBatchedGeneralStep (emitting a structured Rule-14
+ * failure rather than letting the exception escape). Either way the verifier
+ * emits a clear "batch exceeds verifier recompute cap" message instead of
+ * running the engine N times — mirroring the NUMERIC_TOLERANCE_CEILING pattern
+ * in reconcile.ts.
+ *
+ * The value (10_000) is far above any legitimate single-step batch (the
+ * canonical batched goldens use size 4; production mini-batches are typically
+ * 32-512) but a hard ceiling against adversarial sizes: at ~ms per per-sample
+ * engine run on the small topologies the engine targets, 10k samples is the
+ * upper bound of a tolerable single recompute. INCLUSIVE maximum: a batch
+ * EXACTLY at the cap is accepted; anything strictly larger is rejected.
+ *
+ * Exported so tests can pin the value (a silent raise re-opens the hang/OOM
+ * surface; a silent lower could false-FAIL a legitimate large batch — both are
+ * regressions and must surface in CI).
+ */
+export const MAX_BATCH_SAMPLES = 10_000 as const
+
+/**
  * v0.9 — Batched general-engine entry point.
  *
  * Orchestrates N runs of runGeneralStep (one per sample in batch.sample_order)
@@ -1982,6 +2069,38 @@ export function runBatchedGeneralStep(input: BatchedGeneralInput): GeneralReceip
   }
   // 1. Validate batch invariants (will be re-checked by Rule 19 at reconcile time,
   //    but fail early at the engine boundary for clear diagnostics).
+  // G-039: reject batch.size < 1 FIRST. With size 0 the per-sample-runs map is
+  // empty and `perSampleReceipts[0]!` (firstReceipt) derefs undefined later,
+  // yielding a cryptic "Cannot read properties of undefined (reading 'updates')".
+  // A batch must contain at least one sample; fail loudly with a path-naming
+  // message at the boundary instead. (size===1 is the well-defined floor;
+  // larger sizes additionally need reduction !== 'none' — checked below.)
+  if (input.batch.size < 1) {
+    throw new Error(
+      `runBatchedGeneralStep: batch.size must be >= 1 (got ${input.batch.size}). ` +
+        `Hint: a batched step requires at least one sample. A size-0 batch has no ` +
+        `per-sample receipts to reduce, no gradient to apply, and no canonical ` +
+        `first-sample state — there is nothing to verify. Provide at least one ` +
+        `sample in batch.sample_order + per_sample, or use runGeneralStep for a ` +
+        `single unbatched step.`,
+    )
+  }
+  // core-B-001: verifier-owned upper bound. Reject BEFORE the per-sample engine
+  // loop so an adversarial batch.size fails fast with a clear cap message
+  // instead of running the engine N times (the ~10h CPU + OOM the cap prevents).
+  // Mirrors the NUMERIC_TOLERANCE_CEILING discipline: the verifier owns the
+  // limit. INCLUSIVE maximum — at-cap is accepted.
+  if (input.batch.size > MAX_BATCH_SAMPLES) {
+    throw new Error(
+      `runBatchedGeneralStep: batch.size (${input.batch.size}) exceeds verifier recompute cap ` +
+        `MAX_BATCH_SAMPLES (${MAX_BATCH_SAMPLES}). ` +
+        `Hint: the engine re-runs the forward/backward pass once per sample; an unbounded batch ` +
+        `would spin up ${input.batch.size} per-sample receipts (hours of CPU + OOM) rather than ` +
+        `fail cleanly. The cap is an inclusive maximum far above any legitimate single-step batch ` +
+        `(canonical goldens use 4; production mini-batches are 32-512). Split the batch into ` +
+        `chunks of <= ${MAX_BATCH_SAMPLES} samples, or verify them as separate steps.`,
+    )
+  }
   if (input.batch.size !== input.batch.sample_order.length) {
     throw new Error(
       `runBatchedGeneralStep: batch.size (${input.batch.size}) != ` +
@@ -2012,6 +2131,31 @@ export function runBatchedGeneralStep(input: BatchedGeneralInput): GeneralReceip
           `not declared in batch.sample_order`,
       )
     }
+  }
+  // G-010: reject reduction:'none' for multi-sample batches.
+  //
+  // The reduce() helper below handles reduction:'none' by returning vals[0]
+  // (the first sample's value) for BOTH the reduced gradient and the reduced
+  // loss. For a size>1 batch that SILENTLY DISCARDS every sample after the
+  // first: a 3-sample 'none' batch yields parameters_after byte-identical to a
+  // 1-sample batch on s0. Rule 14 (reconciler engine-recompute) runs this same
+  // code and agrees; Rule 18 (loss reduction check) skips for non-mean/sum —
+  // so the receipt falsely asserts an N-sample update occurred when only one
+  // sample contributed. That is a false PASS (active false assurance).
+  //
+  // 'none' is retained in the schema enum for size===1 echo (a single-sample
+  // batch where "no reduction" is well-defined and lossless). Anything larger
+  // must declare 'mean' or 'sum'.
+  if (input.batch.reduction === "none" && input.batch.size > 1) {
+    throw new Error(
+      `runBatchedGeneralStep: batch.reduction 'none' is invalid for batch.size > 1 ` +
+        `(got size=${input.batch.size}). ` +
+        `Hint: reduction 'none' returns only the FIRST sample's gradient and loss, ` +
+        `silently discarding samples 2..N — the reduced receipt would claim an ` +
+        `N-sample update while reproducing a 1-sample result (a false PASS the ` +
+        `reconciler's engine-recompute cannot catch). Use 'mean' or 'sum' to ` +
+        `reduce across all samples, or set batch.size to 1.`,
+    )
   }
 
   // 2. Run engine per sample with shared parameters_before.
@@ -2131,7 +2275,9 @@ export function runBatchedGeneralStep(input: BatchedGeneralInput): GeneralReceip
   const receipt: GeneralReceipt = {
     schema_version: firstReceipt.schema_version,
     fixture: input.fixture ?? `batched-${input.batch.size}-sample-step`,
-    step: 1,
+    // G-021: step = step_index + 1 (1-indexed; step_index 0-indexed). Mirrors
+    // runGeneralStep. Single-step/absent step_index → 1 (byte-unchanged).
+    step: (input.step_index ?? 0) + 1,
     fixture_status: firstReceipt.fixture_status,
     metadata: firstReceipt.metadata,
     numeric_policy: firstReceipt.numeric_policy,
