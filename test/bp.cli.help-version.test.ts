@@ -332,7 +332,7 @@ test("G-048: top-level --help header carries the LIVE package version, not a fro
   assert.strictEqual(status, 0, "bp --help must exit 0");
   assert.match(
     stdout,
-    new RegExp(`backprop-trace CLI v${version.replace(/\./g, "\\.")}\\b`),
+    new RegExp(`backprop-trace CLI v${version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`),
     `help header must carry the live version v${version}; got prefix: ${JSON.stringify(stdout.slice(0, 120))}`,
   );
   // And must not have frozen at the historic v0.7.0 surface label.
