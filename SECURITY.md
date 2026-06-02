@@ -7,16 +7,18 @@ Older versions are not supported — upgrade to a supported line.
 
 | Version | Supported |
 |---------|-----------|
-| 0.7.x   | yes (current)         |
-| 0.6.x   | yes (previous minor)  |
-| 0.5.x   | best-effort           |
-| < 0.5   | no                    |
+| 0.12.x  | yes (current)         |
+| 0.11.x  | yes (previous minor)  |
+| 0.10.x  | best-effort           |
+| < 0.10  | no                    |
 
 backprop-trace remains pre-v1.0 — see the README "What's not in this version
-(yet)" section for the product-completeness gaps that block v1.0.0 promotion
-(multi-step observer-mode, Adam/AdamW, batching, live framework helpers,
-real-world fixtures, adopter validation). Versions and the supported window
-will be re-anchored at v1.0.0 release.
+(yet)" section for the product-completeness gaps that block v1.0.0 promotion.
+Most of the earlier gaps have since shipped (multi-step observer-mode,
+Adam/AdamW + SGD momentum, batching, the PyTorch live helper); the remaining
+v1.0 blockers are a **real-world hero fixture** (a tiny conv→ReLU→dense net)
+and **adopter validation**. Versions and the supported window will be
+re-anchored at v1.0.0 release.
 
 ## Reporting a vulnerability
 

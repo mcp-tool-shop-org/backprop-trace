@@ -4,7 +4,7 @@ The `bp` binary is the user-facing entry point for `@mcptoolshop/backprop-trace`
 It exposes subcommands that compose the library's primitives into the
 common verification, authoring, and ingestion flows:
 
-- **reconcile** (per-record math check against Rules 0/0.8/1-16)
+- **reconcile** (per-record math check against the 26 rules; see [`docs/reconciliation.md`](./reconciliation.md))
 - **verify** (full gate; Mazur / general / multi-step)
 - **generate** (Mazur / XOR / iris / from-config)
 - **import** (v0.6+ external trace ingestion; per-framework subcommands)
@@ -27,10 +27,10 @@ the subcommand-specific text.
 
 | Command | Purpose | Typical exit |
 |---|---|---|
-| `bp reconcile receipt <file>` | Run the 8 per-record reconciliation rules against a receipt | 0 / 1 |
+| `bp reconcile receipt <file>` | Run the per-record reconciliation rules against a receipt | 0 / 1 |
 | `bp verify mazur [<file>]` | Full gate (Mazur): schema + reconcile + engine-reproduce + byte-equal + drift | 0 / 1 |
 | `bp verify general <file>` | Generalized verify gate for any v0.2.0-schema receipt | 0 / 1 |
-| `bp verify multi <file.jsonl>` | Multi-record verify: Rules 9 + 10 + per-record Rules 1-8 (v0.3+) | 0 / 1 |
+| `bp verify multi <file.jsonl>` | Multi-record verify: cross-record Rules 9 + 10 (+ 17/25/26 when gated) + the per-record rules on each receipt (v0.3+) | 0 / 1 |
 | `bp generate mazur [--out F] [--check]` | Re-run the Mazur engine, emit canonical JSONL | 0 / 1 |
 | `bp generate xor [--out F]` | Re-run the XOR engine, emit canonical JSONL (v0.3+) | 0 / 1 |
 | `bp generate iris [--out F]` | Re-run the iris engine, emit canonical JSONL (v0.3+) | 0 / 1 |
@@ -67,8 +67,13 @@ canonical fields. The importer:
 2. Computes `sha256` of the raw sidecar bytes for `attestor.import_provenance.source_hash`.
 3. Runs the backprop-trace engine differentially via `runGeneralStep` on
    the same inputs (`parameters_before` + `inputs` + `targets` + topology).
-4. Compares engine output to foreign claims field-by-field within
-   `attestor.differential_tolerance` (default `{atol: 1e-6, rtol: 1e-4}`).
+4. Compares engine output to foreign claims field-by-field within the
+   **verifier-clamped** `attestor.differential_tolerance`. A receipt may
+   declare its own value, but as of v0.12.0 the verifier clamps it to the
+   differential ceiling (`atol ≤ 1e-5, rtol ≤ 1e-3`) before any rule
+   runs — a receipt can no longer widen its own pass band, and one that
+   declares a value exceeding the ceiling is rejected (Rule 0). The
+   default emitted value is `{atol: 1e-6, rtol: 1e-4}`.
 5. Emits a v0.4.0 receipt with:
    - `fixture_status.authoring_state: "external_imported"`.
    - `fixture_status.verification_state` = either
@@ -147,10 +152,14 @@ sidecar):
   `parameter_id`s correctly; a swap surfaces as Rule 14 disagreement
   (covered by `fixtures/bad/jax.bad-pytree-flatten-order.jsonl`).
 - **float32 vs binary64**: JAX runs in float32 by default; the engine
-  runs in Node binary64. Default `attestor.differential_tolerance`
+  runs in Node binary64. The default `attestor.differential_tolerance`
   `{atol:1e-6, rtol:1e-4}` absorbs cross-precision drift for small
-  networks. Larger networks may need looser per-receipt tolerance —
-  the receipt declares its own, so the verifier knows what's claimed.
+  networks. A receipt may declare a looser value, but only up to the
+  verifier's differential ceiling (`atol ≤ 1e-5, rtol ≤ 1e-3`, clamped
+  as of v0.12.0) — it cannot widen its own pass band beyond that, and a
+  larger declared value is rejected. Networks that genuinely need more
+  than the ceiling allows are out of the deterministic-CPU corner this
+  verifier covers.
 - **JIT / XLA op fusion**: changes intermediate FP roundings; final
   scalar values agree within tolerance for deterministic ops.
 - **vmap / scan / pmap**: produce batched values, not single-step
@@ -173,8 +182,9 @@ observer-mode v0.4.0 receipts (one per line on stdout, or to `--out
 ```bash
 bp import pytorch multi train.multi-step.sidecar.jsonl | bp verify multi -
 # Stage 1: per-step Rule 14 differentials at ingest
-# Stage 2: per-receipt Rules 1-8 + cross-record Rules 9 (parameter chain)
-#          + 10 (trace identity) + Rule 17 (bundle binding)
+# Stage 2: per-receipt rules on each step + cross-record Rules 9 (parameter
+#          chain) + 10 (trace identity) + 17 (bundle binding) + 25/26
+#          (optimizer-state chain + config constancy, when stateful)
 ```
 
 **Intra-stream invariants enforced at ingest** (any violation → exit 2):
@@ -250,8 +260,10 @@ for the full honest-framing prose and the adversarial-fixture plate.
 bp reconcile receipt <file> [--json] [--verbose] [--color=auto|never|always]
 ```
 
-Reconcile a single-record receipt against the 8 reconciliation rules
-documented in [`docs/reconciliation.md`](./reconciliation.md).
+Reconcile a single-record receipt against the per-record reconciliation
+rules documented in [`docs/reconciliation.md`](./reconciliation.md) (the
+single-record subset of the 26 rules; cross-record Rules 9/10/17/25/26
+fire only on the multi-record path).
 
 - **Math only.** This subcommand does not check byte equality vs a golden, does
   not consult `fixture_status`, does not validate against the JSON Schema
@@ -276,7 +288,7 @@ documented in [`docs/reconciliation.md`](./reconciliation.md).
 
 | Code | Meaning |
 |---|---|
-| 0 | All 8 per-record rules pass within `numeric_policy.tolerance`. |
+| 0 | All applicable per-record rules pass within the verifier-clamped `numeric_policy.tolerance`. |
 | 1 | At least one reconciliation rule failed. Details on stderr (or stdout under `--json`). |
 | 2 | Usage error, I/O error, malformed JSON, or `>1` record in a `.jsonl` file. |
 | 3 | Invalid CLI argument (e.g. unknown flag). |
@@ -337,7 +349,7 @@ Composes the library primitives in a fixed-order short-circuit pipeline
 (sigstore-go pattern; study-swarm verifier-composition finding):
 
 1. **Schema validation** against `schemas/receipt.v0.1.0.json` (via Ajv 2020-12).
-2. **Reconciliation** against the 8 rules — see `bp reconcile receipt` above.
+2. **Reconciliation** against the applicable per-record rules — see `bp reconcile receipt` above. (The Mazur 2-2-2 v0.1.0 receipt exercises the core arithmetic rules 1-8; softmax/optimizer-gated rules no-op on it.)
 3. **Engine reproduction** — re-run the engine with the receipt's inputs and
    confirm the produced receipt is byte-equal to the supplied one.
 4. **Byte equality** against `fixtures/mazur.golden.jsonl` (the canonical
@@ -438,12 +450,14 @@ by `runGeneralStep`). Composes the same fixed-order short-circuit
 pipeline (sigstore-go pattern):
 
 1. **Schema validation** against `schemas/receipt.v0.2.0.json`.
-2. **Reconciliation** against Rules 1-8 (Rules 9, 10 only fire on the
-   multi-record path), plus the gated rules (11-16) as applicable. For
-   observer-mode imports (`fixture_status.authoring_state ===
-   "external_imported"`), **Rule 14** (engine-recompute differential,
-   within `attestor.differential_tolerance`) fires here — it is the
-   governing soundness gate for imported foreign-framework math.
+2. **Reconciliation** against the single-record subset of the 26 rules:
+   the core arithmetic rules 1-8 plus the gated rules (0.8, 11-16, 18-24)
+   as applicable to the receipt's topology and optimizer (Rules 9, 10,
+   17, 25, 26 fire only on the multi-record path). For observer-mode
+   imports (`fixture_status.authoring_state === "external_imported"`),
+   **Rule 14** (engine-recompute differential, within the verifier-clamped
+   `attestor.differential_tolerance`) fires here — it is the governing
+   soundness gate for imported foreign-framework math.
 3. **Engine reproduction** — re-runs `runGeneralStep` with the receipt's
    declared topology + inputs and confirms byte-equality. This runs **only
    for engine-authored receipts**. For observer-mode (`external_imported`)
@@ -487,7 +501,7 @@ containing two or more v0.2.0-schema receipts in `step_index` order.
 The gate runs in two phases (see
 [`reconciliation.md` "Multi-step receipts"](./reconciliation.md#multi-step-receipts)):
 
-1. **Per-record pass.** Each receipt runs through the same 8-rule
+1. **Per-record pass.** Each receipt runs through the same per-record
    reconciliation as `bp verify general`. Any per-record failure
    surfaces immediately.
 2. **Cross-record pass.** Rule 10 (trace identity) fires first — a
@@ -796,8 +810,11 @@ drift, exit 2 on golden-file read errors.
 
 ## Where the rules live
 
-The 10 reconciliation rules `bp reconcile receipt`, `bp verify mazur`,
-`bp verify general`, and `bp verify multi` check are documented at:
+The 26 reconciliation rules that `bp reconcile receipt`, `bp verify
+mazur`, `bp verify general`, and `bp verify multi` check are documented
+in full at [`docs/reconciliation.md`](./reconciliation.md) (quick-
+reference table at the top, then a section per rule). The always-on core
+arithmetic rules:
 
 - Rule 1: [`docs/reconciliation.md#rule-1-output-error-signal-consistency`](./reconciliation.md#rule-1-output-error-signal-consistency)
 - Rule 2: [`docs/reconciliation.md#rule-2-downstream-contribution-and-backpropagated-sum`](./reconciliation.md#rule-2-downstream-contribution-and-backpropagated-sum)
@@ -810,9 +827,19 @@ The 10 reconciliation rules `bp reconcile receipt`, `bp verify mazur`,
 - Rule 9: [`docs/reconciliation.md#rule-9-multi-step-parameter-chain`](./reconciliation.md#rule-9-multi-step-parameter-chain) (v0.3+; fires only under `bp verify multi`)
 - Rule 10: [`docs/reconciliation.md#rule-10-multi-step-trace-identity`](./reconciliation.md#rule-10-multi-step-trace-identity) (v0.3+; fires only under `bp verify multi`)
 
+Rules 0.8 + 11-13 (softmax + cross-entropy), 14-16 (observer-mode
+imports), 17 (bundle binding), 18-19 (batching), and 20-26 (Adam / AdamW
+/ SGD-momentum optimizer recurrences and their multi-step chains) are
+**gated** — each fires only when the receipt declares the matching
+topology, optimizer, or multi-step structure. See the quick-reference
+table in [`docs/reconciliation.md`](./reconciliation.md) for the full
+gating matrix.
+
 Each rule ships with a deliberately-broken bad-* fixture per the Csmith
 doctrine — bad receipts precede good receipts. Rules 1-8 use
 `fixtures/bad/mazur.bad-<kind>.jsonl`; Rules 9, 10 use
-`fixtures/bad/multi-step.bad-{chain,trace-id}.jsonl`. The sibling
+`fixtures/bad/multi-step.bad-{chain,trace-id}.jsonl`; the gated rules use
+optimizer- / topology-specific bad fixtures (`fixtures/bad/adam.bad-*`,
+`softmax-ce.bad-*`, `external.bad-*`, etc.). The sibling
 `.meta.json` documents the mutation, the targeted invariant, expected
 cascades, and the expected `bp` output.

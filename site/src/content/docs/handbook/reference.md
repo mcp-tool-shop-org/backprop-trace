@@ -12,10 +12,12 @@ Exit codes are 5-bucket:
 | Code | Meaning |
 |---|---|
 | 0 | Success / pass |
-| 1 | Reconciliation or verification failure (or import differential disagreement) |
-| 2 | Usage or I/O error (missing file, permission denied, malformed JSON, …) |
+| 1 | Reconciliation or verification failure (or import differential disagreement; a self-declared math-gate skip is a NON-PASS) |
+| 2 | Usage or I/O error (missing file, permission denied, malformed JSON, input too large — `INPUT_TOO_LARGE`, …) |
 | 3 | Invalid CLI argument (unknown flag, malformed `--color` value, …) |
 | 4 | Reserved (framework adapter declared but not implemented) |
+
+Oversized inputs (a JSONL larger than V8's ~512 MB single-string limit, raising `ERR_STRING_TOO_LONG` / `ERR_FS_FILE_TOO_LARGE`) map to a structured `INPUT_TOO_LARGE` envelope at exit 2 with `retryable: false` and a hint to split the stream — never a raw Node stack trace (v0.12.0).
 
 ### Reconcile / verify
 
@@ -155,7 +157,7 @@ Full statements + paired bad fixtures live in [`docs/reconciliation.md`](https:/
 
 | # | Rule |
 |---|---|
-| 0 | Structural-failure sentinel (schema-level) |
+| 0 | Structural-failure sentinel (schema-level) — **also rejects an unrecognized `optimizer.name`** outside `{sgd, sgd_momentum, adam, adamw}` (v0.12.0; previously silently skipped the update-equation rules) |
 | 0.8 | Probability bounds — softmax outputs in [0, 1] |
 | 1 | Output error signal consistency |
 | 2 | Downstream contribution + backpropagated sum |
@@ -170,7 +172,7 @@ Full statements + paired bad fixtures live in [`docs/reconciliation.md`](https:/
 | 11 | Softmax normalization |
 | 12 | Loss formula consistency (skipped for batched — Rule 18 handles it) |
 | 13 | Dual-form consistency (softmax+CE jacobian; GATED) |
-| 14 | **Engine-recompute differential** (MANDATORY for observer-mode imports) |
+| 14 | **Engine-recompute differential** (MANDATORY for observer-mode imports) — gated on **observer-marker presence** (`source_framework` / `import_provenance`), not the `authoring_state` label (v0.12.0); also asserts the update set covers **every engine-updated parameter** and `parameters_after == topology.parameter_order` |
 | 15 | Skip-basis required (closed enum, 4 values) |
 | 16 | Attestation digest binding (GATED) |
 | 17 | Trace-bundle binding — bundle-integrity / post-binding mutation detection (GATED) |
@@ -199,6 +201,31 @@ These vocabularies are part of the contract — widening them forces a schema-ve
 - `topology.activation_output` — `"sigmoid" | "identity" | "relu" | "softmax"`
 - `topology.loss` — `"half_squared_error" | "cross_entropy_softmax"`
 - `topology.bias_sharing` — `"per_layer" | "per_neuron"`
+
+## Verifier-owned limits (v0.12.0)
+
+These are owned by the verifier, not the receipt. A receipt cannot raise a ceiling or widen a tolerance; both are fixed in code as a soundness floor.
+
+### Resource caps
+
+| Constant | Limit | Behavior at the boundary |
+|---|---|---|
+| `MAX_BATCH_SAMPLES` | `10_000` (inclusive) | A batch larger than the cap is rejected before the per-sample engine loop with a "limit exceeded" message (the engine re-runs forward/backward once per sample; an unbounded batch would be hours of CPU + OOM). Canonical goldens use 4; production mini-batches are 32–512, far under the cap. |
+| `TOPOLOGY_SIZE_CEILING` | verifier-owned | An oversized topology is rejected with an actionable message instead of OOM/hang. |
+
+Oversized *files* (beyond V8's ~512 MB single-string read limit) return a structured `INPUT_TOO_LARGE` error at exit 2 — split the JSONL and verify in chunks.
+
+### Tolerance ceilings
+
+Hybrid `{atol, rtol}` comparison tolerances are clamped to these maximums *before any rule runs* (a receipt may request tighter, never looser):
+
+| Path | Constant | Ceiling |
+|---|---|---|
+| Engine-authored numeric rules | `NUMERIC_TOLERANCE_CEILING` | `{atol: 1e-8, rtol: 1e-6}` |
+| Observer-mode numeric rules | `OBSERVER_NUMERIC_TOLERANCE_CEILING` | `{atol: 1e-5, rtol: 1e-3}` |
+| Rule 14 differential | `DIFFERENTIAL_TOLERANCE_CEILING` | `{atol: 1e-5, rtol: 1e-3}` |
+
+See [Security](../security/) for the residual-tolerance-window threat model and [Architecture](../architecture/) for why the observer/differential bands are looser.
 
 ## Next steps
 

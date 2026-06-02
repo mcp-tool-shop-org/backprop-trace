@@ -1,6 +1,6 @@
 {
   "name": "@mcptoolshop/backprop-trace",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Deterministic 26-rule verifier for neural-network training steps. Re-derives gradients + optimizer state from named factors; emits canonical JSONL. PyTorch helper + sidecar import. Mid-v0; CPU-only.",
   "type": "module",
   "license": "MIT",

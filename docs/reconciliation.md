@@ -34,14 +34,14 @@ the verifier fails closed.
 | 11 | Softmax normalization (`sum(forward[output].out) == 1.0` when `topology.activation_output === "softmax"`) | **implemented (v0.5)** |
 | 12 | Loss formula consistency (`loss.per_output[u]` and `loss.total` match `topology.loss` formula) | **implemented** — half_squared_error (v0.4.2) + cross_entropy_softmax (v0.5) |
 | 13 | Softmax+CE collapsed↔Jacobian dual-form agreement (13a per-term mult, 13b summation, 13c collapsed-vs-dual); **GATED** — fires only when `OutputErrorSignal.dual_form` is present | **implemented (v0.5)** |
-| 14 | Engine-recompute differential (observer-mode receipts only): re-run `runGeneralStep` from receipt inputs; assert engine output agrees with foreign claims within `attestor.differential_tolerance`. **MANDATORY** for `external_imported` receipts; no-op for engine-authored. | **implemented (v0.6)** |
+| 14 | Engine-recompute differential (observer-mode receipts only): re-run `runGeneralStep` from receipt inputs; assert engine output agrees with foreign claims within the verifier-clamped `attestor.differential_tolerance` (ceiling `atol ≤ 1e-5, rtol ≤ 1e-3`). **MANDATORY** for any observer receipt — fires on observer-**marker** presence (`source_framework`/`import_provenance`) OR the `external_imported` label, so relabeling/stripping the label cannot dodge it (v0.12.0); no-op for engine-authored receipts (which carry no marker). A complementary Rule 0 pre-check rejects a marker-present receipt that denies the label. | **implemented (v0.6; marker-gating v0.12.0)** |
 | 15 | Skip-basis required: when `verification_state === "engine_recompute_skipped_with_basis"`, `attestor.skip_basis` MUST be in the closed enum `EXTERNAL_TRUST_BASIS` | **implemented (v0.6)** |
 | 16 | Attestation digest binding: when `attestor.signed_subject_digest` is present, the digest MUST match the recomputed canonical-byte hash of the receipt (with the digest field stripped). **GATED** on `signed_subject_digest` presence | **implemented (v0.6)** |
 | 17 | Trace-bundle binding: when any receipt in a multi-record reconcile declares `attestor.bundle_root_digest`, ALL receipts in the bundle MUST declare the same digest, AND that digest MUST equal the recomputed sha256 of the canonical-byte concatenation of every receipt with `bundle_root_digest` stripped. **GATED** on `bundle_root_digest` presence; fires only from `reconcileMultiStep`. **INTEGRITY ONLY**, not producer-authenticity — an attacker who controls all receipt bytes AND recomputes the digest passes Rule 17 trivially. Combine with Rule 16 (`signed_subject_digest`) or an external signature for producer-identity binding. | **implemented (v0.8)** |
 | 18 | Batch reduction consistency: when `receipt.batch` is present AND `loss.reduction` in {`mean`, `sum`}, assert `loss.total == reduction(loss.per_sample.values(), batch.reduction)`. Catches the canonical mean-vs-sum confusion attack structurally — a producer claiming `reduction: "mean"` but emitting `loss.total = sum(per_sample)` (off by a factor of N). **GATED** on `batch` presence + non-`none` reduction + `per_sample` presence. | **implemented (v0.9)** |
 | 19 | Sample-set coherence: when `batch.sample_order` is present, every ordered per-sample projection used for reduction / emission / canonical digest construction MUST be derived by iterating exactly that order. Concretely: per-sample maps (`loss.per_sample`, top-level `per_sample`) MUST have key sets EQUAL to `batch.sample_order`'s set. Missing IDs (gap), extra IDs (substitution), or duplicate `sample_order` entries fail. **GATED** on `batch.sample_order` presence. Schema-level `uniqueItems` on `batch.sample_order` is the first line of defense; Rule 19 is the reconciler-side defense-in-depth check. | **implemented (v0.9)** |
-| 20 | Optimizer-state shape consistency: when any update declares `optimizer.name` in `{adam, adamw, sgd_momentum}`, the top-level `optimizer_config` block MUST be present with all required hyperparameters (Adam/AdamW: `name`, `learning_rate`, `beta1`, `beta2`, `epsilon`, `t`; plus `weight_decay` for `adamw`; sgd_momentum: `name`, `learning_rate`, `momentum`), and every stateful-optimizer update MUST carry per-parameter `state_before` and `state_after` with the shape that matches the optimizer name (Adam/AdamW: `{m, v}` with finite `m` and non-negative finite `v`; sgd_momentum: `{buffer}` with finite `buffer`). Reserved v0.9.3 fields `nesterov: const false` and `dampening: const 0` enforced for sgd_momentum; `weight_decay` rejected for sgd_momentum (SGD coupled L2 deferred to v0.10). **GATED** on Adam/AdamW/sgd_momentum updates. STRUCTURAL CONSISTENCY check, NOT producer-authenticity. | **implemented (v0.9.1; sgd_momentum branch v0.9.2)** |
-| 21 | PyTorch-style SGD momentum buffer recurrence + effective gradient direction + parameter update: **21a** `buffer_after == momentum * buffer_before + (1 - dampening) * gradient` (Sutskever et al. 2013 ICML / PyTorch `torch.optim.SGD` reference; Polyak 1964 heavy-ball foundation; `lr` lives OUTSIDE the buffer per Sutskever 2013 §2 — LR schedules don't retroactively rescale momentum history; dampening widened from v0.9.2's const 0 to `number ∈ [0, 1)` in v0.9.3) AND **21b** (v0.9.3 NEW) `effective == (gradient + momentum * buffer_after)` if `nesterov === true`, else `effective == buffer_after` (Nesterov lookahead form per Sutskever 2013 §2; classical heavy-ball form otherwise) AND **21c** `update == learning_rate * effective` (descent direction; sign already in `gradient`). **GATED** on `optimizer.name === "sgd_momentum"`. v0.9.3 widens v0.9.2's CLASSICAL-only to full PyTorch `torch.optim.SGD` surface (Nesterov + dampening). PyTorch's `torch.optim.SGD.__init__` raises `ValueError` on `nesterov=true && dampening>0` — schema mirrors via allOf if/then; engine boundary mirrors. SGD coupled L2 weight decay deferred to v0.10 (Rule 7 third branch). STRUCTURAL CHECK, NOT producer-authenticity — Fang et al. 2023 EuroS&P PoL spoofing class applies (arXiv:2208.03567). | **implemented (v0.9.2; widened v0.9.3)** |
+| 20 | Optimizer-state shape consistency: when any update declares `optimizer.name` in `{adam, adamw, sgd_momentum}`, the top-level `optimizer_config` block MUST be present with all required hyperparameters (Adam/AdamW: `name`, `learning_rate`, `beta1`, `beta2`, `epsilon`, `t`; plus `weight_decay` for `adamw`; sgd_momentum: `name`, `learning_rate`, `momentum`), and every stateful-optimizer update MUST carry per-parameter `state_before` and `state_after` with the shape that matches the optimizer name (Adam/AdamW: `{m, v}` with finite `m` and non-negative finite `v`; sgd_momentum: `{buffer}` with finite `buffer`). Reserved v0.9.3 fields `nesterov: const false` and `dampening: const 0` enforced for sgd_momentum; `weight_decay` rejected for sgd_momentum (SGD coupled L2 deferred to v0.13). **GATED** on Adam/AdamW/sgd_momentum updates. STRUCTURAL CONSISTENCY check, NOT producer-authenticity. | **implemented (v0.9.1; sgd_momentum branch v0.9.2)** |
+| 21 | PyTorch-style SGD momentum buffer recurrence + effective gradient direction + parameter update: **21a** `buffer_after == momentum * buffer_before + (1 - dampening) * gradient` (Sutskever et al. 2013 ICML / PyTorch `torch.optim.SGD` reference; Polyak 1964 heavy-ball foundation; `lr` lives OUTSIDE the buffer per Sutskever 2013 §2 — LR schedules don't retroactively rescale momentum history; dampening widened from v0.9.2's const 0 to `number ∈ [0, 1)` in v0.9.3) AND **21b** (v0.9.3 NEW) `effective == (gradient + momentum * buffer_after)` if `nesterov === true`, else `effective == buffer_after` (Nesterov lookahead form per Sutskever 2013 §2; classical heavy-ball form otherwise) AND **21c** `update == learning_rate * effective` (descent direction; sign already in `gradient`). **GATED** on `optimizer.name === "sgd_momentum"`. v0.9.3 widens v0.9.2's CLASSICAL-only to full PyTorch `torch.optim.SGD` surface (Nesterov + dampening). PyTorch's `torch.optim.SGD.__init__` raises `ValueError` on `nesterov=true && dampening>0` — schema mirrors via allOf if/then; engine boundary mirrors. SGD coupled L2 weight decay deferred to v0.13 (Rule 7 third branch). STRUCTURAL CHECK, NOT producer-authenticity — Fang et al. 2023 EuroS&P PoL spoofing class applies (arXiv:2208.03567). | **implemented (v0.9.2; widened v0.9.3)** |
 | 22 | Adam moment recurrences (Kingma & Ba 2014 arXiv:1412.6980 Algorithm 1 lines 9-10): **22a** `m_after == beta1 * m_before + (1 - beta1) * gradient` AND **22b** `v_after == beta2 * v_before + (1 - beta2) * gradient²`. **GATED** on Adam/AdamW updates. Catches beta-swap, m/v swap, wrong-recurrence-coefficient porting bugs. STRUCTURAL CHECK — does not verify the gradient came from real data. | **implemented (v0.9.1)** |
 | 23 | Adam bias correction + t consistency: `optimizer_config.t == step_index + 1` when both present (Kingma & Ba 2014 indexes the Adam timestep starting at 1; PyTorch's `state["step"]` matches after the first `.step()` call). Setup for Rule 24's m_hat / v_hat derivation chain. **GATED** on Adam/AdamW updates. | **implemented (v0.9.1)** |
 | 24 | Adam/AdamW parameter update (Kingma & Ba 2014 Algorithm 1 line 13): `update == lr * m_hat / (sqrt(v_hat) + epsilon)` where `m_hat = m_after / (1 - beta1^t)` and `v_hat = v_after / (1 - beta2^t)`. Pinned `epsilon` placement: **OUTSIDE** the sqrt (PyTorch convention) — `sqrt(v_hat) + epsilon`, NOT `sqrt(v_hat + epsilon)` (a famous TF-vs-Keras-vs-PyTorch porting bug; captured by `fixtures/bad/adam.bad-epsilon-inside-sqrt.jsonl`). For AdamW: same Adam update formula here; decoupled weight decay applies at Rule 7's AdamW branch on `parameters_after`. **GATED** on Adam/AdamW updates. STRUCTURAL CHECK. | **implemented (v0.9.1)** |
@@ -71,7 +71,7 @@ branch for the decoupled weight-decay term on `weight_after` / `parameters_after
 optimizer name. Rules 20, 25, 26 generalize in place to dispatch on optimizer
 name and handle the `MomentumState = { buffer }` shape alongside Adam's
 `AdamState = { m, v }`. v0.9.2 ships **CLASSICAL ONLY** — Nesterov +
-dampening RESERVED for v0.9.3; SGD coupled L2 weight decay deferred to v0.10. Each shipped rule
+dampening RESERVED for v0.9.3; SGD coupled L2 weight decay deferred to v0.13. Each shipped rule
 landed with a deliberately-broken bad-* fixture per the anti-circularity
 doctrine — bad receipts precede good receipts (Csmith / CompCert lineage;
 see "Academic lineage" below and `CONTRIBUTING.md`).
@@ -80,14 +80,14 @@ see "Academic lineage" below and `CONTRIBUTING.md`).
 
 **Rule 21 is precisely scoped** to **PyTorch-style SGD momentum** — NOT
 "momentum correctness" in the abstract. This framing is load-bearing:
-SGD coupled L2 weight decay (v0.10) and other optimizer families
-(AMSGrad/NAdam/RAdam/Lion at v0.10+) are NOT bugs in v0.9.3; they are
-**explicitly deferred variants** outside the PyTorch `torch.optim.SGD`
+SGD coupled L2 weight decay (v0.13) and other optimizer families
+(NAdam/RAdam at v0.14; AMSGrad/Lion later) are NOT bugs in v0.9.3; they
+are **explicitly deferred variants** outside the PyTorch `torch.optim.SGD`
 surface that Rule 21 covers. A receipt whose `update` matches a form
 Rule 21 does not recognize fires Rule 21 — that's a "stored update
 matches a variant the v0.9.3 reconciler does not recognize" failure,
 not a "Rule 21 is broken" failure. Future widening (per-parameter
-groups at v0.10+, etc.) extends Rule 21's scope within the PyTorch
+groups, etc.) extends Rule 21's scope within the PyTorch
 SGD surface; existing v0.9.2 + v0.9.3 fixtures stay byte-equal under
 later versions.
 
@@ -292,16 +292,41 @@ fires — proving the cross-form check has independent diagnostic power.
 
 ### v0.6 — Rule 14 (engine-recompute differential, observer-mode)
 
-The load-bearing defense against external-trace laundering. Fires only when
-`fixture_status.authoring_state === "external_imported"` AND
-`verification_state !== "engine_recompute_skipped_with_basis"`.
+The load-bearing defense against external-trace laundering. Fires when a
+receipt declares `fixture_status.authoring_state === "external_imported"`
+**OR** carries an observer **marker** (`source_framework` OR
+`attestor.import_provenance`), AND `verification_state !==
+"engine_recompute_skipped_with_basis"`.
+
+**Marker-gated, not label-gated (v0.12.0 provenance-laundering fix).**
+Pre-v0.12.0 the gate keyed *solely* on the self-declared
+`external_imported` label, which is relabelable — a malicious producer
+could carry fabricated foreign math, relabel `authoring_state` to an
+engine value (or strip it) so Rule 14 no-ops, and slip through, since an
+imported receipt can be internally self-consistent on every other
+per-receipt rule. As of v0.12.0 the gate keys on observer-marker
+**presence** as well (`hasObserverMarkers` is the single source of truth
+shared by Rule 14 and the Rule 0 pre-check below), so a marked import
+cannot dodge the only math gate on foreign math by rewriting or dropping
+its lifecycle label while any marker survives. A complementary **Rule 0
+structural pre-check** (`checkRule0ObserverProvenanceConsistency`)
+condemns the contradiction case directly: a receipt carrying a marker but
+declaring a *non*-`external_imported` label is rejected as internally
+contradictory — it records a framework origin yet denies being imported.
+Together these close one of the five CRITICAL false-PASS holes the
+v0.12.0 audit found (a verifier accepting a receipt it must reject — the
+worst defect class).
 
 For observer-mode receipts (output of `bp import pytorch` etc.), the
 reconciler re-runs the deterministic engine via `runGeneralStep` on the
 receipt's own `parameters_before + inputs + targets + topology + policies`,
 then compares the engine's recomputed output to the receipt's CLAIMED
 forward / loss / backward / updates / parameters_after field-by-field
-within `attestor.differential_tolerance` (default `{atol: 1e-6, rtol: 1e-4}`).
+within `attestor.differential_tolerance` (default `{atol: 1e-6, rtol:
+1e-4}`), **clamped to the verifier's differential ceiling** (`atol ≤
+1e-5, rtol ≤ 1e-3`) before the comparison — a receipt cannot widen this
+window to launder a disagreement, and one declaring a value above the
+ceiling is rejected (Rule 0).
 
 Each per-field disagreement is a Rule 14 failure with the specific
 `field_path`. This catches the collapsed-laundering attack class: a
@@ -381,9 +406,17 @@ mutates `parameters_after.w_x1_h1`. Rule 16 fires (the digest no longer
 binds). Cross-fires with Rule 7 (final-state consistency) and Rule 14
 (differential) because the mutation also breaks those independently.
 
-## The eight rules
+## The core arithmetic rules (1-8)
 
-All comparisons use `numeric_policy.tolerance` (1e-9 in v0.1). All
+The eight always-on rules below are the arithmetic backbone every receipt
+crosses; the remaining 18 rules (0.8, 9-26) are gated and documented in
+the per-rule subsections above and the quick-reference table at the top.
+
+All comparisons use the receipt's `numeric_policy.tolerance`, **clamped to
+the verifier's numeric ceiling** (`atol ≤ 1e-8, rtol ≤ 1e-6`) before any
+rule runs — as of v0.12.0 a receipt can no longer widen its own pass band,
+and one declaring a value above the ceiling is rejected (Rule 0). (Legacy
+v0.1 Mazur receipts declare a `1e-9` scalar, well inside the ceiling.) All
 multiplications follow declared `product_order`. All summations follow
 declared `summation_order`. See `docs/computation-order.md` for arithmetic
 ordering details.
@@ -554,9 +587,11 @@ single-record reconciliation works.
 **Two-phase verification model**:
 
 1. **Per-record pass.** For each receipt in the file, the reconciler runs
-   the standard 8-rule pass. Any per-record failure surfaces immediately
-   with the same field-path / stored / recomputed / delta / tolerance
-   quartet as `bp reconcile receipt`.
+   the standard per-record pass (the single-record subset of the 26 rules:
+   the core arithmetic rules 1-8 plus whichever gated rules the receipt's
+   topology and optimizer activate). Any per-record failure surfaces
+   immediately with the same field-path / stored / recomputed / delta /
+   tolerance quartet as `bp reconcile receipt`.
 2. **Cross-record pass.** Once per-record reconciliation completes, Rule
    10 (trace identity) fires first — a mismatched `trace_id` set or a
    non-dense `step_index` sequence aborts before Rule 9 runs (a chain
@@ -623,7 +658,8 @@ Failed reconciliation produces stderr of approximately the following form
 and exits with code nonzero.
 
 The example below illustrates the format when multiple rules are
-wired and cascades become observable — v0.2 ships all eight rules, so
+wired and cascades become observable — since v0.2 wired the eight core
+arithmetic rules (and later versions added the gated rules, 26 in all),
 multi-rule output is the common case. Rule numbers other than the
 originating failure carry a `Note: cascades from Rule N` line.
 

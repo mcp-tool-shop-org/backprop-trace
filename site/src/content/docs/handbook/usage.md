@@ -77,24 +77,27 @@ python my_train.py | npx bp import pytorch - | npx bp verify multi -
 
 ### Helper scope
 
-| Feature | v0.10.x status |
+| Feature | v0.12.0 status |
 |---|---|
 | PyTorch SGD | ✅ |
 | PyTorch SGD with momentum (classical + Nesterov + dampening, with sign-flip) | ✅ |
 | PyTorch Adam | ✅ |
 | PyTorch AdamW (decoupled weight decay) | ✅ |
+| Per-neuron biases (torch-validated end-to-end) | ✅ (v0.12.0) |
 | Single-step + multi-step | ✅ |
 | CPU device | ✅ |
 | 2-layer Mazur-shaped topologies | ✅ |
 | half_squared_error + cross_entropy_softmax loss | ✅ |
-| SGD with weight_decay > 0 (coupled L2) | ❌ rejected (v0.11) |
-| AMSGrad / NAdam / RAdam / Lion / LBFGS | ❌ rejected |
+| SGD with weight_decay > 0 (coupled L2) | ❌ rejected (roadmap: v0.13) |
+| NAdam / RAdam | ❌ rejected (roadmap: v0.14) |
+| AMSGrad / Lion / LBFGS / per-group LRs / gradient clipping | ❌ rejected (later, each gated on a receipt/reconciler extension) |
+| LR schedules | ❌ rejected (roadmap: v0.14, composes with all optimizers) |
 | AMP / `torch.cuda.amp.autocast` | ❌ rejected (PyTorch issue #75224) |
-| CUDA / MPS / XLA | ❌ rejected (CPU-first; v0.11+ for device tolerance) |
-| Multi-hidden-layer / CNN / transformer topologies | ❌ rejected (v0.11) |
+| CUDA / MPS / XLA | ❌ rejected — GPU/fused-kernel bit-determinism is permanently out of scope (FP non-associativity, [arXiv:2408.05148](https://arxiv.org/abs/2408.05148)) |
+| Multi-hidden-layer / CNN / transformer topologies | ❌ rejected (a tiny conv→ReLU→dense hero fixture is the v1.0 gate) |
 | Batched live extraction | ❌ helper extracts single samples (hand-authored batched sidecars work) |
-| JAX live helper | ⏸ deferred to v0.11 (adopter-pull triggered) |
-| TensorFlow live helper | ⏸ deferred to v0.12+ |
+| JAX live helper | ⏸ roadmap: v1.0 (`jax.make_jaxpr(grad)` gives a stronger trust boundary than PyTorch eager) |
+| TensorFlow live helper | ⏸ deferred (later) |
 
 When a feature is rejected at the boundary, the helper raises `HelperUnsupportedError` with a clear message pointing at the deferral. The hand-authored sidecar path (Path B below) handles many of these cases.
 
@@ -108,6 +111,15 @@ For JAX, TensorFlow, sgd_momentum with coupled-L2, batched extraction, or anythi
 4. The importer runs Rule 14 (engine-recompute differential) and produces an observer-mode receipt
 
 This is friction-heavy compared to Path A but it works for any framework + optimizer combination the verifier supports.
+
+### Observer-mode verify behavior (what `bp verify` does with an imported receipt)
+
+When you run `bp verify` (or `bp verify multi`) on a receipt that came from `bp import`, the verifier treats it as an **observer-mode** receipt and re-runs Rule 14 independently — the import-time differential is not trusted as the verdict (Reproducible Builds discipline: the producer's claim is not the verifier's truth). Three v0.12.0 behaviors matter here:
+
+- **Rule 14 fires on observer markers, not labels.** The verifier decides to re-derive based on the presence of `source_framework` / `attestor.import_provenance`, so an imported receipt cannot turn off the math gate by editing its `authoring_state` field.
+- **The differential tolerance is verifier-owned.** The receipt's `attestor.differential_tolerance` is clamped to `{atol: 1e-5, rtol: 1e-3}` before the comparison — an imported receipt cannot request a pass band wide enough to hide its own divergence. (This looser-than-engine band is what lets honest float32 sidecars pass; v0.12.0 stopped false-FAILing them.)
+- **Completeness is checked.** Rule 14 asserts the update set covers every engine-updated parameter and `parameters_after == topology.parameter_order` — a sidecar cannot pass by reporting only the parameters it got right.
+- **Self-declared skips fail.** A multi-step bundle that announces its own math gate was skipped is a NON-PASS, not a pass.
 
 ## Multi-step verification
 
