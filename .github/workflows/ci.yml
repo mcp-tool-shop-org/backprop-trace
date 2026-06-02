@@ -20,18 +20,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # v0.4 added a pinned 22.11.0 cell as Agent E's "early-warning siren"
-        # for V8 fdlibm Math.exp drift within Node 22.x minor bumps. The
-        # canary FIRED on macos-latest with 22.11.0: bp generate iris
-        # produces bytes that differ from fixtures/iris.golden.jsonl (which
-        # was emitted on Node 22.21.1). That's exactly the Math.exp port
-        # divergence the Determinism boundary doc warns about — fixtures
-        # are byte-equal on the maintainer's pinned 22.x patch, NOT
-        # contractual across V8 minors. Mission accomplished; canary
-        # removed since it's done its job. The Math.exp(-0.5) constant
-        # test still runs on every cell as the standing observability gate.
+        # Routine unit-test matrix is ubuntu-only, per the org GitHub-Actions
+        # rule (never macos-latest [~10x cost], avoid windows-latest [~2x] for a
+        # CPU-only Node tool) — G-033. ubuntu Node 22.x is the CONTRACTUAL
+        # determinism platform: byte-exact goldens AND the bp-examples-print
+        # byte-identity check are guaranteed here, NOT cross-OS (Determinism
+        # boundary doc). The former macos cell existed to DETECT V8 fdlibm
+        # Math.exp drift — it already did its job (caught the 22.11.0 drift),
+        # and a cross-OS byte-identity check on macos is a non-contract (it was
+        # failing on a CRLF/line-ending artifact, not a logic defect — the same
+        # suite is green on ubuntu + windows). Cross-OS coverage that IS
+        # OS-relevant (tarball + child_process + bundled-file resolution) lives
+        # in pack-smoke.yml, which STAYS 3-OS. The Math.exp(-0.5) canary + the
+        # byte-equal job (ubuntu) remain the standing determinism gates; re-add
+        # a manual workflow_dispatch 3-OS cell if cross-OS drift re-detection is
+        # ever wanted.
         node: ['22.x']
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
