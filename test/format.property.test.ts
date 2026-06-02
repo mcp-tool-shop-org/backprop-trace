@@ -31,9 +31,19 @@
  *        the runtime decides scientific-vs-plain on, matching the
  *        `e < -6 OR e >= 17` rule documented in runtime-format.ts.
  *
- * No fast-check dep: simple `Math.random()` PRNG is fine for property
- * smoke at this stage. If a counterexample ever falls out of this fuzz,
- * promoting to fast-check is straightforward.
+ * No fast-check dep: a small SEEDED PRNG (mulberry32) drives the fuzz so
+ * property smoke is REPRODUCIBLE. If a counterexample ever falls out of this
+ * fuzz, promoting to fast-check is straightforward.
+ *
+ * G-053 — byte-determinism discipline: an UNSEEDED `Math.random()` fuzz makes
+ * a failing input non-reproducible (the next CI run draws different points and
+ * the failure may vanish). In a byte-determinism project that is the opposite
+ * of what we want. The PRNG below is seeded from a FIXED constant, so the exact
+ * same sequence of doubles is exercised on every run; a violation is
+ * deterministically reproducible. The seed is also printed in every assertion
+ * message so a maintainer can re-derive the failing draw locally. To explore a
+ * different slice deliberately, set BPT_FUZZ_SEED in the environment — the seed
+ * actually used is reported on failure either way.
  */
 
 import { test } from "node:test";
@@ -50,20 +60,48 @@ import { FormatPolicyError } from "../src/format.js";
 
 const FUZZ_ITERATIONS = 200;
 
-function randomDoubleInRange(): number {
-  // Uniform in [1e-9, 1e7). Math.random() is non-seeded; the property
-  // claim is true for ALL inputs in-range, so a non-seeded PRNG that
-  // explores 200 random points each run is adequate. If a counterexample
-  // surfaces in CI, the failing input prints in the assertion message so
-  // it can be folded into the happy-case table in runtime-format.test.ts.
-  return Math.random() * (1e7 - 1e-9) + 1e-9;
+// G-053 — fixed default seed for reproducibility. Overridable via
+// BPT_FUZZ_SEED for deliberate exploration; the value used is reported on
+// failure so any counterexample is re-derivable.
+const FUZZ_SEED = (() => {
+  const env = process.env.BPT_FUZZ_SEED;
+  if (env !== undefined && /^\d+$/.test(env)) return Number(env) >>> 0;
+  return 0x9e3779b9; // golden-ratio constant; arbitrary but FIXED
+})();
+
+/**
+ * mulberry32 — a tiny, well-distributed seeded PRNG (public domain). Pure
+ * integer/float arithmetic, no global state, fully deterministic for a given
+ * seed. Returns a generator yielding doubles in [0, 1).
+ */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// One generator instance per test, re-seeded from FUZZ_SEED, so the two
+// round-trip tests are independent yet each reproducible. `makeRng` returns
+// the in-range sampler bound to a fresh deterministic stream.
+function makeRng(): () => number {
+  const next = mulberry32(FUZZ_SEED);
+  // Uniform in [1e-9, 1e7). The property claim holds for ALL in-range inputs;
+  // the seeded stream explores FUZZ_ITERATIONS deterministic points so any
+  // counterexample reproduces on the next run (and is reported with the seed).
+  return () => next() * (1e7 - 1e-9) + 1e-9;
 }
 
 test(
-  `T-A-006: format(x) === format(parseFloat(format(x))) over ${FUZZ_ITERATIONS} random doubles in [1e-9, 1e7)`,
+  `T-A-006: format(x) === format(parseFloat(format(x))) over ${FUZZ_ITERATIONS} seeded doubles in [1e-9, 1e7)`,
   () => {
+    const rng = makeRng();
     for (let i = 0; i < FUZZ_ITERATIONS; i++) {
-      const x = randomDoubleInRange();
+      const x = rng();
       const first = formatNumberForEngine(x);
       const parsed = parseFloat(first);
       // parseFloat must produce a finite double inside the same range
@@ -71,13 +109,13 @@ test(
       // Infinity / a magnitude outside policy scope).
       assert.ok(
         Number.isFinite(parsed),
-        `round-trip parseFloat(${JSON.stringify(first)}) for x=${x} produced non-finite ${parsed}`,
+        `round-trip parseFloat(${JSON.stringify(first)}) for x=${x} produced non-finite ${parsed} [seed=${FUZZ_SEED}, i=${i}]`,
       );
       const second = formatNumberForEngine(parsed);
       assert.strictEqual(
         second,
         first,
-        `round-trip drift on x=${x}: first=${JSON.stringify(first)} second=${JSON.stringify(second)}`,
+        `round-trip drift on x=${x}: first=${JSON.stringify(first)} second=${JSON.stringify(second)} [seed=${FUZZ_SEED}, i=${i}]`,
       );
     }
   },
@@ -87,21 +125,22 @@ test(
 // the same plain-decimal range and the formatter must round-trip them
 // identically through the negative-sign branch.
 test(
-  `T-A-006: negative-half-range round-trip idempotency (${FUZZ_ITERATIONS} doubles)`,
+  `T-A-006: negative-half-range round-trip idempotency (${FUZZ_ITERATIONS} seeded doubles)`,
   () => {
+    const rng = makeRng();
     for (let i = 0; i < FUZZ_ITERATIONS; i++) {
-      const x = -randomDoubleInRange();
+      const x = -rng();
       const first = formatNumberForEngine(x);
       const parsed = parseFloat(first);
       assert.ok(
         Number.isFinite(parsed),
-        `round-trip parseFloat(${JSON.stringify(first)}) for negative x=${x} produced non-finite ${parsed}`,
+        `round-trip parseFloat(${JSON.stringify(first)}) for negative x=${x} produced non-finite ${parsed} [seed=${FUZZ_SEED}, i=${i}]`,
       );
       const second = formatNumberForEngine(parsed);
       assert.strictEqual(
         second,
         first,
-        `negative round-trip drift on x=${x}: first=${JSON.stringify(first)} second=${JSON.stringify(second)}`,
+        `negative round-trip drift on x=${x}: first=${JSON.stringify(first)} second=${JSON.stringify(second)} [seed=${FUZZ_SEED}, i=${i}]`,
       );
     }
   },
@@ -251,10 +290,11 @@ test("T-A-006: doubles at 1.000001e7 (just above 1e7 ceiling) throw PLAIN_DECIMA
 // =============================================================================
 
 test(
-  `T-A-006: scientificToPlain(toPrecision(17)) parses back to the same double (${FUZZ_ITERATIONS} doubles)`,
+  `T-A-006: scientificToPlain(toPrecision(17)) parses back to the same double (${FUZZ_ITERATIONS} seeded doubles)`,
   () => {
+    const rng = makeRng();
     for (let i = 0; i < FUZZ_ITERATIONS; i++) {
-      const x = randomDoubleInRange();
+      const x = rng();
       const sci = x.toPrecision(17);
       // toPrecision may return either scientific or fixed; only feed
       // scientific into scientificToPlain (skip fixed-form outputs,
@@ -265,7 +305,7 @@ test(
       assert.strictEqual(
         back,
         x,
-        `scientificToPlain inverse drift on x=${x}: sci=${JSON.stringify(sci)} plain=${JSON.stringify(plain)} parsed=${back}`,
+        `scientificToPlain inverse drift on x=${x}: sci=${JSON.stringify(sci)} plain=${JSON.stringify(plain)} parsed=${back} [seed=${FUZZ_SEED}, i=${i}]`,
       );
     }
   },

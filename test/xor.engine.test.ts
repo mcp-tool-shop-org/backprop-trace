@@ -63,7 +63,14 @@ function getEmitGeneralReceipt():
   return undefined
 }
 
-test("XOR golden byte-equal vs engine + emitGeneralReceipt", { skip: !existsSync(goldenPath) }, () => {
+test("XOR golden byte-equal vs engine + emitGeneralReceipt", () => {
+  // G-025: assert the shipped golden exists rather than skipping when absent.
+  // fixtures/xor.golden.jsonl is a committed canonical fixture; its absence is
+  // a repo defect (a missing byte-equal anchor), not a reason to silently pass.
+  assert.ok(
+    existsSync(goldenPath),
+    `fixtures/xor.golden.jsonl must exist at ${goldenPath} — it is a shipped canonical golden`,
+  )
   const emit = getEmitGeneralReceipt()
   if (!emit) {
     // TODO: re-enable when src/emit.ts exports emitGeneralReceipt
@@ -95,7 +102,12 @@ test("XOR golden byte-equal vs engine + emitGeneralReceipt", { skip: !existsSync
   )
 })
 
-test("fixtures/xor.golden.jsonl validates against schemas/receipt.v0.2.0.json", { skip: !existsSync(goldenPath) }, () => {
+test("fixtures/xor.golden.jsonl validates against schemas/receipt.v0.2.0.json", () => {
+  // G-025: assert existence instead of skip-on-missing (shipped golden).
+  assert.ok(
+    existsSync(goldenPath),
+    `fixtures/xor.golden.jsonl must exist at ${goldenPath} — it is a shipped canonical golden`,
+  )
   const golden = readFileSync(goldenPath, "utf-8")
   // XOR fixture is a single JSONL record terminated by LF — JSON.parse on
   // the trimmed string yields the receipt object.
@@ -117,7 +129,12 @@ test("fixtures/xor.golden.jsonl validates against schemas/receipt.v0.2.0.json", 
   }
 })
 
-test("reconcileReceipt on XOR golden returns {ok: true}", { skip: !existsSync(goldenPath) }, () => {
+test("reconcileReceipt on XOR golden returns {ok: true}", () => {
+  // G-025: assert existence instead of skip-on-missing (shipped golden).
+  assert.ok(
+    existsSync(goldenPath),
+    `fixtures/xor.golden.jsonl must exist at ${goldenPath} — it is a shipped canonical golden`,
+  )
   const golden = readFileSync(goldenPath, "utf-8")
   const parsed: unknown = JSON.parse(golden.trim())
   const result = reconcileReceipt(parsed)

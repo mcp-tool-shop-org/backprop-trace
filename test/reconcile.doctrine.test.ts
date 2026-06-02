@@ -49,6 +49,12 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import {
+  RULE_DESCRIPTIONS,
+  reconcileReceipt,
+  reconcileMultiStep,
+} from "../src/reconcile.js";
+import { parseReceipt } from "../src/parse.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
@@ -482,3 +488,297 @@ test(
     );
   },
 );
+
+// ===========================================================================
+// G-036: RULE_DESCRIPTIONS completeness ratchet.
+//
+// RULE_DESCRIPTIONS is the single source of truth for per-rule human text
+// (docs/reconciliation.md headings, src/bin/bp.ts RULE_LABELS, future MCP-tool
+// descriptions all derive from it). Historically it only covered rules 0-16
+// while rules 17-26 were implemented and FIRE — so a CLI/doc reader had no
+// description for a third of the live rules. This ratchet fails the build if a
+// rule lands in reconcile.ts (any `rule: <n>` the reconciler can emit) without
+// a matching RULE_DESCRIPTIONS entry, closing the gap permanently.
+//
+// Rule 0 (the structural-failure sentinel) is included here BECAUSE it is a
+// real emitted rule with a real description — unlike the doctrine fixture test,
+// which excludes Rule 0 because structural failures are covered by separate
+// test paths rather than dedicated bad-* fixtures.
+// ===========================================================================
+test(
+  "G-036: RULE_DESCRIPTIONS has an entry for every implemented rule (incl. Rule 0)",
+  () => {
+    const implemented = extractImplementedRules();
+    assert.ok(
+      implemented.size > 0,
+      "extract failed: no `rule: <n>` matches found in src/reconcile.ts.",
+    );
+
+    // Rule 0 is a real emitted rule (structural-failure sentinel) and MUST be
+    // described even though it is not in the doctrine fixture map.
+    const required = new Set<number>(implemented);
+    required.add(0);
+
+    const missing: number[] = [];
+    for (const rule of required) {
+      const desc = RULE_DESCRIPTIONS[rule];
+      if (typeof desc !== "string" || desc.trim().length === 0) {
+        missing.push(rule);
+      }
+    }
+    missing.sort((a, b) => a - b);
+
+    assert.deepStrictEqual(
+      missing,
+      [],
+      `RULE_DESCRIPTIONS ratchet breach: rules ${JSON.stringify(missing)} are emitted by ` +
+        `src/reconcile.ts but have no (non-empty) RULE_DESCRIPTIONS entry. RULE_DESCRIPTIONS is ` +
+        `the single source of truth for rule text (docs, bp.ts RULE_LABELS, MCP descriptions). ` +
+        `Add a description for each missing rule. Current keys: ` +
+        `${JSON.stringify(Object.keys(RULE_DESCRIPTIONS).map(Number).sort((a, b) => a - b))}`,
+    );
+  },
+);
+
+// Guard against the inverse drift: a RULE_DESCRIPTIONS entry for a rule the
+// reconciler can no longer emit (e.g. a rule removed in a refactor) is stale
+// documentation. Rule 0 is the one legitimate description with no `rule: 0`
+// failure-push counted by extractImplementedRules (it filters n>0), so it is
+// allowlisted.
+test(
+  "G-036: every RULE_DESCRIPTIONS entry corresponds to an emitted rule (no stale entries)",
+  () => {
+    const implemented = extractImplementedRules();
+    const allowed = new Set<number>(implemented);
+    allowed.add(0); // structural-failure sentinel — described but filtered by n>0.
+
+    const stale: number[] = [];
+    for (const key of Object.keys(RULE_DESCRIPTIONS)) {
+      const n = Number(key);
+      if (!allowed.has(n)) stale.push(n);
+    }
+    stale.sort((a, b) => a - b);
+
+    assert.deepStrictEqual(
+      stale,
+      [],
+      `RULE_DESCRIPTIONS has entries for rules ${JSON.stringify(stale)} that src/reconcile.ts ` +
+        `never emits. Remove the stale description(s) or restore the rule.`,
+    );
+  },
+);
+
+// ===========================================================================
+// G-024: strengthen T-A-009 from a NAMING check to a BEHAVIORAL check.
+//
+// The original T-A-009 only confirmed that each bad fixture's meta names a rule
+// AND that rule appears somewhere in reconcile.ts — a fixture whose meta LIES
+// (claims Rule 22 but actually fires nothing, or fires only some other rule)
+// would still pass. This test actually INVOKES reconcileReceipt /
+// reconcileMultiStep on every bad fixture and asserts:
+//   (a) result.ok === false (the receipt is rejected), AND
+//   (b) the meta-claimed rule appears in result.failures.
+//
+// Determinism: fixtures are read from disk (no randomness), parsed with the
+// shipped parser, and reconciled with the shipped reconciler. The failure-rule
+// set is order-independent (a Set membership check), so the assertion is stable.
+// ===========================================================================
+
+const badFixturesDirG024 = resolve(repoRoot, "fixtures/bad");
+
+type DoctrineFixture = {
+  filename: string;
+  primaryRule: number;
+  isMultiStep: boolean;
+};
+
+// Fixtures that DELIBERATELY bypass canonical emit (they drop required fields OR
+// violate a schema invariant like uniqueItems, exercising the schema/parse layer
+// which fires BEFORE the reconciler). For these the schema is the PRIMARY gate,
+// so a parse/validation failure IS the expected rejection — the per-rule
+// reconciler assertion does not apply (the receipt never reaches the reconciler).
+// Kept explicit (not a silent skip) so adding a new schema-bypass fixture is a
+// conscious decision. The dedicated test files (bad-batch / bad-adam / bad-
+// momentum) verify the schema-layer rejection for these.
+const SCHEMA_BYPASS_FIXTURES = new Set<string>([
+  "adam.bad-amsgrad-confusion.jsonl",
+  "momentum.bad-coefficient-omitted.jsonl",
+  "batch.bad-sample-order-duplicate.jsonl", // schema uniqueItems is the primary gate (Rule 19 is defense-in-depth)
+]);
+
+// pytorch-helper.bad-* fixtures have a DEDICATED behavioral test file
+// (test/reconcile.bad-pytorch-helper.test.ts) that owns their per-rule
+// verification. They are excluded from this doctrine behavioral loop to avoid
+// two test files asserting pass/fail on the same fixtures (single-owner
+// discipline). The doctrine COVERAGE test (T-A-009, above) still counts them
+// via FILENAME_KIND_TO_RULE, so their rules remain covered.
+function isPytorchHelperFixture(filename: string): boolean {
+  return filename.startsWith("pytorch-helper.bad-");
+}
+
+/**
+ * Robust multi-step detection. A fixture is multi-record iff EVERY non-empty
+ * physical line independently parses as JSON AND there is more than one such
+ * line. A PRETTY-PRINTED single receipt (e.g. mazur.bad-gradient.jsonl spans
+ * ~136 physical lines but is one JSON object) fails the "every line parses"
+ * test — its first line is a bare "{" — so it is correctly classified as a
+ * single receipt. Counting physical lines alone (the v0.9.1 bad-adam heuristic)
+ * misclassifies pretty-printed single receipts; this discriminator does not.
+ */
+function detectMultiStep(trimmedBytes: string): boolean {
+  const lines = trimmedBytes.split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length <= 1) return false;
+  for (const line of lines) {
+    try {
+      JSON.parse(line);
+    } catch {
+      return false; // a line that doesn't parse alone => pretty-printed single receipt
+    }
+  }
+  return true;
+}
+
+/**
+ * Resolve the PRIMARY rule a fixture targets, mirroring the multi-source
+ * resolution the coverage test uses so the behavioral test does not false-fail
+ * on fixtures that legitimately declare their rule via a path other than
+ * reconciliation_check_targeted_first:
+ *   1. meta.reconciliation_check_targeted_first ("Rule N: ...")  — canonical
+ *   2. meta.expected_failures[0].rule (pytorch-helper convention)
+ *   3. FILENAME_KIND_TO_RULE[<kind>] from `<prefix>.bad-<kind>.jsonl`  — fallback
+ * Returns -1 when none resolves (the "untagged" loud-failure case).
+ */
+function resolvePrimaryRule(file: string, metaPath: string): number {
+  if (existsSync(metaPath)) {
+    try {
+      const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as {
+        reconciliation_check_targeted_first?: string;
+        expected_failures?: Array<{ rule?: unknown }>;
+      };
+      const target = meta.reconciliation_check_targeted_first;
+      if (typeof target === "string") {
+        const m = target.match(/Rule\s+(\d+)/i);
+        if (m) return parseInt(m[1]!, 10);
+      }
+      const ef = meta.expected_failures;
+      if (Array.isArray(ef) && ef.length > 0 && typeof ef[0]!.rule === "number") {
+        return ef[0]!.rule as number;
+      }
+    } catch {
+      // Malformed meta — fall through to filename heuristic.
+    }
+  }
+  const m = file.match(/^[a-z0-9-]+\.bad-([a-z0-9-]+)\.jsonl$/);
+  if (m) {
+    const kind = m[1]!;
+    const known = FILENAME_KIND_TO_RULE[kind];
+    if (known !== undefined) return known;
+  }
+  return -1;
+}
+
+function discoverDoctrineFixtures(): DoctrineFixture[] {
+  if (!existsSync(badFixturesDirG024)) return [];
+  const files = readdirSync(badFixturesDirG024).filter((f) => f.endsWith(".jsonl"));
+  const out: DoctrineFixture[] = [];
+  for (const file of files) {
+    if (isPytorchHelperFixture(file)) continue; // owned by the dedicated torch test file
+    const metaPath = resolve(badFixturesDirG024, file.replace(/\.jsonl$/, ".meta.json"));
+    const primaryRule = resolvePrimaryRule(file, metaPath);
+    const bytes = readFileSync(resolve(badFixturesDirG024, file), "utf-8").trim();
+    const isMultiStep = detectMultiStep(bytes);
+    out.push({ filename: file, primaryRule, isMultiStep });
+  }
+  return out;
+}
+
+const doctrineFixtures = discoverDoctrineFixtures();
+
+// Rule 0 fixtures (structural) are valid targets too — Rule 0 IS emitted as a
+// failure even though extractImplementedRules filters it. The meta declares
+// "Rule 0: ..." for those, so primaryRule === 0 is legitimate. primaryRule < 0
+// means the meta did not name a parseable rule — that must FAIL loudly (G-024 +
+// G-026 share this discipline: an untagged fixture breaks the build).
+test(
+  "G-024: every bad fixture under fixtures/bad/ has a meta-declared primary rule",
+  () => {
+    assert.ok(
+      doctrineFixtures.length > 0,
+      "no bad fixtures discovered under fixtures/bad/ — doctrine cannot be verified.",
+    );
+    const untagged = doctrineFixtures
+      .filter((f) => f.primaryRule < 0)
+      .map((f) => f.filename)
+      .sort();
+    assert.deepStrictEqual(
+      untagged,
+      [],
+      `Untagged bad fixtures (no resolvable primary rule via meta ` +
+        `reconciliation_check_targeted_first, meta expected_failures[0].rule, OR ` +
+        `FILENAME_KIND_TO_RULE): ${JSON.stringify(untagged)}. Every adversarial fixture MUST ` +
+        `declare the PRIMARY rule it is designed to trip so the doctrine test can verify the ` +
+        `rule actually fires (a fixture whose meta lies must not pass vacuously).`,
+    );
+  },
+);
+
+for (const fix of doctrineFixtures) {
+  if (fix.primaryRule < 0) continue; // covered by the loud-failure test above.
+  test(
+    `G-024: ${fix.filename} actually fires its meta-claimed Rule ${fix.primaryRule} (behavioral, not just named)`,
+    () => {
+      const fullPath = resolve(badFixturesDirG024, fix.filename);
+      assert.ok(
+        existsSync(fullPath),
+        `required adversarial fixture missing: ${fullPath}`,
+      );
+      const bytes = readFileSync(fullPath, "utf-8");
+
+      let receipts: unknown[];
+      if (fix.isMultiStep) {
+        try {
+          receipts = bytes
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line));
+        } catch (err) {
+          throw new Error(
+            `${fix.filename} multi-record parse failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      } else {
+        // parseReceipt JSON.parses the WHOLE document (handles both compact
+        // single-line AND pretty-printed multi-physical-line single receipts,
+        // e.g. mazur.bad-gradient.jsonl) and schema-validates. parseReceiptJsonl
+        // would reject a pretty-printed receipt as "136 records".
+        const parsed = parseReceipt(bytes);
+        if (!parsed.ok) {
+          // Schema-bypass fixtures fail at the parse/schema layer by design —
+          // that IS the rejection. Anything else is an unexpected parse break.
+          if (SCHEMA_BYPASS_FIXTURES.has(fix.filename)) return;
+          throw new Error(`${fix.filename} parse failed: ${parsed.error.message}`);
+        }
+        receipts = [parsed.receipt];
+      }
+
+      const result = fix.isMultiStep
+        ? reconcileMultiStep(receipts)
+        : reconcileReceipt(receipts[0]);
+
+      assert.equal(
+        result.ok,
+        false,
+        `${fix.filename} must NOT reconcile (it is a bad fixture).`,
+      );
+      if (result.ok) return; // type narrowing
+      const firedRules = new Set(result.failures.map((f) => f.rule));
+      assert.ok(
+        firedRules.has(fix.primaryRule),
+        `${fix.filename} meta claims Rule ${fix.primaryRule} but that rule did NOT fire. ` +
+          `Actual fired rules: ${JSON.stringify(Array.from(firedRules).sort((a, b) => a - b))}. ` +
+          `Failures: ${JSON.stringify(result.failures.map((f) => ({ rule: f.rule, field: f.field_path })), null, 2)}. ` +
+          `A fixture whose meta lies (claims a rule it does not trip) must fail this test.`,
+      );
+    },
+  );
+}

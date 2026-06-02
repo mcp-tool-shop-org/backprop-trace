@@ -300,6 +300,16 @@ export const RULE_DESCRIPTIONS: Record<number, string> = {
   14: "Engine-recompute differential (observer-mode): when fixture_status.authoring_state === 'external_imported', re-run runGeneralStep from parameters_before + inputs + targets + topology and assert engine output agrees with the receipt's claimed forward/loss/backward/updates/parameters_after within attestor.differential_tolerance. Catches the collapsed-laundering attack class (foreign claims diverge from independent engine recomputation). No-op when authoring_state !== 'external_imported'.",
   15: "Skip-basis required (observer-mode): when fixture_status.verification_state === 'engine_recompute_skipped_with_basis', attestor.skip_basis MUST be present AND in the closed enum EXTERNAL_TRUST_BASIS = {hardware_nondeterminism, framework_op_unsupported, distributed_only_field, attested_third_party}. Empty/missing/out-of-enum fires Rule 15. Leroy's verified-vs-trusted discipline applied: skipping the math gate requires naming the reason on the record.",
   16: "Attestation digest binding (gated): when attestor.signed_subject_digest is present, the digest MUST equal hashReceipt(receipt with attestor.signed_subject_digest stripped). Catches SolarWinds-style 'signed-but-substituted' attacks where a valid signature is bound to mutated bytes. Signature *validity* (cosign verification) is OUT of scope for the reconciler — Rule 16 only checks digest-binding integrity. Silently skips when signed_subject_digest is absent — the GATED behavior consistent with Rule 13.",
+  17: "Trace-bundle binding (gated, multi-step): when any receipt declares attestor.bundle_root_digest, assert (a) co-presence — every receipt in the bundle declares it, (b) value consistency — all receipts carry the same digest, (c) recompute — sha256 of the concatenated canonical bytes of every receipt (each with its own bundle_root_digest stripped) equals the declared value. INTEGRITY-NOT-authenticity: an attacker who controls all bytes AND recomputes the digest passes trivially; combine with Rule 16 / external signature for producer identity. Fires only from reconcileMultiStep; silently skips when no receipt declares the field.",
+  18: "Batch reduction consistency (gated): when receipt.batch is present AND loss.reduction is 'mean' or 'sum', assert loss.total == reduction(loss.per_sample.values()). Catches mean-vs-sum confusion structurally. Silently skips for unbatched receipts.",
+  19: "Sample-set coherence (gated): when batch.sample_order is present, every ordered per-sample projection (loss.per_sample, top-level per_sample) MUST be derived by iterating exactly that order — its key set must EQUAL batch.sample_order. Missing, duplicate, or extra sample IDs fail. Silently skips for unbatched receipts.",
+  20: "Optimizer-state shape consistency (gated): when update.optimizer.name in {adam, adamw} assert optimizer.state_before + state_after presence + finiteness, top-level optimizer_config shape + hyperparameter presence; for sgd_momentum the MomentumState ({buffer}) shape; and the SGD-must-omit-state invariant for mixed receipts. Catches optimizer.name-vs-state-shape confusion (e.g. name='adam' but factors imply an AMSGrad-only field).",
+  21: "Classical PyTorch-style SGD momentum recurrence (gated on optimizer.name === 'sgd_momentum'): 21a buffer_after == momentum * buffer_before + gradient; 21b update == learning_rate * buffer_after (descent direction). v0.9.3 widens to Nesterov + dampening (branches on optimizer_config.{nesterov, dampening}; no new rule slot). STRUCTURAL CONSISTENCY, not producer-authenticity. Silently skips for SGD/Adam/AdamW.",
+  22: "Adam moment recurrences (gated on optimizer.name in {adam, adamw}): 22a m_after == beta1 * m_before + (1 - beta1) * gradient; 22b v_after == beta2 * v_before + (1 - beta2) * gradient^2. Kingma & Ba 2014 arXiv:1412.6980 Algorithm 1 lines 9-10. Catches beta-swap, m/v swap, wrong-recurrence-coefficient porting bugs.",
+  23: "Adam bias correction + timestep consistency (gated on optimizer.name in {adam, adamw}): assert optimizer_config.t === step_index + 1 when both present (Kingma & Ba index t from 1; PyTorch state['step'] matches after the first .step()). Recomputes m_hat / v_hat from (state_after, beta1, beta2, t) for Rule 24's use.",
+  24: "Adam/AdamW parameter update (gated on optimizer.name in {adam, adamw}): update == lr * m_hat / (sqrt(v_hat) + epsilon). Epsilon placement pinned OUTSIDE the sqrt (PyTorch convention). AdamW's decoupled weight decay is checked at Rule 7's AdamW branch, not here. Catches epsilon-inside-sqrt and bias-correction-omitted bugs.",
+  25: "Optimizer-state chain (gated, multi-step): when update.optimizer.name in {adam, adamw} assert m/v continuity (receipts[i+1].updates[u].optimizer.state_before == receipts[i].…state_after) and t monotonicity (receipts[i+1].optimizer_config.t == receipts[i].optimizer_config.t + 1); for sgd_momentum assert buffer continuity. Multi-step analog of Rule 9. Fires only from reconcileMultiStep; silent skip on plain SGD.",
+  26: "Optimizer-config constancy (gated, multi-step): when receipt.optimizer_config is present assert name and the per-optimizer hyperparameter list are IDENTICAL across all receipts in the bundle — Adam/AdamW {beta1, beta2, epsilon, weight_decay}; sgd_momentum {momentum, nesterov, dampening}. learning_rate is EXCLUDED (LR schedules are legitimate); t is EXCLUDED (Rule 25 handles monotonicity). Fires only from reconcileMultiStep.",
 }
 
 type Factor = { name: string; from?: string; value: number }
@@ -2817,6 +2827,92 @@ export function reconcileMultiStep(
  * loss field that contradicts the formula (`loss.total` or
  * `loss.per_output.<unit>`).
  */
+
+/**
+ * G-018: Rule 12 loss-component coherence — mirrors Rule 19's sample-set
+ * coherence (checkSampleKeySet).
+ *
+ * When `topology.unit_order.output` is present, the receipt has declared the
+ * exact set of output units the loss decomposes over. `loss.per_output` MUST
+ * then carry EXACTLY that key set:
+ *   - MISSING: a unit declared in unit_order.output but absent from
+ *     loss.per_output is a DROPPED loss component. The per-output formula loop
+ *     iterates only over present keys, so without this check a dropped
+ *     component is never visited — and if loss.total was reduced to match the
+ *     surviving terms, the whole receipt reconciles ok:true with the dropped
+ *     component fully unverified (the soundness hole G-018 closes).
+ *   - EXTRA: a key in loss.per_output not declared in unit_order.output. An
+ *     extra component with value 0 keeps loss.total consistent yet smuggles an
+ *     undeclared output unit past the formula check.
+ *
+ * Gated identically to the rest of Rule 12's unit-order-dependent behavior:
+ *   - Silently no-ops when topology.unit_order.output is absent (v0.1 Mazur
+ *     receipts declare no unit_order, so coherence cannot be asserted and the
+ *     per-output formula check remains the only loss gate — unchanged
+ *     behavior, byte-identical results for those receipts).
+ *   - Silently no-ops when loss / loss.per_output is absent: the per-branch
+ *     "loss.per_output is missing or not an object" Rule 12 failure already
+ *     covers that case, and double-reporting would be noise.
+ *
+ * Deterministic emission: missing-unit failures are emitted in declared
+ * unit_order.output order; extra-key failures are emitted in loss.per_output
+ * insertion order (Object.keys). No wall-clock, no randomness, no locale
+ * formatting — pure set difference over stable orders.
+ */
+function checkRule12LossComponentCoherence(
+  r: Receipt,
+  failures: ReconciliationFailure[],
+): void {
+  const declaredOutputs = r.topology?.unit_order?.output
+  if (!Array.isArray(declaredOutputs) || declaredOutputs.length === 0) return
+  const loss = r.loss
+  if (!loss) return
+  const perOutput = loss.per_output
+  if (!perOutput || typeof perOutput !== "object") return
+
+  const declared = new Set<string>(declaredOutputs)
+  const observed = new Set<string>(Object.keys(perOutput))
+
+  // Missing: declared in unit_order.output but absent from loss.per_output.
+  // Emit in declared order for deterministic failure streams.
+  for (const unitId of declaredOutputs) {
+    if (!observed.has(unitId)) {
+      failures.push({
+        rule: 12,
+        parameter_id: unitId,
+        field_path: `loss.per_output.${unitId}`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 12 (loss-component coherence): loss.per_output is missing output unit ${JSON.stringify(unitId)} ` +
+          `declared in topology.unit_order.output. A dropped loss component must not go unverified — ` +
+          `loss.per_output's key set must EQUAL the output-unit set. Mirrors Rule 19's sample-set coherence.`,
+      })
+    }
+  }
+  // Extra: present in loss.per_output but not declared in unit_order.output.
+  // Emit in observed insertion order for deterministic failure streams.
+  for (const unitId of observed) {
+    if (!declared.has(unitId)) {
+      failures.push({
+        rule: 12,
+        parameter_id: unitId,
+        field_path: `loss.per_output.${unitId}`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 12 (loss-component coherence): loss.per_output contains output unit ${JSON.stringify(unitId)} ` +
+          `not declared in topology.unit_order.output. loss.per_output's key set must EQUAL the output-unit set ` +
+          `(no extra components). Mirrors Rule 19's sample-set coherence.`,
+      })
+    }
+  }
+}
+
 function checkRule12LossFormula(
   r: Receipt,
   tolerance: TolerancePolicy,
@@ -2830,6 +2926,21 @@ function checkRule12LossFormula(
   // batched mistakes via loss.per_sample. Per-sample loss formula correctness
   // is verified by Rule 14 (engine recompute) per sample.
   if ((r as { batch?: unknown }).batch !== undefined) return
+
+  // G-018: loss-component coherence (mirrors Rule 19's sample-set coherence).
+  // When topology.unit_order.output is present, the receipt has DECLARED the
+  // exact set of output units. loss.per_output MUST then have EXACTLY that key
+  // set — a MISSING entry (a dropped loss component) or an EXTRA entry must
+  // fail. Without this, the per-output check below iterates only over the keys
+  // that ARE present, so a dropped component is never visited; an attacker who
+  // drops one loss component AND adjusts loss.total to match the reduced sum
+  // produces a fully self-consistent receipt that reconciles ok:true — the
+  // dropped component goes UNVERIFIED. The coherence check closes that hole
+  // independent of the loss formula (fires for both half_squared_error and
+  // cross_entropy_softmax) and independent of whether loss.total was also
+  // tampered. Iteration is over the DECLARED order (then over observed keys in
+  // insertion order) so failure emission is deterministic.
+  checkRule12LossComponentCoherence(r, failures)
 
   // Determine the loss formula. Prefer topology.loss; fall back to
   // half_squared_error for receipts that don't declare one (v0.1 Mazur).

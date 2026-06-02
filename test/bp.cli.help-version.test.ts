@@ -259,3 +259,86 @@ test(
     );
   },
 );
+
+// =============================================================================
+// 8. G-048 — help text must NOT understate the rule set with a stale count.
+//
+// The reconciler now implements rules 0-26, but the help strings used to say
+// "the 16 rules" (top-level + receipt usage) and "the 8 rules" (verify usage).
+// A hardcoded total drifts every time a rule is added. The fix uses neutral
+// phrasing ("the reconciliation rules" / "the applicable reconciliation
+// rules") and points at docs/reconciliation.md as the authoritative list.
+//
+// These tests pin the NEGATIVE invariant: the help surface must not advertise
+// a specific stale total like "16 rules" / "8 rules". (We avoid asserting an
+// exact current count so the test does not itself become a drift source the
+// next time a rule lands.)
+// =============================================================================
+
+test("G-048: top-level --help does not advertise a stale fixed rule total", () => {
+  const { status, stdout } = runBp(["--help"]);
+  assert.strictEqual(status, 0, "bp --help must exit 0");
+  assert.doesNotMatch(
+    stdout,
+    /\b16 rules\b/,
+    `top-level help must not hardcode 'the 16 rules' (stale total); got: ${JSON.stringify(stdout)}`,
+  );
+  assert.doesNotMatch(
+    stdout,
+    /\b8 rules\b/,
+    `top-level help must not hardcode 'the 8 rules' (stale total); got: ${JSON.stringify(stdout)}`,
+  );
+  // Positive: neutral phrasing is present somewhere in the surface.
+  assert.match(
+    stdout,
+    /reconciliation rules/i,
+    `top-level help should describe 'reconciliation rules' (neutral phrasing); got: ${JSON.stringify(stdout)}`,
+  );
+});
+
+test("G-048: 'reconcile receipt --help' does not advertise a stale fixed rule total", () => {
+  const { status, stdout } = runBp(["reconcile", "receipt", "--help"]);
+  assert.strictEqual(status, 0, "subcommand --help must exit 0");
+  assert.doesNotMatch(
+    stdout,
+    /\b16 rules\b/,
+    `receipt usage must not hardcode 'the 16 rules' (stale total); got: ${JSON.stringify(stdout)}`,
+  );
+  assert.match(
+    stdout,
+    /reconciliation\s+rules/i,
+    `receipt usage should describe 'reconciliation rules' (neutral phrasing); got: ${JSON.stringify(stdout)}`,
+  );
+});
+
+test("G-048: 'verify mazur --help' does not advertise the stale '8 rules' total", () => {
+  const { status, stdout } = runBp(["verify", "mazur", "--help"]);
+  assert.strictEqual(status, 0, "verify mazur --help must exit 0");
+  assert.doesNotMatch(
+    stdout,
+    /\b8 rules\b/,
+    `verify usage must not hardcode 'the 8 rules' (stale total); got: ${JSON.stringify(stdout)}`,
+  );
+});
+
+test("G-048: top-level --help header carries the LIVE package version, not a frozen one", () => {
+  // The CLI synopsis header reads `bp — backprop-trace CLI v<version>`. Pin
+  // that it reflects the current package.json version so the surface header
+  // can never silently freeze at an old release (the same staleness class as
+  // the removed 'v0.7.0 surface' source-comment marker). Read the version
+  // dynamically so this test never drifts on a version bump.
+  const version = readPackageVersion();
+  const { status, stdout } = runBp(["--help"]);
+  assert.strictEqual(status, 0, "bp --help must exit 0");
+  assert.match(
+    stdout,
+    new RegExp(`backprop-trace CLI v${version.replace(/\./g, "\\.")}\\b`),
+    `help header must carry the live version v${version}; got prefix: ${JSON.stringify(stdout.slice(0, 120))}`,
+  );
+  // And must not have frozen at the historic v0.7.0 surface label.
+  assert.doesNotMatch(
+    stdout,
+    /v0\.7\.0 surface/,
+    `help output must not contain the stale 'v0.7.0 surface' marker`,
+  );
+});

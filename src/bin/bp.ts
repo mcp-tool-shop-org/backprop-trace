@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 /**
- * bp — backprop-trace CLI (v0.7.0 surface)
+ * bp — backprop-trace CLI
  *
  * Subcommand surface:
  *
- *   bp reconcile receipt <file>      Reconcile a receipt against the 16 rules
- *                                    (Rules 1-8 per-receipt math, 9-10 multi-step,
- *                                    11 softmax normalization, 12 loss formula,
- *                                    13 GATED dual-form, 14 engine-recompute
- *                                    differential, 15 skip-basis, 16 GATED
- *                                    attestation digest binding).
+ *   bp reconcile receipt <file>      Reconcile a receipt against the
+ *                                    reconciliation rules (per-receipt math,
+ *                                    multi-step parameter-chain + trace-identity,
+ *                                    softmax normalization, loss formula, GATED
+ *                                    dual-form, engine-recompute differential,
+ *                                    skip-basis, GATED attestation digest +
+ *                                    trace-bundle binding, batch reduction,
+ *                                    optimizer-state, and optimizer recurrences).
+ *                                    See docs/reconciliation.md for the full,
+ *                                    authoritative rule list and numbering.
  *                                    Exit 0 if all applicable rules pass within
  *                                    tolerance; exit 1 with stderr describing failures.
  *
@@ -25,8 +29,8 @@
  *                                    observer-mode imports, arbitrary user-
  *                                    authored topology). Composes schema-validate
  *                                    (auto-detects v0.2.0 / v0.3.0 / v0.4.0) +
- *                                    Rules 1-16 as applicable + engine reproduction
- *                                    (engine-authored) or Rule 14 differential
+ *                                    the applicable reconciliation rules + engine
+ *                                    reproduction (engine-authored) or Rule 14 differential
  *                                    (observer-mode imports). Skips Mazur-specific
  *                                    checks (byte-equal vs Mazur golden, published-
  *                                    anchor drift).
@@ -565,7 +569,9 @@ function describeReceipt(receipt: unknown): { schemaVersion?: string; fixtureId?
  * this in v0.3.
  */
 function formatValue(v: unknown): string {
-  if (typeof v === "number") return String(v);
+  // Both numeric and non-numeric values coerce via String(); kept as a
+  // single named renderer so callers don't inline String() at each site
+  // (and so a future per-type rendering can land in one place).
   return String(v);
 }
 
@@ -580,13 +586,48 @@ function formatDeltaOrTolerance(v: unknown): string {
   return String(v);
 }
 
+/**
+ * The noun for the compared quantity in a given rule's failure readout.
+ *
+ * The historic renderer hardcoded "gradient" for EVERY rule, which is wrong
+ * for the many rules that do not compare a gradient: Rule 1 compares an output
+ * error signal, Rule 11 a softmax probability sum, Rule 12 a loss, Rules 16/17
+ * digests, and so on. We derive a per-rule noun so each failure reads
+ * correctly. Rules whose compared quantity genuinely IS a gradient keep
+ * "gradient"; everything else falls back to the neutral "value".
+ *
+ * Only rules with a clearly-correct specific noun are listed; the default is
+ * "value" (always accurate, never misleading). This is intentionally
+ * conservative — a wrong specific noun would be worse than a neutral one.
+ */
+function ruleValueNoun(rule: number): string {
+  switch (rule) {
+    // Rule 4 compares update.gradient == product(optimizer.factors): the
+    // stored/recomputed quantity literally IS the gradient.
+    case 4:
+      return "gradient"
+    default:
+      return "value"
+  }
+}
+
 function renderFailure(f: ReconciliationFailure): string {
   const label = RULE_LABELS[f.rule] ?? "rule mismatch";
+  // Per-rule wording: the compared-quantity noun is derived from the rule so
+  // non-gradient rules (Rule 1 signal, 11 softmax sum, 12 loss, 16/17 digests)
+  // no longer mislabel their values as "gradient". The full per-rule nature of
+  // the mismatch is also named on the header line via RULE_LABELS[f.rule].
+  const noun = ruleValueNoun(f.rule);
+  // Right-pad the two value labels to a fixed column so the readout stays
+  // aligned regardless of the noun's length (e.g. "gradient" vs "value").
+  const VALUE_COL = 21;
+  const storedLabel = `stored ${noun}:`.padEnd(VALUE_COL);
+  const recomputedLabel = `recomputed ${noun}:`.padEnd(VALUE_COL);
   const lines = [
     `Rule ${f.rule}: ${label} on ${f.parameter_id ?? "(unknown parameter)"}`,
     `  field_path:          ${f.field_path}`,
-    `  stored gradient:     ${formatValue(f.stored)}`,
-    `  recomputed gradient: ${formatValue(f.recomputed)}`,
+    `  ${storedLabel}${formatValue(f.stored)}`,
+    `  ${recomputedLabel}${formatValue(f.recomputed)}`,
     `  delta:               ${formatDeltaOrTolerance(f.delta)}`,
     `  tolerance:           ${formatDeltaOrTolerance(f.tolerance)}`,
   ];
@@ -609,7 +650,7 @@ function usageText(): string {
     "",
     "Usage:",
     "  Reconcile / verify:",
-    "    bp reconcile receipt <file>     Reconcile a receipt against the 16 rules",
+    "    bp reconcile receipt <file>     Reconcile a receipt against the reconciliation rules",
     "    bp verify mazur [<file>]        Full Mazur gate (v0.1 receipts)",
     "    bp verify general <file>        Generalized verify (v0.2+ receipts; softmax+CE; observer-mode)",
     "    bp verify multi <file.jsonl>    Multi-record verify (Rules 1-8 per record + Rules 9, 10)",
@@ -686,12 +727,12 @@ function receiptUsageText(): string {
   return [
     "Usage: bp reconcile receipt <file> [--json] [--verbose]",
     "",
-    "  Reconcile the math claims in a receipt against the 16 rules in",
-    "  docs/reconciliation.md (Rules 1-8 per-receipt math, Rules 9-10",
-    "  multi-step, Rule 11 softmax normalization, Rule 12 loss formula,",
-    "  Rule 13 GATED dual-form, Rule 14 engine-recompute differential",
-    "  for observer-mode imports, Rule 15 skip-basis, Rule 16 GATED",
-    "  attestation digest binding).",
+    "  Reconcile the math claims in a receipt against the reconciliation",
+    "  rules in docs/reconciliation.md (per-receipt math, multi-step",
+    "  parameter-chain + trace-identity, softmax normalization, loss",
+    "  formula, GATED dual-form, engine-recompute differential for",
+    "  observer-mode imports, skip-basis, GATED attestation digest",
+    "  binding, batch reduction, optimizer-state, and optimizer recurrences).",
     "",
     "  <file>  Path to a receipt JSON document. Accepted extensions:",
     "            .json   — parsed as a single JSON document.",
@@ -719,7 +760,7 @@ function verifyGeneralUsageText(): string {
     "  Generalized verify gate for v0.2+ receipts (XOR, iris, softmax+CE,",
     "  observer-mode imports). Composes:",
     "    1. Schema validation (auto-detects v0.2.0 / v0.3.0 / v0.4.0)",
-    "    2. Reconciliation against Rules 1-16 as applicable. For observer-mode",
+    "    2. Reconciliation against the applicable reconciliation rules. For observer-mode",
     "       receipts (fixture_status.authoring_state=\"external_imported\") this",
     "       is where Rule 14 (engine-recompute differential within",
     "       attestor.differential_tolerance) fires — the governing soundness",
@@ -795,7 +836,7 @@ function verifyUsageText(): string {
     "",
     "  Full gate per docs/reconciliation.md:264. Composes:",
     "    1. Schema validation against schemas/receipt.v0.1.0.json",
-    "    2. Reconciliation against the 8 rules",
+    "    2. Reconciliation against the applicable reconciliation rules",
     "    3. Engine reproduction (re-run the engine, compare receipts)",
     "    4. Byte equality against fixtures/mazur.golden.jsonl",
     "    5. Fixture status enum checks",
@@ -3732,38 +3773,42 @@ if (argv[0] === "import") {
         );
       }
       runImportPytorchStream(file);
-    }
-    const file = argv[2];
-    if (typeof file !== "string" || file.length === 0) {
-      if (jsonMode) {
+    } else {
+      // Single-step path. Guarded as the `else` of the `multi` check so the
+      // (process.exit()-terminal) stream runner above cannot fall through
+      // into this branch — G-049 hardening (no module-scope `return`).
+      const file = argv[2];
+      if (typeof file !== "string" || file.length === 0) {
+        if (jsonMode) {
+          exitWithUsageError(
+            "missing required argument <sidecar-file> for 'import pytorch'. Run 'bp import pytorch --help' for usage.",
+            "MISSING_FILE_ARG",
+          );
+        }
+        process.stderr.write(importPytorchUsageText());
+        process.exit(2);
+      }
+      if (file === "--help" || file === "-h") {
+        process.stdout.write(importPytorchUsageText());
+        process.exit(0);
+      }
+      if (file.startsWith("-") && file !== "-" && file !== "--") {
         exitWithUsageError(
-          "missing required argument <sidecar-file> for 'import pytorch'. Run 'bp import pytorch --help' for usage.",
-          "MISSING_FILE_ARG",
+          `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
+            `Use 'bp import pytorch --help' for usage.`,
+          "INVALID_FILE_ARG",
+          3,
         );
       }
-      process.stderr.write(importPytorchUsageText());
-      process.exit(2);
+      runImportPytorch(file);
     }
-    if (file === "--help" || file === "-h") {
-      process.stdout.write(importPytorchUsageText());
-      process.exit(0);
-    }
-    if (file.startsWith("-") && file !== "-" && file !== "--") {
-      exitWithUsageError(
-        `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
-          `Use 'bp import pytorch --help' for usage.`,
-        "INVALID_FILE_ARG",
-        3,
-      );
-    }
-    runImportPytorch(file);
   }
 
   // v0.6.1: bp import jax — thin wrapper over the same observer-mode
   // pipeline as bp import pytorch. Same trust model, same Rule 14, same
   // observer-mode v0.4.0 receipt; only the source_framework name +
   // extractor identity differ.
-  if (framework === "jax") {
+  else if (framework === "jax") {
     if (argv[2] === "multi") {
       const file = argv[3];
       if (typeof file !== "string" || file.length === 0) {
@@ -3789,37 +3834,40 @@ if (argv[0] === "import") {
         );
       }
       runImportJaxStream(file);
-    }
-    const file = argv[2];
-    if (typeof file !== "string" || file.length === 0) {
-      if (jsonMode) {
+    } else {
+      // Single-step path — guarded as the `else` of the `multi` check
+      // (G-049 hardening; see the pytorch branch for rationale).
+      const file = argv[2];
+      if (typeof file !== "string" || file.length === 0) {
+        if (jsonMode) {
+          exitWithUsageError(
+            "missing required argument <sidecar-file> for 'import jax'. Run 'bp import jax --help' for usage.",
+            "MISSING_FILE_ARG",
+          );
+        }
+        process.stderr.write(importJaxUsageText());
+        process.exit(2);
+      }
+      if (file === "--help" || file === "-h") {
+        process.stdout.write(importJaxUsageText());
+        process.exit(0);
+      }
+      if (file.startsWith("-") && file !== "-" && file !== "--") {
         exitWithUsageError(
-          "missing required argument <sidecar-file> for 'import jax'. Run 'bp import jax --help' for usage.",
-          "MISSING_FILE_ARG",
+          `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
+            `Use 'bp import jax --help' for usage.`,
+          "INVALID_FILE_ARG",
+          3,
         );
       }
-      process.stderr.write(importJaxUsageText());
-      process.exit(2);
+      runImportJax(file);
     }
-    if (file === "--help" || file === "-h") {
-      process.stdout.write(importJaxUsageText());
-      process.exit(0);
-    }
-    if (file.startsWith("-") && file !== "-" && file !== "--") {
-      exitWithUsageError(
-        `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
-          `Use 'bp import jax --help' for usage.`,
-        "INVALID_FILE_ARG",
-        3,
-      );
-    }
-    runImportJax(file);
   }
 
   // v0.7.0: bp import tensorflow — third adapter on the v0.6 framework-
   // trace pattern. Same dispatch shape as pytorch and jax above; only the
   // source_framework name + extractor identity + library export differ.
-  if (framework === "tensorflow") {
+  else if (framework === "tensorflow") {
     if (argv[2] === "multi") {
       const file = argv[3];
       if (typeof file !== "string" || file.length === 0) {
@@ -3845,42 +3893,52 @@ if (argv[0] === "import") {
         );
       }
       runImportTensorflowStream(file);
-    }
-    const file = argv[2];
-    if (typeof file !== "string" || file.length === 0) {
-      if (jsonMode) {
+    } else {
+      // Single-step path — guarded as the `else` of the `multi` check
+      // (G-049 hardening; see the pytorch branch for rationale).
+      const file = argv[2];
+      if (typeof file !== "string" || file.length === 0) {
+        if (jsonMode) {
+          exitWithUsageError(
+            "missing required argument <sidecar-file> for 'import tensorflow'. Run 'bp import tensorflow --help' for usage.",
+            "MISSING_FILE_ARG",
+          );
+        }
+        process.stderr.write(importTensorflowUsageText());
+        process.exit(2);
+      }
+      if (file === "--help" || file === "-h") {
+        process.stdout.write(importTensorflowUsageText());
+        process.exit(0);
+      }
+      if (file.startsWith("-") && file !== "-" && file !== "--") {
         exitWithUsageError(
-          "missing required argument <sidecar-file> for 'import tensorflow'. Run 'bp import tensorflow --help' for usage.",
-          "MISSING_FILE_ARG",
+          `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
+            `Use 'bp import tensorflow --help' for usage.`,
+          "INVALID_FILE_ARG",
+          3,
         );
       }
-      process.stderr.write(importTensorflowUsageText());
-      process.exit(2);
+      runImportTensorflow(file);
     }
-    if (file === "--help" || file === "-h") {
-      process.stdout.write(importTensorflowUsageText());
-      process.exit(0);
-    }
-    if (file.startsWith("-") && file !== "-" && file !== "--") {
-      exitWithUsageError(
-        `refusing to treat ${JSON.stringify(file)} as a filename (starts with '-'). ` +
-          `Use 'bp import tensorflow --help' for usage.`,
-        "INVALID_FILE_ARG",
-        3,
-      );
-    }
-    runImportTensorflow(file);
   }
 
-  // Unknown framework.
-  const knownFrameworks = ["pytorch", "jax", "tensorflow"];
-  exitWithUsageError(
-    `unknown framework '${framework}' for 'bp import'. Known: ${knownFrameworks.join(", ")}. ` +
-      `bp does NOT auto-detect framework from file contents — name it explicitly. ` +
-      `Run 'bp import --help' for the current import surface.`,
-    "UNKNOWN_FRAMEWORK",
-    2,
-  );
+  // Unknown framework. Reached only when none of the framework branches
+  // above matched — the else-if chain + else guarantees a matched branch
+  // (whose terminal runImport*/runImport*Stream call process.exit()s)
+  // cannot fall through into this error. See G-049: at module scope `return`
+  // is not available, so mutual exclusion is enforced structurally via
+  // else-if rather than an early return after each terminal runner.
+  else {
+    const knownFrameworks = ["pytorch", "jax", "tensorflow"];
+    exitWithUsageError(
+      `unknown framework '${framework}' for 'bp import'. Known: ${knownFrameworks.join(", ")}. ` +
+        `bp does NOT auto-detect framework from file contents — name it explicitly. ` +
+        `Run 'bp import --help' for the current import surface.`,
+      "UNKNOWN_FRAMEWORK",
+      2,
+    );
+  }
 }
 
 // -----------------------------------------------------------------------------

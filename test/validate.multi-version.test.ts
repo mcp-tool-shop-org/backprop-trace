@@ -13,13 +13,17 @@
  *   - opts.version forces a specific schema regardless of the receipt's
  *     own schema_version.
  *
- * The XOR golden (v0.2.0) is gated on Fixtures agent landing — if absent,
- * those tests skip. The Mazur golden (v0.1.0) is always present.
+ * Both goldens are shipped, engine-authored fixtures and are loaded
+ * unconditionally — the XOR golden is no longer gated behind an existsSync
+ * skip (G-025 de-vacuum: the skip never fired because fixtures/xor.golden.jsonl
+ * is a committed fixture, so the guard silently masked a missing-fixture
+ * regression instead of failing it). If a fixture is missing the test now
+ * fails loudly at load.
  */
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { existsSync, readFileSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { dirname, resolve } from "node:path"
 import { validateReceiptSchema } from "../src/validate.js"
@@ -33,8 +37,7 @@ function loadMazurGolden(): Record<string, unknown> {
   return JSON.parse(readFileSync(mazurGoldenPath, "utf-8")) as Record<string, unknown>
 }
 
-function loadXorGoldenIfPresent(): Record<string, unknown> | undefined {
-  if (!existsSync(xorGoldenPath)) return undefined
+function loadXorGolden(): Record<string, unknown> {
   return JSON.parse(readFileSync(xorGoldenPath, "utf-8").trim()) as Record<
     string,
     unknown
@@ -58,9 +61,8 @@ test("validateReceiptSchema(mazur golden) dispatches to v0.1.0 and passes", () =
   )
 })
 
-test("validateReceiptSchema(xor golden) dispatches to v0.2.0 and passes", { skip: !existsSync(xorGoldenPath) }, () => {
-  const golden = loadXorGoldenIfPresent()
-  if (!golden) return
+test("validateReceiptSchema(xor golden) dispatches to v0.2.0 and passes", () => {
+  const golden = loadXorGolden()
   const result = validateReceiptSchema(golden)
   assert.strictEqual(
     result.ok,

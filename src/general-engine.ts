@@ -1844,8 +1844,11 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
 
   // --- Observability hook (mirrors src/engine.ts BPT_DEBUG behavior) ---
   if (process.env["BPT_DEBUG"] === "1") {
+    // G-021: reflect the actual 1-indexed step (step_index + 1) in the
+    // observability line so debug output matches the emitted receipt.step.
+    // stderr only — not part of any golden's bytes.
     process.stderr.write(
-      `[bpt:general-engine] step=1 post_update_loss.total=${postUpdateTotal}\n`,
+      `[bpt:general-engine] step=${(input.step_index ?? 0) + 1} post_update_loss.total=${postUpdateTotal}\n`,
     )
   }
 
@@ -1876,7 +1879,12 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
   const receipt: GeneralReceipt = {
     schema_version: schemaVersionForReceipt,
     fixture: input.fixture ?? "general-engine-first-run",
-    step: 1,
+    // G-021: step is 1-indexed; step_index is 0-indexed. A multi-step record
+    // sets step = step_index + 1 (GeneralReceipt.step docstring + receipt
+    // schema convention). Single-step callers leave step_index undefined →
+    // (undefined ?? 0) + 1 = 1, byte-identical to the v0.1 single-step
+    // convention. step_index=0 → 1 (unchanged); step_index=N → N+1.
+    step: (input.step_index ?? 0) + 1,
     fixture_status: {
       authoring_state: "engine_generated",
       verification_state: "engine_reproduced_byte_equal",
@@ -2030,6 +2038,22 @@ export function runBatchedGeneralStep(input: BatchedGeneralInput): GeneralReceip
   }
   // 1. Validate batch invariants (will be re-checked by Rule 19 at reconcile time,
   //    but fail early at the engine boundary for clear diagnostics).
+  // G-039: reject batch.size < 1 FIRST. With size 0 the per-sample-runs map is
+  // empty and `perSampleReceipts[0]!` (firstReceipt) derefs undefined later,
+  // yielding a cryptic "Cannot read properties of undefined (reading 'updates')".
+  // A batch must contain at least one sample; fail loudly with a path-naming
+  // message at the boundary instead. (size===1 is the well-defined floor;
+  // larger sizes additionally need reduction !== 'none' — checked below.)
+  if (input.batch.size < 1) {
+    throw new Error(
+      `runBatchedGeneralStep: batch.size must be >= 1 (got ${input.batch.size}). ` +
+        `Hint: a batched step requires at least one sample. A size-0 batch has no ` +
+        `per-sample receipts to reduce, no gradient to apply, and no canonical ` +
+        `first-sample state — there is nothing to verify. Provide at least one ` +
+        `sample in batch.sample_order + per_sample, or use runGeneralStep for a ` +
+        `single unbatched step.`,
+    )
+  }
   if (input.batch.size !== input.batch.sample_order.length) {
     throw new Error(
       `runBatchedGeneralStep: batch.size (${input.batch.size}) != ` +
@@ -2204,7 +2228,9 @@ export function runBatchedGeneralStep(input: BatchedGeneralInput): GeneralReceip
   const receipt: GeneralReceipt = {
     schema_version: firstReceipt.schema_version,
     fixture: input.fixture ?? `batched-${input.batch.size}-sample-step`,
-    step: 1,
+    // G-021: step = step_index + 1 (1-indexed; step_index 0-indexed). Mirrors
+    // runGeneralStep. Single-step/absent step_index → 1 (byte-unchanged).
+    step: (input.step_index ?? 0) + 1,
     fixture_status: firstReceipt.fixture_status,
     metadata: firstReceipt.metadata,
     numeric_policy: firstReceipt.numeric_policy,

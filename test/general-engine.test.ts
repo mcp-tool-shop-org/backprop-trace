@@ -407,3 +407,111 @@ test("G-010: runBatchedGeneralStep accepts a single-sample reduction:'none' batc
     "single-sample reduction:'none' is lossless and must still be accepted",
   )
 })
+
+// ===========================================================================
+// G-021 — receipt.step must equal step_index + 1 (not hardcoded 1)
+//
+// The GeneralReceipt docstring (and the receipt.v0.4.0 schema convention) say
+// multi-step records set step = step_index + 1 (step_index is 0-indexed).
+// runGeneralStep / runBatchedGeneralStep historically hardcoded `step: 1`,
+// which is correct ONLY for the step_index-0 (or step_index-absent) case. A
+// step_index=1 record emitting step=1 mislabels the record's position in the
+// multi-step bundle — a metadata defect on every record after the first.
+//
+// Single-step receipts (step_index absent → 0 + 1 = 1) and the step_index=0
+// case (0 + 1 = 1) stay byte-unchanged; only step_index >= 1 changes.
+//
+// Non-vacuity / mutation that turns these RED again: revert the fix to a
+// literal `step: 1`. The step_index=1 case then emits step=1 and the
+// assertion `step === 2` fails.
+// ===========================================================================
+
+test("G-021: runGeneralStep with step_index=1 emits step=2", () => {
+  const r = runGeneralStep({ ...XOR_INPUT, trace_id: "a".repeat(32), step_index: 1 })
+  assert.strictEqual(
+    r.step,
+    2,
+    "a step_index=1 record must emit step = step_index + 1 = 2 (GeneralReceipt docstring + receipt.v0.4.0 convention)",
+  )
+  // step_index is echoed unchanged (0-indexed); step is 1-indexed.
+  assert.strictEqual(r.step_index, 1, "step_index is echoed verbatim (0-indexed)")
+})
+
+test("G-021: runGeneralStep with step_index=0 emits step=1 (unchanged)", () => {
+  const r = runGeneralStep({ ...XOR_INPUT, trace_id: "a".repeat(32), step_index: 0 })
+  assert.strictEqual(
+    r.step,
+    1,
+    "step_index=0 must emit step=1 (0 + 1) — byte-unchanged from the v0.1 single-step convention",
+  )
+})
+
+test("G-021: runGeneralStep with step_index absent emits step=1 (single-step unchanged)", () => {
+  const r = runGeneralStep(XOR_INPUT)
+  assert.strictEqual(
+    r.step,
+    1,
+    "an engine-authored single-step receipt (step_index absent) must still emit step=1 ((step_index ?? 0) + 1)",
+  )
+})
+
+test("G-021: runBatchedGeneralStep with step_index=3 emits step=4", () => {
+  const r = runBatchedGeneralStep({
+    topology: XOR_INPUT.topology,
+    learning_rate: XOR_INPUT.learning_rate,
+    parameters_before: { ...XOR_INPUT.parameters_before },
+    numeric_policy: XOR_INPUT.numeric_policy,
+    bias_policy: XOR_INPUT.bias_policy,
+    trace_id: "b".repeat(32),
+    step_index: 3,
+    batch: {
+      size: 2,
+      sample_order: ["s0", "s1"],
+      reduction: "mean",
+    },
+    per_sample: {
+      s0: { inputs: { x1: 1, x2: 0 }, targets: { y: 1 } },
+      s1: { inputs: { x1: 0, x2: 1 }, targets: { y: 1 } },
+    },
+  })
+  assert.strictEqual(
+    r.step,
+    4,
+    "a batched step_index=3 record must emit step = step_index + 1 = 4",
+  )
+})
+
+// ===========================================================================
+// G-039 — runBatchedGeneralStep must reject batch.size < 1
+//
+// With size:0 the per-sample-runs map is empty, firstReceipt =
+// perSampleReceipts[0]! derefs undefined → cryptic "Cannot read properties of
+// undefined (reading 'updates')". A clear path-naming boundary error is owed
+// at the top of the function instead.
+//
+// Non-vacuity / mutation that turns this RED again: delete the
+// `if (input.batch.size < 1) throw ...` guard. Without it, size:0 throws the
+// cryptic undefined-deref TypeError (not the clear message), so the
+// message-matching assert.throws fails.
+// ===========================================================================
+
+test("G-039: runBatchedGeneralStep throws a clear error on batch.size = 0", () => {
+  const badBatch: BatchedGeneralInput = {
+    topology: XOR_INPUT.topology,
+    learning_rate: XOR_INPUT.learning_rate,
+    parameters_before: { ...XOR_INPUT.parameters_before },
+    numeric_policy: XOR_INPUT.numeric_policy,
+    bias_policy: XOR_INPUT.bias_policy,
+    batch: {
+      size: 0,
+      sample_order: [],
+      reduction: "mean",
+    },
+    per_sample: {},
+  }
+  assert.throws(
+    () => runBatchedGeneralStep(badBatch),
+    /batch\.size must be >= 1/,
+    "runBatchedGeneralStep must reject batch.size = 0 with a clear path-naming error (not a cryptic undefined deref)",
+  )
+})

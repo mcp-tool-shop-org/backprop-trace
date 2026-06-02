@@ -123,3 +123,65 @@ test("assertTopologyValid throws on a weight that points at a non-existent unit 
     "unit-id-not-in-layer must throw a diagnostic naming the offending unit or to_unit field",
   )
 })
+
+// --- G-020: unique WIRING (not just unique parameter ids) -------------------
+//
+// assertTopologyValid historically enforced unique parameter IDS but said
+// nothing about the (from_unit, to_unit) EDGE the weight occupies. Two
+// distinct-id weights could share the same edge (double-counting that edge in
+// the forward sum, with the update phase writing two parameters for one wire),
+// or a hidden/output unit could receive the wrong NUMBER of incoming weights
+// (a missing or extra wire silently changes the net sum). Both are topology
+// defects the engine would otherwise run on, emitting a wrong-but-self-
+// consistent receipt the reconciler's engine-recompute reproduces (false PASS).
+
+test("assertTopologyValid throws on two weights sharing the same (from_unit,to_unit) edge", () => {
+  const bad = cloneMutable(MAZUR_TOPOLOGY)
+  // w1 is i1->h1, w2 is i2->h1. Repoint w2's from_unit to i1 so BOTH w1 and
+  // w2 occupy the edge i1->h1. Fan-in into h1 stays 2 (w1 + w2), so this is
+  // caught by the duplicate-EDGE check, not the fan-in count check — h1 now
+  // has two wires from i1 and ZERO from i2.
+  const w2 = bad.parameters.find((p: Parameter) => p.id === "w2")
+  assert.ok(w2, "test setup: MAZUR_TOPOLOGY must declare w2")
+  w2!.from_unit = "i1"
+  assert.throws(
+    () => assertTopologyValid(bad as unknown as Topology),
+    /duplicate|same edge|already.*connect|i1.*h1|from_unit.*to_unit/i,
+    "two weights on the same (from_unit,to_unit) edge must throw a wiring-duplication diagnostic",
+  )
+})
+
+test("assertTopologyValid throws when a hidden unit's input fan-in != input_size", () => {
+  const bad = cloneMutable(MAZUR_TOPOLOGY)
+  // Drop w2 (i2->h1) from BOTH parameters[] and parameter_order at the same
+  // index so the projection-equality contract (parameters[i].id ===
+  // parameter_order[i]) stays intact. h1 then receives only w1 (i1->h1) =
+  // fan-in 1, but input_size is 2 — every hidden unit MUST be fed by exactly
+  // input_size incoming weights. No duplicate edge is introduced, so this
+  // isolates the fan-in count invariant.
+  const idx = bad.parameters.findIndex((p: Parameter) => p.id === "w2")
+  assert.ok(idx >= 0, "test setup: MAZUR_TOPOLOGY must declare w2")
+  bad.parameters.splice(idx, 1)
+  bad.parameter_order.splice(bad.parameter_order.indexOf("w2"), 1)
+  assert.throws(
+    () => assertTopologyValid(bad as unknown as Topology),
+    /fan-in|fan_in|input_size|incoming.*weight|expected.*2|h1/i,
+    "a hidden unit fed by fewer than input_size weights must throw a fan-in diagnostic",
+  )
+})
+
+test("assertTopologyValid throws when an output unit's hidden fan-in != hidden_size", () => {
+  const bad = cloneMutable(MAZUR_TOPOLOGY)
+  // Drop w6 (h2->o1) from both arrays at the matching index. o1 then receives
+  // only w5 (h1->o1) = fan-in 1, but hidden_size is 2 — every output unit MUST
+  // be fed by exactly hidden_size incoming weights.
+  const idx = bad.parameters.findIndex((p: Parameter) => p.id === "w6")
+  assert.ok(idx >= 0, "test setup: MAZUR_TOPOLOGY must declare w6")
+  bad.parameters.splice(idx, 1)
+  bad.parameter_order.splice(bad.parameter_order.indexOf("w6"), 1)
+  assert.throws(
+    () => assertTopologyValid(bad as unknown as Topology),
+    /fan-in|fan_in|hidden_size|incoming.*weight|expected.*2|o1/i,
+    "an output unit fed by fewer than hidden_size weights must throw a fan-in diagnostic",
+  )
+})

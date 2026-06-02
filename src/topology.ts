@@ -312,6 +312,24 @@ export function assertTopologyValid(t: Topology): void {
     assertPerNeuronBiasCoverage(t.parameters, "output_bias", t.unit_order.output, "output")
   }
 
+  // 6b (G-020). Unique WIRING + complete fan-in.
+  //
+  // Sections 5/6 above proved every weight's from_unit/to_unit resolve to
+  // declared units in the correct adjacent layers, and that parameter IDS are
+  // unique. They did NOT prove the (from_unit, to_unit) EDGES are unique, nor
+  // that each downstream unit is fed by the right NUMBER of weights. Two
+  // distinct-id weights on the same edge double-count that edge in the forward
+  // net sum (and the update phase writes two parameters for one wire); a unit
+  // with the wrong fan-in silently drops or duplicates a term in its net sum.
+  // Both produce a wrong-but-self-consistent receipt that the reconciler's
+  // engine-recompute reproduces byte-for-byte (a false PASS — the worst defect
+  // class for this verifier), so they are rejected at the topology boundary.
+  //
+  //   (a) no two weight parameters share an edge (from_unit -> to_unit);
+  //   (b) each hidden unit is fed by EXACTLY input_size input_to_hidden weights;
+  //   (c) each output unit is fed by EXACTLY hidden_size hidden_to_output weights.
+  assertUniqueWiringAndFanIn(t)
+
   // 7. Activations
   const supportedHiddenActivations: readonly string[] = ["sigmoid", "identity", "relu"]
   const supportedOutputActivations: readonly string[] = ["sigmoid", "identity", "relu", "softmax"]
@@ -452,6 +470,90 @@ function assertPerNeuronBiasCoverage(
       throw new Error(
         `Topology: per_neuron bias coverage error — ${layerName} unit '${u}' has no ${role} parameter serving it. ` +
           `Hint: per_neuron means every unit in unit_order.${layerName} MUST appear in exactly one ${role} parameter's applies_to_units.`,
+      )
+    }
+  }
+}
+
+/**
+ * G-020 — wiring uniqueness + fan-in completeness.
+ *
+ * Runs after the per-parameter structural checks (which already guaranteed
+ * every weight resolves to declared units in the correct adjacent layers).
+ * Enforces three invariants the id-uniqueness + resolvability checks miss:
+ *
+ *   (a) No two weight parameters occupy the same directed edge
+ *       (from_unit -> to_unit). A duplicate edge double-counts that wire in
+ *       the forward net sum and the update phase writes two parameters for a
+ *       single connection.
+ *   (b) Each hidden unit is fed by EXACTLY `input_size` input_to_hidden
+ *       weights (a fully-connected input->hidden layer; the only topology
+ *       family the engine's findWeight-per-(input,hidden) forward loop
+ *       supports — a missing wire would make findWeight throw mid-forward,
+ *       and an extra one is already caught by (a)).
+ *   (c) Each output unit is fed by EXACTLY `hidden_size` hidden_to_output
+ *       weights (fully-connected hidden->output layer; same rationale).
+ *
+ * Throws on the first violation with a path-naming Error.
+ */
+function assertUniqueWiringAndFanIn(t: Topology): void {
+  // (a) Unique edges. Key on the explicit pair (with a NUL separator so unit
+  // ids containing the separator can't collide). Track BOTH endpoints in the
+  // error for a diagnostic that names the offending wire.
+  const seenEdges = new Map<string, ParameterId>()
+  // (b)/(c) Fan-in tallies keyed by downstream unit.
+  const hiddenFanIn = new Map<UnitId, number>()
+  const outputFanIn = new Map<UnitId, number>()
+  for (const u of t.unit_order.hidden) hiddenFanIn.set(u, 0)
+  for (const u of t.unit_order.output) outputFanIn.set(u, 0)
+
+  for (const p of t.parameters) {
+    if (p.role !== "input_to_hidden_weight" && p.role !== "hidden_to_output_weight") {
+      continue
+    }
+    // from_unit/to_unit guaranteed present + resolvable by sections 5/6.
+    const edgeKey = `${p.from_unit!} ${p.to_unit!}`
+    const prior = seenEdges.get(edgeKey)
+    if (prior !== undefined) {
+      throw new Error(
+        `Topology: weight parameters '${prior}' and '${p.id}' share the same edge ` +
+          `(from_unit='${p.from_unit}', to_unit='${p.to_unit}'). ` +
+          `Hint: each directed (from_unit -> to_unit) connection MUST be carried by ` +
+          `exactly one weight parameter — a duplicate edge double-counts that wire in ` +
+          `the forward net sum and emits two updates for one connection.`,
+      )
+    }
+    seenEdges.set(edgeKey, p.id)
+    if (p.role === "input_to_hidden_weight") {
+      hiddenFanIn.set(p.to_unit!, hiddenFanIn.get(p.to_unit!)! + 1)
+    } else {
+      outputFanIn.set(p.to_unit!, outputFanIn.get(p.to_unit!)! + 1)
+    }
+  }
+
+  // (b) Every hidden unit fed by exactly input_size weights.
+  for (const u of t.unit_order.hidden) {
+    const fanIn = hiddenFanIn.get(u)!
+    if (fanIn !== t.input_size) {
+      throw new Error(
+        `Topology: hidden unit '${u}' has input fan-in ${fanIn} but input_size is ${t.input_size}. ` +
+          `Hint: the engine forward pass requires a fully-connected input->hidden layer — ` +
+          `every hidden unit MUST be fed by exactly input_size input_to_hidden weights ` +
+          `(one from each input unit). Missing or extra incoming weights silently change ` +
+          `the unit's net sum.`,
+      )
+    }
+  }
+  // (c) Every output unit fed by exactly hidden_size weights.
+  for (const u of t.unit_order.output) {
+    const fanIn = outputFanIn.get(u)!
+    if (fanIn !== t.hidden_size) {
+      throw new Error(
+        `Topology: output unit '${u}' has hidden fan-in ${fanIn} but hidden_size is ${t.hidden_size}. ` +
+          `Hint: the engine forward pass requires a fully-connected hidden->output layer — ` +
+          `every output unit MUST be fed by exactly hidden_size hidden_to_output weights ` +
+          `(one from each hidden unit). Missing or extra incoming weights silently change ` +
+          `the unit's net sum.`,
       )
     }
   }

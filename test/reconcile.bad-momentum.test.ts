@@ -47,7 +47,9 @@ function discoverMomentumFixtures(): MomentumFixture[] {
         if (m) primaryRule = parseInt(m[1]!, 10)
       }
     }
-    if (primaryRule < 0) continue
+    // G-026: do NOT silently drop a fixture whose meta lacks a parseable rule
+    // tag. Retain it with primaryRule = -1 so the per-fixture test below fails
+    // LOUDLY (an untagged adversarial fixture must break the build, not vanish).
     const path = resolve(FIXTURES_DIR, file)
     const bytes = readFileSync(path, "utf-8").trim()
     const isMultiStep = bytes.split("\n").length > 1
@@ -69,6 +71,16 @@ if (fixtures.length === 0) {
 
 for (const fix of fixtures) {
   test(`${fix.filename}: reconciler returns ok=false and primary rule (Rule ${fix.primaryRule}) fires`, () => {
+    // G-026: an untagged fixture (no parseable Rule N in its meta) must FAIL,
+    // not be skipped — otherwise a broken/renamed meta lets a fixture pass
+    // vacuously. The discovery step keeps untagged fixtures with primaryRule=-1
+    // precisely so this assertion can fire.
+    assert.ok(
+      fix.primaryRule >= 0,
+      `fixture ${fix.filename} has no rule tag — its sibling .meta.json must declare ` +
+        `reconciliation_check_targeted_first: "Rule N: ..." so the doctrine test can verify ` +
+        `the rule actually fires. An untagged adversarial fixture must break the build, not vanish.`,
+    )
     const bytes = readFileSync(resolve(FIXTURES_DIR, fix.filename), "utf-8")
     let receipts: unknown[]
     if (fix.isMultiStep) {
