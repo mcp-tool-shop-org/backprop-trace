@@ -524,7 +524,7 @@ export type GeneralReceipt = {
   // based on optimizer_config.name (adam/adamw → 0.5.0) + topology.loss
   // + (source_framework presence) inside runGeneralStep so legacy
   // callers don't need to pass it explicitly.
-  schema_version: "0.2.0" | "0.3.0" | "0.4.0" | "0.5.0" | "0.6.0" | "0.7.0"
+  schema_version: "0.2.0" | "0.3.0" | "0.4.0" | "0.5.0" | "0.6.0" | "0.7.0" | "0.8.0"
   fixture: string
   // step is integer ≥1 per receipt.v0.4.0 schema. Engine-authored single-step
   // receipts hardcode step:1. v0.8 multi-step observer-mode receipts set
@@ -754,7 +754,9 @@ function assertOptimizerConfig(input: GeneralInput): void {
   if (oc.name === "sgd") {
     // SGD with optimizer_config explicitly set — allowed; engine still takes
     // the SGD path and emits no optimizer_config block in the receipt to
-    // preserve v0.1-v0.9.0 byte-equality.
+    // preserve v0.1-v0.9.0 byte-equality — UNLESS weight_decay > 0, which
+    // activates the v0.13 coupled-L2 path (a v0.8.0 receipt carrying
+    // optimizer_config).
     if (input.optimizer_state_before !== undefined) {
       throw new Error(
         `runGeneralStep: optimizer_state_before is set but optimizer_config.name === "sgd". ` +
@@ -766,6 +768,34 @@ function assertOptimizerConfig(input: GeneralInput): void {
         `runGeneralStep: optimizer_config.learning_rate (${oc.learning_rate}) ` +
           `!= input.learning_rate (${input.learning_rate}). Both must agree.`,
       )
+    }
+    // v0.13 — SGD coupled-L2 weight decay (the documented Rule 7 third branch).
+    // PyTorch torch.optim.SGD(weight_decay=lambda) folds the decay into the
+    // GRADIENT before the update: d_p = grad_ascent + wd*param. In the engine's
+    // DESCENT-direction storage this becomes grad_eff = gradient - wd*param.
+    // weight_decay >= 0 finite is required; weight_decay === 0 collapses
+    // byte-identically to the no-decay path (no optimizer_config emitted).
+    // DISTINCT from AdamW's DECOUPLED weight decay (applied to the parameter at
+    // the update step, never entering the gradient).
+    if (oc.weight_decay !== undefined) {
+      if (!Number.isFinite(oc.weight_decay) || oc.weight_decay < 0) {
+        throw new Error(
+          `runGeneralStep: optimizer_config.weight_decay must be a non-negative finite number for ` +
+            `name === 'sgd' (got ${String(oc.weight_decay)}). PyTorch torch.optim.SGD(weight_decay=lambda) ` +
+            `with lambda >= 0 applies coupled L2 (grad' = grad + lambda*theta folded into the gradient). ` +
+            `weight_decay === 0 collapses byte-identically to the no-decay path.`,
+        )
+      }
+    }
+    // Adam/momentum fields MUST be absent on plain sgd (cross-validation).
+    for (const k of ["beta1", "beta2", "epsilon", "t", "momentum", "nesterov", "dampening"] as const) {
+      if (oc[k] !== undefined) {
+        throw new Error(
+          `runGeneralStep: optimizer_config.${k} is not a plain-sgd field and MUST be absent when ` +
+            `name === 'sgd' (got ${String(oc[k])}). Plain SGD accepts only learning_rate and ` +
+            `(v0.13) weight_decay for coupled L2.`,
+        )
+      }
     }
     return
   }
@@ -835,18 +865,26 @@ function assertOptimizerConfig(input: GeneralInput): void {
           `Hint: set dampening: 0 (or omit) when nesterov: true, OR set nesterov: false when dampening > 0.`,
       )
     }
-    // SGD coupled L2 weight decay deferred to v0.10 — needs Rules 6/7 third
-    // branch distinct from AdamW's decoupled. Loud rejection at the engine
-    // boundary; schema also rejects at the if/then level.
+    // v0.13 — SGD coupled-L2 weight decay (the documented Rule 7 third branch).
+    // PyTorch torch.optim.SGD(weight_decay=lambda) applies COUPLED L2: the decay
+    // folds into the GRADIENT before the momentum buffer (d_p = grad_ascent +
+    // wd*param, THEN buf = mu*buf + (1-dampening)*d_p). In the engine's
+    // DESCENT-direction storage this is grad_eff = gradient - wd*param, fed into
+    // Rule 21a's buffer recurrence. DISTINCT from AdamW's DECOUPLED weight decay
+    // (Rules 6/7 AdamW branch), which applies (1 - lr*wd) to the parameter at
+    // the update step and NEVER enters the gradient/buffer — conflating them is
+    // the exact error the AdamW docs warn against. weight_decay >= 0 finite;
+    // weight_decay === 0 collapses byte-identically to the no-decay path.
     if (oc.weight_decay !== undefined) {
-      throw new Error(
-        `runGeneralStep: optimizer_config.weight_decay is NOT supported with name === 'sgd_momentum' in v0.9.2 ` +
-          `(got ${String(oc.weight_decay)}). PyTorch's torch.optim.SGD(weight_decay=lambda) applies COUPLED L2 ` +
-          `(g_t ← g_t + lambda * theta_t before the buffer update) — distinct from AdamW's DECOUPLED weight decay ` +
-          `(Rules 6/7 AdamW branch). v0.9.2 defers SGD coupled L2 to v0.10 because it requires a third Rules 6/7 ` +
-          `branch + touches Rule 4's factor narrative. Hint: defer to v0.10 for SGD coupled L2 support, OR ` +
-          `omit weight_decay for plain sgd_momentum.`,
-      )
+      if (!Number.isFinite(oc.weight_decay) || oc.weight_decay < 0) {
+        throw new Error(
+          `runGeneralStep: optimizer_config.weight_decay must be a non-negative finite number for ` +
+            `name === 'sgd_momentum' (got ${String(oc.weight_decay)}). PyTorch torch.optim.SGD(weight_decay=lambda) ` +
+            `with lambda >= 0 applies COUPLED L2 — the decay folds into the gradient before the momentum buffer ` +
+            `(grad' = grad + lambda*theta), DISTINCT from AdamW's DECOUPLED weight decay. weight_decay === 0 ` +
+            `collapses byte-identically to the no-decay path.`,
+        )
+      }
     }
     // Adam fields MUST be absent on sgd_momentum (cross-validation).
     for (const k of ["beta1", "beta2", "epsilon", "t"] as const) {
@@ -1138,12 +1176,33 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
   const isAdamFamily = isAdam || isAdamW
   const isSgdMomentum = oc?.name === "sgd_momentum"
   const isOptimizerWithState = isAdamFamily || isSgdMomentum
+  // v0.13 — SGD coupled-L2 weight-decay coefficient (the documented Rule 7
+  // third branch). Applies ONLY to the SGD family (name "sgd" or "sgd_momentum").
+  // Adam/AdamW carry weight_decay too but it means DECOUPLED decay there
+  // (handled below in the AdamW parameter step), NOT coupled L2 — never fold it
+  // into the SGD gradient. Default 0 (no decay) preserves byte-equality.
+  const sgdFamilyWeightDecay =
+    (oc?.name === "sgd" || oc?.name === "sgd_momentum") &&
+    typeof oc.weight_decay === "number"
+      ? oc.weight_decay
+      : 0
   /**
    * Compute (update, weight_after, optimizer) for one parameter. Dispatches
    * on optimizer_config.name. Shared by weight-update branches and the
    * per-neuron-bias-sgd branch so all updates pick up Adam state uniformly.
    *
-   * SGD path: update = lr * gradient ; weight_after = weight_before + update.
+   * v0.13 SGD COUPLED L2 (sgd / sgd_momentum with weight_decay > 0): the decay
+   * folds into the gradient BEFORE the buffer/update. PyTorch's ascent form
+   * `d_p = grad_ascent + wd*param` becomes, in the engine's descent-direction
+   * storage, `grad_eff = gradient - wd*param` (the sign flips because the
+   * engine stores the loss gradient in DESCENT direction). The receipt's stored
+   * `gradient` field stays the BASE loss gradient (= product(factors), so Rule 4
+   * is untouched); the decay enters only the update/buffer derivation. The
+   * reconciler re-derives `grad_eff = gradient - wd*param` independently (Rule 7
+   * third branch). weight_decay === 0 makes grad_eff === gradient — byte-equal
+   * to the no-decay path.
+   *
+   * SGD path: update = lr * grad_eff ; weight_after = weight_before + update.
    * Adam path: m_after = beta1*m_before + (1-beta1)*g ; v_after = beta2*v_before + (1-beta2)*g²
    *   m_hat = m_after / (1 - beta1^t) ; v_hat = v_after / (1 - beta2^t)
    *   update = lr * m_hat / (sqrt(v_hat) + epsilon)  // descent direction
@@ -1162,7 +1221,12 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
     factors: NamedFactor[],
   ): { update: number; wAfter: number; optimizer: Optimizer } => {
     if (!isOptimizerWithState) {
-      const update = lr * gradient
+      // v0.13 — coupled L2: fold wd*param into the effective descent gradient
+      // BEFORE the update. grad_eff === gradient when weight_decay === 0
+      // (byte-equal to the no-decay path). The stored `gradient` field (and
+      // the factors) remain the BASE loss gradient — Rule 4 is untouched.
+      const gradEff = gradient - sgdFamilyWeightDecay * wBefore
+      const update = lr * gradEff
       return {
         update,
         wAfter: wBefore + update,
@@ -1220,12 +1284,23 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
             `not AdamState ({m, v}).`,
         )
       }
+      // v0.13 — coupled L2: fold wd*param into the effective descent gradient
+      // BEFORE the buffer recurrence (PyTorch d_p = grad + wd*param THEN
+      // buf = mu*buf + (1-dampening)*d_p). grad_eff === gradient when
+      // weight_decay === 0 (byte-equal to the no-decay path). The stored
+      // `gradient` field + factors stay the BASE loss gradient — Rule 4 is
+      // untouched; the decay enters via the buffer/update only.
+      const gradEff = gradient - sgdFamilyWeightDecay * wBefore
       // Rule 21a: buffer recurrence (widened for dampening; collapses to
-      // v0.9.2's classical form when tau=0).
-      const bufferAfter = mu * bufferBefore + (1 - tau) * gradient
+      // v0.9.2's classical form when tau=0). Uses grad_eff so coupled L2 enters
+      // the buffer and is rescaled by momentum (the defining property of
+      // coupled L2 vs AdamW's decoupled decay).
+      const bufferAfter = mu * bufferBefore + (1 - tau) * gradEff
       // Rule 21b: effective gradient direction (Nesterov branch vs classical).
+      // The Nesterov lookahead uses grad_eff (the decay-augmented gradient),
+      // mirroring PyTorch's d_p in the nesterov branch.
       const effective = useNesterov
-        ? gradient + mu * bufferAfter
+        ? gradEff + mu * bufferAfter
         : bufferAfter
       // Rule 21c: parameter update (always lr * effective; descent direction).
       const update = lr * effective
@@ -1238,9 +1313,10 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
           learning_rate: lr,
           // Factors stay SGD-shape [signal, upstream] (or [signal] for bias).
           // Rule 4 (gradient == product(factors)) continues to hold — gradient
-          // is the descent-direction gradient at this step; momentum +
-          // Nesterov dynamics live in buffer_before/buffer_after + nesterov
-          // flag, NOT in the factor decomposition.
+          // is the BASE descent-direction loss gradient at this step; momentum +
+          // Nesterov + coupled-L2 dynamics live in buffer_before/buffer_after +
+          // nesterov flag + optimizer_config.weight_decay, NOT in the factor
+          // decomposition.
           factors,
           product_order: "left_to_right",
           state_before: { buffer: bufferBefore },
@@ -1863,19 +1939,32 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
   // sgd_momentum (default nesterov=false, dampening=0) STAYS at "0.6.0" for
   // v0.9.2 byte-equality preservation. The version reflects the
   // optimizer-with-state shape + the smallest schema that accepts it.
+  // v0.13: "0.8.0" for SGD-family receipts that carry coupled-L2 weight decay
+  // (name "sgd" or "sgd_momentum" with weight_decay > 0 — the documented Rule 7
+  // third branch). weight_decay === 0 collapses to the prior version (byte-equal
+  // to the no-decay path): plain sgd → 0.2.0/0.3.0 with NO optimizer_config,
+  // classical sgd_momentum → 0.6.0, nesterov/dampened sgd_momentum → 0.7.0.
+  // This bump is FORCED — v0.7.0/v0.6.0 schemas reject weight_decay for the SGD
+  // family at the schema level.
+  const usesCoupledL2 =
+    (oc?.name === "sgd" || oc?.name === "sgd_momentum") &&
+    typeof oc.weight_decay === "number" &&
+    oc.weight_decay !== 0
   const usesNesterovOrDampening =
     isSgdMomentum &&
     ((oc?.nesterov === true) ||
       (oc?.dampening !== undefined && oc.dampening !== 0))
-  const schemaVersionForReceipt: "0.2.0" | "0.3.0" | "0.5.0" | "0.6.0" | "0.7.0" = usesNesterovOrDampening
-    ? "0.7.0"
-    : isSgdMomentum
-      ? "0.6.0"
-      : isAdamFamily
-        ? "0.5.0"
-        : t.loss === "cross_entropy_softmax" || t.activation_output === "softmax"
-          ? "0.3.0"
-          : "0.2.0"
+  const schemaVersionForReceipt: "0.2.0" | "0.3.0" | "0.5.0" | "0.6.0" | "0.7.0" | "0.8.0" = usesCoupledL2
+    ? "0.8.0"
+    : usesNesterovOrDampening
+      ? "0.7.0"
+      : isSgdMomentum
+        ? "0.6.0"
+        : isAdamFamily
+          ? "0.5.0"
+          : t.loss === "cross_entropy_softmax" || t.activation_output === "softmax"
+            ? "0.3.0"
+            : "0.2.0"
   const receipt: GeneralReceipt = {
     schema_version: schemaVersionForReceipt,
     fixture: input.fixture ?? "general-engine-first-run",
@@ -1922,6 +2011,9 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
   // passed in via the input).
   // v0.9.2 — same emission for sgd_momentum (momentum hyperparameter; no
   // nesterov/dampening/weight_decay in v0.9.2 — reserved fields not emitted).
+  // v0.13 — emit weight_decay (> 0) for the SGD family (coupled L2); plain SGD
+  // gains an optimizer_config block ONLY when weight_decay > 0. weight_decay === 0
+  // emits NOTHING new (byte-equal to the no-decay path).
   if (isAdamFamily) {
     const cfg = oc!
     const ocOut: OptimizerConfig = {
@@ -1941,6 +2033,11 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
       learning_rate: cfg.learning_rate,
       momentum: cfg.momentum,
     }
+    // v0.13 — emit weight_decay only when > 0 (coupled L2; the Rule 7 third
+    // branch). Absence === 0 (no decay) preserves v0.9.2/v0.9.3 byte-equality.
+    if (typeof cfg.weight_decay === "number" && cfg.weight_decay !== 0) {
+      ocOut.weight_decay = cfg.weight_decay
+    }
     // v0.9.3 — emit nesterov only when explicitly true (absence === false
     // per default semantics; preserves v0.9.2 classical-sgd_momentum
     // byte-equality). Emit dampening only when > 0 (absence === 0 per
@@ -1950,6 +2047,21 @@ export function runGeneralStep(input: GeneralInput): GeneralReceipt {
       ocOut.dampening = cfg.dampening
     }
     receipt.optimizer_config = ocOut
+  } else if (
+    oc?.name === "sgd" &&
+    typeof oc.weight_decay === "number" &&
+    oc.weight_decay !== 0
+  ) {
+    // v0.13 — plain SGD + coupled L2: emit an optimizer_config block carrying
+    // the weight_decay hyperparameter. This is NEW for plain SGD (the no-decay
+    // path emits no block). Required so the reconciler's Rule 7 third branch can
+    // read weight_decay to re-derive grad_eff = gradient - wd*param. weight_decay
+    // === 0 falls through to NO block (byte-equal to the no-decay path).
+    receipt.optimizer_config = {
+      name: "sgd",
+      learning_rate: oc.learning_rate,
+      weight_decay: oc.weight_decay,
+    }
   }
   if (input.trace_id !== undefined) receipt.trace_id = input.trace_id
   if (input.step_index !== undefined) receipt.step_index = input.step_index

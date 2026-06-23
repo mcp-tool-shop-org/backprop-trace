@@ -104,6 +104,10 @@ opts = {
     "sgd": lambda: torch.optim.SGD(model.parameters(), lr=0.5),
     "sgd_momentum": lambda: torch.optim.SGD(model.parameters(), lr=0.5, momentum=0.9),
     "sgd_nesterov": lambda: torch.optim.SGD(model.parameters(), lr=0.5, momentum=0.9, nesterov=True),
+    # v0.13 — SGD coupled L2 (the Rule 7 third branch): weight_decay folds into
+    # the gradient before the update/buffer. DISTINCT from AdamW's decoupled decay.
+    "sgd_wd": lambda: torch.optim.SGD(model.parameters(), lr=0.5, weight_decay=0.01),
+    "sgd_momentum_wd": lambda: torch.optim.SGD(model.parameters(), lr=0.5, momentum=0.9, weight_decay=0.01),
     "adam": lambda: torch.optim.Adam(model.parameters(), lr=0.1),
     "adamw": lambda: torch.optim.AdamW(model.parameters(), lr=0.1, weight_decay=0.05),
 }
@@ -184,6 +188,9 @@ const SUPPORTED: Case[] = [
   { name: "sgd", steps: 1, softmax: true }, // softmax+CE path
   { name: "sgd_momentum", steps: 2, softmax: false },
   { name: "sgd_nesterov", steps: 2, softmax: false },
+  // v0.13 — SGD coupled L2 (the documented Rule 7 third branch).
+  { name: "sgd_wd", steps: 1, softmax: false },
+  { name: "sgd_momentum_wd", steps: 2, softmax: false },
   { name: "adam", steps: 2, softmax: false },
   { name: "adamw", steps: 2, softmax: false },
 ]

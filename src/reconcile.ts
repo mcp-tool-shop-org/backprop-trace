@@ -2665,6 +2665,11 @@ function checkRule5(
   recordFailure: (rule: number, parameter_id: string | undefined) => void,
   priorFailureRule: (parameter_id: string | undefined, candidates: readonly number[]) => number | undefined,
 ): void {
+  // v0.13 — SGD coupled-L2 weight decay (Rule 7 third branch). For plain SGD
+  // (name === "sgd") with optimizer_config.weight_decay > 0, the update folds
+  // the decay into the effective descent gradient: grad_eff = gradient - wd*param.
+  // wd === 0 (or absent / non-sgd) → no change, byte-equal to the no-decay path.
+  const coupledWd = sgdFamilyCoupledL2WeightDecay(r)
   for (let i = 0; i < r.updates.length; i++) {
     const update = r.updates[i]!
     // v0.9.1 — Rule 5 GATED OFF for non-SGD optimizers (Adam/AdamW). The
@@ -2675,7 +2680,8 @@ function checkRule5(
     // dispatch would either dilute its single-equation trust narrative
     // or produce false-positive failures. Per user lock: "Rule 5: gate
     // it off for non-SGD. Do not force Adam through the SGD update
-    // equation."
+    // equation." sgd_momentum is handled by Rule 21 (incl. its own
+    // coupled-L2 fold), so it is also skipped here.
     const optimizerName = (update as { optimizer?: { name?: unknown } }).optimizer?.name
     if (optimizerName !== undefined && optimizerName !== "sgd") {
       continue
@@ -2686,7 +2692,12 @@ function checkRule5(
     // root cause via cascade_of_rule.
     const lr = update.optimizer.learning_rate
     const grad = update.gradient
-    const recomputed = lr * grad
+    // v0.13 — coupled L2: grad_eff = gradient - wd*weight_before. The stored
+    // `gradient` field is the BASE loss gradient (Rule 4 checks it against the
+    // factors); the decay enters only the update derivation here. grad_eff ===
+    // grad when coupledWd === 0 (byte-equal to the no-decay path).
+    const gradEff = grad - coupledWd * update.weight_before
+    const recomputed = lr * gradEff
     const stored = update.update
     const fieldPath = `updates[${i}].update`
     const check = applyToleranceCheck(recomputed, stored, tolerance)
@@ -4263,6 +4274,8 @@ function checkRule14EngineRecomputeDifferential(
         // v0.9.3 — forward nesterov + dampening through Rule 14's engine
         // recompute so the differential check sees the same configuration
         // the receipt's update was computed under.
+        // v0.13 — forward weight_decay (coupled L2) too, so the engine recompute
+        // folds the same decay into the buffer/update the receipt claims.
         const momentumInput: GeneralInput = {
           ...baseInput,
           optimizer_config: {
@@ -4273,10 +4286,32 @@ function checkRule14EngineRecomputeDifferential(
             ...(typeof oc.dampening === "number" && oc.dampening !== 0
               ? { dampening: oc.dampening }
               : {}),
+            ...(typeof oc.weight_decay === "number" && oc.weight_decay !== 0
+              ? { weight_decay: oc.weight_decay }
+              : {}),
           },
           optimizer_state_before: stateBefore,
         }
         engineReceipt = runGeneralStep(momentumInput)
+      } else if (
+        oc &&
+        oc.name === "sgd" &&
+        typeof oc.weight_decay === "number" &&
+        oc.weight_decay !== 0
+      ) {
+        // v0.13 — plain SGD coupled L2: forward weight_decay through the engine
+        // recompute so the differential check folds the same decay into the
+        // update the receipt claims. weight_decay === 0 falls through to the
+        // plain baseInput path (byte-equal to the no-decay recompute).
+        const sgdCoupledInput: GeneralInput = {
+          ...baseInput,
+          optimizer_config: {
+            name: "sgd",
+            learning_rate: oc.learning_rate ?? r.learning_rate,
+            weight_decay: oc.weight_decay,
+          },
+        }
+        engineReceipt = runGeneralStep(sgdCoupledInput)
       } else {
         engineReceipt = runGeneralStep(baseInput)
       }
@@ -5596,6 +5631,39 @@ function isAdamFamilyUpdate(u: Receipt["updates"][number]): boolean {
 }
 
 /**
+ * v0.13 — SGD coupled-L2 weight-decay coefficient (the documented Rule 7 third
+ * branch). Returns the top-level optimizer_config.weight_decay ONLY when the
+ * optimizer is the SGD family ("sgd" or "sgd_momentum") and weight_decay is a
+ * non-negative finite number; otherwise 0 (no coupled L2).
+ *
+ * Coupled L2 (PyTorch torch.optim.SGD(weight_decay=lambda)) folds the decay
+ * into the GRADIENT before the buffer/update. The receipt's stored `gradient`
+ * is the BASE loss gradient (Rule 4 checks gradient == product(factors), so
+ * the decay is NOT in the factors). The reconciler re-derives the effective
+ * descent gradient `grad_eff = gradient - wd*param` here and feeds it into
+ * Rules 5 (plain sgd) and 21a/21b/21c (sgd_momentum). The sign is MINUS
+ * because the engine stores the loss gradient in DESCENT direction, the
+ * negation of PyTorch's ascent `d_p += wd*param`.
+ *
+ * This is DISTINCT from AdamW's DECOUPLED weight decay (Rule 6/7 AdamW branch),
+ * which applies (1 - lr*wd) to the parameter at the update step and NEVER
+ * enters the gradient/buffer. Adam/AdamW carry weight_decay too but with the
+ * decoupled meaning — this helper returns 0 for them, so the coupled-L2
+ * gradient fold never fires on the Adam family.
+ *
+ * Returns 0 (and never re-derives) when weight_decay is absent or 0, so
+ * existing no-decay SGD-family receipts reconcile byte-equivalently.
+ */
+function sgdFamilyCoupledL2WeightDecay(r: Receipt): number {
+  const oc = readOptimizerConfig(r)
+  if (!oc) return 0
+  if (oc.name !== "sgd" && oc.name !== "sgd_momentum") return 0
+  const wd = oc.weight_decay
+  if (typeof wd !== "number" || !Number.isFinite(wd) || wd < 0) return 0
+  return wd
+}
+
+/**
  * v0.9.2 — true iff the update's optimizer.name is "sgd_momentum"
  * (classical PyTorch-style SGD momentum; Nesterov reserved for v0.9.3).
  */
@@ -5811,18 +5879,27 @@ function checkRule20OptimizerStateShape(
           `Sutskever et al. 2013 ICML §2 Nesterov lookahead derivation assumes an undamped buffer.`,
       })
     }
-    // SGD coupled L2 weight decay deferred to v0.10.
+    // v0.13 — SGD coupled L2 weight decay (the documented Rule 7 third branch).
+    // weight_decay is OPTIONAL for sgd_momentum; when present it must be a
+    // non-negative finite number (PyTorch torch.optim.SGD(weight_decay=lambda),
+    // lambda >= 0). Coupled L2 folds the decay into the gradient before the
+    // momentum buffer — DISTINCT from AdamW's DECOUPLED weight decay. The actual
+    // recurrence + update check (with grad_eff = gradient - wd*param) is Rule 21;
+    // Rule 20 only validates the hyperparameter shape here.
     if (oc.weight_decay !== undefined) {
-      failures.push({
-        rule: 20,
-        field_path: "optimizer_config.weight_decay",
-        stored: typeof oc.weight_decay === "number" ? oc.weight_decay : 0,
-        recomputed: 0, delta: 0, tolerance: 0,
-        message:
-          `Rule 20: optimizer_config.weight_decay is NOT supported with name === 'sgd_momentum' in v0.9.2 ` +
-          `(got ${String(oc.weight_decay)}). PyTorch's torch.optim.SGD(weight_decay=lambda) applies COUPLED ` +
-          `L2 — distinct from AdamW's DECOUPLED weight decay. v0.9.2 defers SGD coupled L2 to v0.10.`,
-      })
+      if (typeof oc.weight_decay !== "number" || !Number.isFinite(oc.weight_decay) || oc.weight_decay < 0) {
+        failures.push({
+          rule: 20,
+          field_path: "optimizer_config.weight_decay",
+          stored: typeof oc.weight_decay === "number" ? oc.weight_decay : 0,
+          recomputed: 0, delta: 0, tolerance: 0,
+          message:
+            `Rule 20: optimizer_config.weight_decay must be a non-negative finite number for ` +
+            `name === 'sgd_momentum' (got ${String(oc.weight_decay)}). PyTorch torch.optim.SGD(weight_decay=lambda) ` +
+            `with lambda >= 0 applies COUPLED L2 (folded into the gradient before the momentum buffer) — ` +
+            `DISTINCT from AdamW's DECOUPLED weight decay. weight_decay === 0 collapses to the no-decay path.`,
+        })
+      }
     }
   }
   // (c) per-update state_before + state_after presence + finiteness — dispatch on optimizer family.
@@ -5964,6 +6041,13 @@ function checkRule21SgdMomentumRecurrence(
   // exactly when dampening=0 + nesterov=false (preserves byte-equality).
   const tau = typeof oc.dampening === "number" ? oc.dampening : 0
   const useNesterov = oc.nesterov === true
+  // v0.13 — SGD coupled-L2 weight decay (Rule 7 third branch). When
+  // optimizer_config.weight_decay > 0, the decay folds into the effective
+  // descent gradient BEFORE the buffer recurrence (PyTorch d_p = grad + wd*param
+  // THEN buf = mu*buf + (1-dampening)*d_p). grad_eff = gradient - wd*param
+  // (minus because the engine stores the loss gradient in descent direction).
+  // coupledWd === 0 (or absent) → grad_eff === gradient, byte-equal to no-decay.
+  const coupledWd = sgdFamilyCoupledL2WeightDecay(r)
   for (let i = 0; i < r.updates.length; i += 1) {
     const u = r.updates[i]!
     if (!isSgdMomentumUpdate(u)) continue
@@ -5979,13 +6063,17 @@ function checkRule21SgdMomentumRecurrence(
     if (typeof opt.state_after.buffer !== "number") continue // Rule 20 fired
     const lr = opt.learning_rate
     const grad = u.gradient
+    // v0.13 — effective descent gradient with coupled L2 folded in. Used by
+    // 21a (buffer), 21b (effective), 21c (update). grad_eff === grad when
+    // coupledWd === 0 (byte-equal to the no-decay path).
+    const gradEff = grad - coupledWd * u.weight_before
     const bufBefore = opt.state_before.buffer
     const bufAfter = opt.state_after.buffer
     //
-    // 21a — buffer recurrence (widened for dampening):
-    //   buffer_after == momentum * buffer_before + (1 - dampening) * gradient
+    // 21a — buffer recurrence (widened for dampening; coupled L2 in grad_eff):
+    //   buffer_after == momentum * buffer_before + (1 - dampening) * grad_eff
     //
-    const expectedBufAfter = mu * bufBefore + (1 - tau) * grad
+    const expectedBufAfter = mu * bufBefore + (1 - tau) * gradEff
     const check21a = applyToleranceCheck(expectedBufAfter, bufAfter, tolerance)
     if (!check21a.ok) {
       failures.push({
@@ -6010,16 +6098,17 @@ function checkRule21SgdMomentumRecurrence(
       continue // 21a broken — skip 21b/21c on this update
     }
     //
-    // 21b — effective gradient direction:
-    //   effective == (gradient + momentum * buffer_after)  if nesterov === true
+    // 21b — effective gradient direction (coupled L2 in grad_eff for Nesterov):
+    //   effective == (grad_eff + momentum * buffer_after)  if nesterov === true
     //   effective == buffer_after                          otherwise
     //
     // `effective` is DERIVED (never stored on receipt). We back-compute it
     // from the stored update via `effective = update / lr` and compare to
     // the formula-expected value. Diagnostically clean: a classical-vs-
-    // Nesterov confusion bug surfaces precisely at 21b.
+    // Nesterov confusion bug surfaces precisely at 21b. grad_eff === grad when
+    // coupledWd === 0 (byte-equal to the no-decay path).
     //
-    const expectedEffective = useNesterov ? grad + mu * bufAfter : bufAfter
+    const expectedEffective = useNesterov ? gradEff + mu * bufAfter : bufAfter
     const storedEffective = u.update / lr
     const check21b = applyToleranceCheck(expectedEffective, storedEffective, tolerance)
     if (!check21b.ok) {
@@ -6027,8 +6116,8 @@ function checkRule21SgdMomentumRecurrence(
         ? "Nesterov (lookahead) — effective == gradient + momentum * buffer_after"
         : "classical — effective == buffer_after"
       const otherVariantHint = useNesterov
-        ? `${grad + mu * bufAfter} (Nesterov, declared) vs ${bufAfter} (classical, not declared)`
-        : `${bufAfter} (classical, declared) vs ${grad + mu * bufAfter} (Nesterov, not declared)`
+        ? `${gradEff + mu * bufAfter} (Nesterov, declared) vs ${bufAfter} (classical, not declared)`
+        : `${bufAfter} (classical, declared) vs ${gradEff + mu * bufAfter} (Nesterov, not declared)`
       failures.push({
         rule: 21,
         parameter_id: u.parameter_id,
@@ -6533,11 +6622,16 @@ function checkRule26OptimizerConfigConstancy(
   // v0.9.2 — per-optimizer constancy key list (dispatch on first.name).
   // learning_rate EXCLUDED (LR schedules legitimate); t EXCLUDED (Rule 25
   // handles t monotonicity for Adam; momentum has no t).
+  // v0.13 — weight_decay is a hyperparameter (coupled L2 for the SGD family;
+  // decoupled for Adam/AdamW): it MUST stay constant across a multi-step bundle,
+  // so it is added to sgd_momentum's and sgd's constancy key list. learning_rate
+  // stays EXCLUDED (LR schedules legitimate); a weight-decay schedule is not a
+  // recognized pattern, so a drifting weight_decay is a Rule 26 failure.
   const CONSTANCY_KEYS_BY_NAME: Record<string, readonly string[]> = {
     adam: ["beta1", "beta2", "epsilon", "weight_decay"],
     adamw: ["beta1", "beta2", "epsilon", "weight_decay"],
-    sgd_momentum: ["momentum", "nesterov", "dampening"],
-    sgd: [],
+    sgd_momentum: ["momentum", "nesterov", "dampening", "weight_decay"],
+    sgd: ["weight_decay"],
   }
   const constancyKeys = CONSTANCY_KEYS_BY_NAME[first.name] ?? []
   for (let i = 1; i < ocs.length; i += 1) {

@@ -1,0 +1,18 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "sgd-coupled-l2.bad-decay-dropped.meta",
+  "describes": "fixtures/bad/sgd-coupled-l2.bad-decay-dropped.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/sgd-coupled-l2.golden.jsonl. v0.13 SGD coupled-L2 weight-decay adversarial plate (the documented Rule 7 third branch). Each fixture surfaces a distinct attack class with a deterministic mutation.",
+  "mutation": {
+    "kind": "recompute_update_as_if_weight_decay_zero",
+    "field_path": "updates[0].update",
+    "parameter_id": "w_i1_h1",
+    "declared_weight_decay": 0.01,
+    "original_update_with_coupled_l2": -0.000969283867,
+    "mutated_update_no_decay": -0.000219283867,
+    "explanation": "optimizer_config.weight_decay declares lambda=0.01 (coupled L2). The correct update folds the decay into the effective descent gradient: grad_eff = gradient - wd*param, update = lr*grad_eff. This mutation drops the decay term — update = lr*gradient (the wd=0 path). Rule 5 recomputes lr*(gradient - wd*weight_before) and the stored no-decay update disagrees. This is the most common coupled-L2 omission: declaring weight_decay but never actually applying it."
+  },
+  "reconciliation_check_targeted_first": "Rule 5: Update value inconsistent with coupled-L2 — declared weight_decay > 0 but update == lr*gradient (decay term dropped) instead of lr*(gradient - wd*weight_before).",
+  "purpose": "v0.13 coupled-L2 anti-circularity fixture (kind: 'decay-dropped'). Pressure-tests that the named rule fires BEFORE the reconciler consults fixture_status metadata.",
+  "v0_13_trust_framing": "SGD coupled L2 (the Rule 7 third branch) is a STRUCTURAL CONSISTENCY check, NOT a producer-authenticity check. Coupled L2 (grad' = grad + lambda*theta folded into the gradient before the buffer) is DISTINCT from AdamW's DECOUPLED weight decay ((1 - lr*wd)*theta applied at the parameter step); conflating them is the exact error this plate guards against. An attacker who controls every byte and recomputes a consistent (g, buffer, update) triple passes trivially — Fang et al. 2023 EuroS&P spoofing class (arXiv:2208.03567)."
+}

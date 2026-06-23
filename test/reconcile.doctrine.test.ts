@@ -314,6 +314,25 @@ const FILENAME_KIND_TO_RULE: Record<string, number> = {
   "dampening-ignored": 21,
   "bad-nesterov-flag-inconstancy": 26,
   "nesterov-flag-inconstancy": 26,
+  // v0.13 SGD coupled-L2 weight-decay adversarial plate (the documented Rule 7
+  // third branch). Coupled L2 folds the decay into the gradient before the
+  // buffer/update (grad_eff = gradient - wd*param), DISTINCT from AdamW's
+  // decoupled decay. Each fixture surfaces a distinct attack class:
+  //   - decay-dropped  → Rule 5  (plain sgd: update == lr*gradient, the coupled-L2
+  //     grad_eff fold silently dropped; declared weight_decay never applied)
+  //   - as-decoupled   → Rule 7  (the AdamW mistake in reverse: a decoupled
+  //     (1 - lr*wd) shrink applied to the parameter instead of folding the decay
+  //     into the gradient/update; coupled receipt, decoupled math)
+  //   - wrong-lambda   → Rule 21 (sgd_momentum: optimizer_config.weight_decay
+  //     mutated so the stored buffer was computed under a different lambda)
+  // The meta files declare reconciliation_check_targeted_first (canonical path);
+  // these filename entries are the fallback mapping.
+  "bad-decay-dropped": 5,
+  "decay-dropped": 5,
+  "bad-as-decoupled": 7,
+  "as-decoupled": 7,
+  "bad-wrong-lambda": 21,
+  "wrong-lambda": 21,
 };
 
 /**

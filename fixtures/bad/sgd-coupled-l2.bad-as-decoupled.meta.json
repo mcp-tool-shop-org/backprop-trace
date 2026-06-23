@@ -1,0 +1,20 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "sgd-coupled-l2.bad-as-decoupled.meta",
+  "describes": "fixtures/bad/sgd-coupled-l2.bad-as-decoupled.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/sgd-coupled-l2.golden.jsonl. v0.13 SGD coupled-L2 weight-decay adversarial plate (the documented Rule 7 third branch). Each fixture surfaces a distinct attack class with a deterministic mutation.",
+  "mutation": {
+    "kind": "apply_decoupled_adamw_shrink_instead_of_coupled_l2",
+    "field_path": "parameters_after.w_i1_h1",
+    "parameter_id": "w_i1_h1",
+    "declared_weight_decay": 0.01,
+    "original_update_coupled": -0.000969283867,
+    "original_weight_after_coupled": 0.149030716,
+    "mutated_update_no_decay": -0.000219283867,
+    "mutated_weight_after_decoupled": 0.149030716133,
+    "explanation": "The AdamW mistake: instead of folding the decay into the gradient (coupled L2, update = lr*(gradient - wd*param)), this receipt leaves the update at the no-decay value (lr*gradient) and applies a DECOUPLED (1 - lr*wd) shrink to the parameter at the update step (weight_after = (1 - lr*wd)*weight_before + update). But the optimizer is plain 'sgd' — there is NO AdamW decoupled branch for it. Rule 7 recomputes weight_after = weight_before + update (SGD/coupled) and the decoupled value disagrees. This is precisely the coupled-vs-decoupled conflation the AdamW docs warn against, in reverse: applying decoupled math to a coupled optimizer."
+  },
+  "reconciliation_check_targeted_first": "Rule 7: Final-state consistency — parameters_after applies a DECOUPLED (1 - lr*wd) shrink (the AdamW formula), but plain SGD coupled L2 requires weight_after = weight_before + update (decay lives in the gradient/update, not a separate parameter-step term).",
+  "purpose": "v0.13 coupled-L2 anti-circularity fixture (kind: 'as-decoupled'). Pressure-tests that the named rule fires BEFORE the reconciler consults fixture_status metadata.",
+  "v0_13_trust_framing": "SGD coupled L2 (the Rule 7 third branch) is a STRUCTURAL CONSISTENCY check, NOT a producer-authenticity check. Coupled L2 (grad' = grad + lambda*theta folded into the gradient before the buffer) is DISTINCT from AdamW's DECOUPLED weight decay ((1 - lr*wd)*theta applied at the parameter step); conflating them is the exact error this plate guards against. An attacker who controls every byte and recomputes a consistent (g, buffer, update) triple passes trivially — Fang et al. 2023 EuroS&P spoofing class (arXiv:2208.03567)."
+}

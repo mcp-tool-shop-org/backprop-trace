@@ -206,6 +206,150 @@ test("G-008: forged backward.hidden_error_signals[*].signal_value makes the impo
 })
 
 // =============================================================================
+// ING-B-004 — import-time differential disagreements must carry the TWO operands
+// behind each `delta`: `stored` (the receipt/sidecar-CLAIMED value) and
+// `recomputed` (the engine value re-derived at import time). delta + tolerance
+// alone don't let an operator tell a real tamper (large, structured divergence)
+// from benign FP/Node drift — the magnitudes do. This mirrors the verify-path
+// Rule-14 quartet (reconcile.ts compareScalar -> stored/recomputed/delta/
+// tolerance) so the import-TIME render is self-sufficient too, not just the
+// `bp verify` gate.
+// =============================================================================
+
+// Forge a sidecar that DIVERGES from the engine on updates[0].{gradient,
+// weight_after} + the matching parameters_after entry (+BUMP, far beyond the
+// default tolerance atol=1e-6/rtol=1e-4), leaving forward+loss correct. Same
+// shape as the G-008 forge above, but here we assert the OPERAND fields, not
+// just field-path coverage.
+const DIVERGENCE_BUMP = 5.0
+function buildForgedDivergentSidecar(): { bytes: string; pid: string } {
+  const sidecar = JSON.parse(loadSidecarBytes().trim()) as {
+    updates: Array<{
+      parameter_id: string
+      gradient: number
+      update: number
+      weight_after: number
+    }>
+    parameters_after: Record<string, number>
+  }
+  const target = sidecar.updates[0]!
+  const pid = target.parameter_id
+  target.gradient = target.gradient + DIVERGENCE_BUMP
+  target.weight_after = target.weight_after + DIVERGENCE_BUMP
+  sidecar.parameters_after[pid] = sidecar.parameters_after[pid]! + DIVERGENCE_BUMP
+  return { bytes: JSON.stringify(sidecar) + "\n", pid }
+}
+
+test("ING-B-004: import differential disagreements carry stored (claimed) + recomputed (engine) + delta + tolerance", () => {
+  if (!existsSync(sidecarPath)) return
+  const { bytes, pid } = buildForgedDivergentSidecar()
+  const result = importPytorchSidecar(bytes, {
+    importTimestamp: PINNED_TIMESTAMP,
+    fixtureLabel: PINNED_FIXTURE_LABEL,
+  })
+  assert.strictEqual(
+    result.differentialPassed,
+    false,
+    "precondition: the forged sidecar must make the importer differential disagree",
+  )
+  assert.ok(
+    result.differentialDisagreements.length > 0,
+    `expected >0 disagreements; got ${JSON.stringify(result.differentialDisagreements)}`,
+  )
+
+  // Every disagreement carries the full quartet. For numeric divergences (finite
+  // delta) the operands are finite and delta === |stored - recomputed| EXACTLY
+  // (delta = Math.abs(engineVal - claimedVal); stored=claimedVal,
+  // recomputed=engineVal — so |stored - recomputed| is the same float).
+  for (const d of result.differentialDisagreements) {
+    assert.strictEqual(typeof d.stored, "number", `stored must be a number on ${d.fieldPath}`)
+    assert.strictEqual(
+      typeof d.recomputed,
+      "number",
+      `recomputed must be a number on ${d.fieldPath}`,
+    )
+    assert.strictEqual(typeof d.delta, "number", `delta must be a number on ${d.fieldPath}`)
+    assert.strictEqual(
+      typeof d.appliedTolerance,
+      "number",
+      `appliedTolerance must be a number on ${d.fieldPath}`,
+    )
+    if (Number.isFinite(d.delta)) {
+      assert.ok(
+        Number.isFinite(d.stored) && Number.isFinite(d.recomputed),
+        `numeric disagreement on ${d.fieldPath} must carry finite operands; ` +
+          `stored=${d.stored} recomputed=${d.recomputed}`,
+      )
+      assert.strictEqual(
+        d.delta,
+        Math.abs(d.stored - d.recomputed),
+        `delta must equal |stored - recomputed| on ${d.fieldPath}`,
+      )
+    }
+  }
+
+  // The forged gradient: `stored` is the FORGED claim, `recomputed` is the
+  // engine's true value, and their gap is exactly the bump we injected — proving
+  // the fields are wired correctly (stored=claimed, recomputed=engine; not
+  // swapped, not zeroed).
+  const grad = result.differentialDisagreements.find(
+    (d) => d.fieldPath === `updates[${pid}].gradient`,
+  )
+  assert.ok(grad, `expected updates[${pid}].gradient disagreement`)
+  assert.notStrictEqual(grad!.stored, grad!.recomputed, "stored and recomputed must differ")
+  assert.ok(
+    Math.abs(Math.abs(grad!.stored - grad!.recomputed) - DIVERGENCE_BUMP) < 1e-6,
+    `|stored - recomputed| (${Math.abs(grad!.stored - grad!.recomputed)}) must equal the ` +
+      `injected bump ${DIVERGENCE_BUMP}; stored=${grad!.stored} recomputed=${grad!.recomputed}`,
+  )
+})
+
+test("ING-B-004: bp import pytorch - --json envelope disagreements carry stored+recomputed+delta+tolerance", () => {
+  if (!existsSync(sidecarPath)) return
+  const { bytes, pid } = buildForgedDivergentSidecar()
+  // --json: the receipt bytes go to STDOUT; the result envelope goes to STDERR.
+  const result = spawnSync(
+    process.execPath,
+    ["--import", "tsx", "src/bin/bp.ts", "import", "pytorch", "-", "--json"],
+    { cwd: repoRoot, encoding: "utf-8", input: bytes },
+  )
+  assert.strictEqual(
+    result.status,
+    1,
+    `forged sidecar must exit 1 (differential disagreed). stderr: ${result.stderr}`,
+  )
+  const envLine = result.stderr
+    .trim()
+    .split("\n")
+    .find((l) => l.includes('"disagreements"'))
+  assert.ok(envLine, `expected a JSON result envelope on stderr; got: ${result.stderr}`)
+  const env = JSON.parse(envLine!) as {
+    ok: boolean
+    differential: {
+      passed: boolean
+      disagreements: Array<Record<string, unknown>>
+    }
+  }
+  assert.strictEqual(env.ok, false)
+  assert.strictEqual(env.differential.passed, false)
+  const ds = env.differential.disagreements
+  assert.ok(Array.isArray(ds) && ds.length > 0, "expected a non-empty disagreements array")
+  for (const d of ds) {
+    for (const k of ["fieldPath", "delta", "appliedTolerance", "stored", "recomputed"]) {
+      assert.ok(
+        k in d,
+        `each --json disagreement must carry '${k}'; got keys ${JSON.stringify(Object.keys(d))}`,
+      )
+    }
+  }
+  const grad = ds.find((d) => d.fieldPath === `updates[${pid}].gradient`)
+  assert.ok(grad, `expected updates[${pid}].gradient in the --json disagreements`)
+  assert.strictEqual(typeof grad!.stored, "number", "stored must serialize as a number")
+  assert.strictEqual(typeof grad!.recomputed, "number", "recomputed must serialize as a number")
+  assert.notStrictEqual(grad!.stored, grad!.recomputed, "stored and recomputed must differ")
+})
+
+// =============================================================================
 // imports-B-001 — single-step unsupported-format-version guard (Stage C
 // humanization). The MULTI-step path has an explicit format-const allowlist
 // (rejects out-of-set versions with a clear "requires framework-trace.v0.2.0..."

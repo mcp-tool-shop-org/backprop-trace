@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "sgd-momentum-coupled-l2.bad-wrong-lambda.meta",
+  "describes": "fixtures/bad/sgd-momentum-coupled-l2.bad-wrong-lambda.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/sgd-momentum-coupled-l2.golden.jsonl. v0.13 SGD coupled-L2 weight-decay adversarial plate (the documented Rule 7 third branch). Each fixture surfaces a distinct attack class with a deterministic mutation.",
+  "mutation": {
+    "kind": "swap_optimizer_config_weight_decay_from_0_01_to_0_05",
+    "field_path": "optimizer_config.weight_decay",
+    "original_weight_decay": 0.01,
+    "mutated_weight_decay": 0.05,
+    "explanation": "The buffer_after on every weight update was computed under coupled-L2 lambda=0.01 (grad_eff = gradient - 0.01*param). Mutating optimizer_config.weight_decay to 0.05 makes Rule 21a recompute buffer_after = mu*buffer_before + (1-dampening)*(gradient - 0.05*param), which disagrees with the stored buffer (computed under 0.01). Rule 21a catches the wrong lambda — analogous to the momentum coefficient-swapped fixture, but on the weight_decay hyperparameter."
+  },
+  "reconciliation_check_targeted_first": "Rule 21: SGD momentum buffer recurrence — buffer_after was computed under coupled-L2 lambda=0.01 but optimizer_config.weight_decay declares 0.05; the decay-augmented recurrence disagrees.",
+  "purpose": "v0.13 coupled-L2 anti-circularity fixture (kind: 'wrong-lambda'). Pressure-tests that the named rule fires BEFORE the reconciler consults fixture_status metadata.",
+  "v0_13_trust_framing": "SGD coupled L2 (the Rule 7 third branch) is a STRUCTURAL CONSISTENCY check, NOT a producer-authenticity check. Coupled L2 (grad' = grad + lambda*theta folded into the gradient before the buffer) is DISTINCT from AdamW's DECOUPLED weight decay ((1 - lr*wd)*theta applied at the parameter step); conflating them is the exact error this plate guards against. An attacker who controls every byte and recomputes a consistent (g, buffer, update) triple passes trivially — Fang et al. 2023 EuroS&P spoofing class (arXiv:2208.03567)."
+}

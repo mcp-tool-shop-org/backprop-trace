@@ -282,7 +282,7 @@ test("runGeneralStep ACCEPTS sgd_momentum with nesterov: true + dampening: 0 (ex
   assert.equal(r.optimizer_config!.dampening, undefined, "dampening: 0 omitted (equals default)")
 })
 
-test("runGeneralStep rejects sgd_momentum with weight_decay at the boundary (deferred to v0.10)", () => {
+test("runGeneralStep ACCEPTS sgd_momentum with weight_decay in v0.13 (coupled L2 — the Rule 7 third branch; was deferred pre-v0.13)", () => {
   const input: GeneralInput = {
     topology: MAZUR_TOPOLOGY,
     learning_rate: 0.01,
@@ -299,7 +299,43 @@ test("runGeneralStep rejects sgd_momentum with weight_decay at the boundary (def
     },
     optimizer_state_before: zeroMomentumState(),
   }
-  assert.throws(() => runGeneralStep(input), /weight_decay is NOT supported with name === 'sgd_momentum' in v0.9.2/i)
+  const r = runGeneralStep(input)
+  // v0.13 — coupled L2 is now SUPPORTED. Receipt declares v0.8.0 and carries
+  // weight_decay; the decay folds into the buffer (grad_eff = gradient - wd*param).
+  assert.equal(r.schema_version, "0.8.0", "sgd_momentum+wd is a v0.8.0 receipt")
+  assert.equal(r.optimizer_config!.weight_decay, 0.01)
+  const mu = 0.9
+  const wd = 0.01
+  for (const u of r.updates) {
+    if (u.parameter_id.startsWith("b_")) continue
+    const sb = u.optimizer.state_before as MomentumState
+    const sa = u.optimizer.state_after as MomentumState
+    const gradEff = u.gradient - wd * u.weight_before
+    assert.ok(
+      Math.abs(sa.buffer - (mu * sb.buffer + gradEff)) < 1e-12,
+      `buffer_after on ${u.parameter_id} folds coupled L2 into the gradient`,
+    )
+  }
+})
+
+test("runGeneralStep rejects NEGATIVE weight_decay on sgd_momentum at the boundary", () => {
+  const input: GeneralInput = {
+    topology: MAZUR_TOPOLOGY,
+    learning_rate: 0.01,
+    inputs: MINIMAL_INPUTS,
+    targets: MINIMAL_TARGETS,
+    parameters_before: MINIMAL_PARAMETERS,
+    numeric_policy: MINIMAL_NUMERIC_POLICY,
+    bias_policy: MINIMAL_BIAS_POLICY,
+    optimizer_config: {
+      name: "sgd_momentum",
+      learning_rate: 0.01,
+      momentum: 0.9,
+      weight_decay: -0.01,
+    },
+    optimizer_state_before: zeroMomentumState(),
+  }
+  assert.throws(() => runGeneralStep(input), /weight_decay must be a non-negative finite number/i)
 })
 
 test("runGeneralStep rejects sgd_momentum with missing momentum hyperparameter", () => {

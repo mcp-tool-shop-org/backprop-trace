@@ -52,20 +52,23 @@ test('getReceiptSchema throws on an unknown version', () => {
   );
 });
 
-test("SCHEMA_VERSIONS = ['0.1.0', '0.2.0', '0.3.0', '0.4.0', '0.5.0', '0.6.0', '0.7.0'] in v0.9.3 (extended from v0.9.2's six with the Nesterov + dampening forced bump)", () => {
+test("SCHEMA_VERSIONS = ['0.1.0', '0.2.0', '0.3.0', '0.4.0', '0.5.0', '0.6.0', '0.7.0', '0.8.0'] in v0.13 (extended from v0.9.3's seven with the SGD coupled-L2 forced bump)", () => {
   assert.deepStrictEqual(
     Array.from(SCHEMA_VERSIONS).sort(),
-    ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0"],
+    ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0", "0.8.0"],
     "SCHEMA_VERSIONS must include '0.1.0' (Mazur-pinned), '0.2.0' (generalized), " +
       "'0.3.0' (v0.5 softmax+CE additive), '0.4.0' (v0.6 external observer-mode " +
       "additive), '0.5.0' (v0.9.1 Adam + AdamW FORCED bump), '0.6.0' (v0.9.2 classical " +
       "PyTorch-style SGD momentum FORCED bump: nesterov: const false + dampening: const 0 " +
-      "reserved for v0.9.3), and '0.7.0' (v0.9.3 Nesterov + dampening FORCED bump: " +
+      "reserved for v0.9.3), '0.7.0' (v0.9.3 Nesterov + dampening FORCED bump: " +
       "nesterov widens from const false to boolean; dampening widens from const 0 to " +
       "number in [0, 1); PyTorch's torch.optim.SGD.__init__ ValueError on nesterov=true && " +
-      "dampening>0 mirrored at schema via allOf if/then clause + engine boundary). When " +
-      "the next version ships, update this expected list AND drop the " +
-      "schemas/receipt.v<version>.json file alongside it.",
+      "dampening>0 mirrored at schema via allOf if/then clause + engine boundary), and " +
+      "'0.8.0' (v0.13 SGD coupled-L2 weight-decay FORCED bump — the documented Rule 7 third " +
+      "branch: weight_decay accepted for sgd/sgd_momentum encoding coupled L2, folded into " +
+      "the gradient before the buffer/update; the v0.7.0/v0.6.0 schemas REJECTED weight_decay " +
+      "for the SGD family). When the next version ships, update this expected list AND drop " +
+      "the schemas/receipt.v<version>.json file alongside it.",
   );
 });
 

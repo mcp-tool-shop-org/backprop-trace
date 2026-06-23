@@ -81,8 +81,16 @@ SUPPORTED:
 - 2-2-2 / 2-2-3 / 2-3-2 topologies (Mazur-shaped feed-forward nets).
 - half_squared_error loss; cross_entropy_softmax loss.
 
+SUPPORTED (v0.13):
+- SGD with weight_decay > 0 (COUPLED L2 — the documented Rule 7 third
+  branch). The decay folds into the gradient before the buffer/update:
+  d_p = grad + weight_decay*param. The helper derives the BASE loss
+  gradient analytically; the reconciler recovers the coupled-L2 term
+  (Rule 5 / Rule 21) from update = wa - wb + optimizer_config.weight_decay.
+  Emits a `framework-trace.v0.8.0` sidecar. DISTINCT from AdamW's DECOUPLED
+  weight decay (which was always supported on v0.7.0 / earlier).
+
 NOT SUPPORTED (REJECTED at the extraction boundary — HelperUnsupportedError):
-- SGD with weight_decay (coupled L2 form) — Rule 7 third branch deferred.
 - SGD dampening != 0 — PyTorch SKIPS dampening on the first (buffer-init)
   step (buf = grad, no (1 - dampening) factor) while the engine's Rule 21a
   applies it uniformly; the first-step buffer diverges, so a valid step
@@ -160,6 +168,11 @@ except ImportError:  # pragma: no cover
 HELPER_VERSION = "0.12.0"
 HELPER_NAME = "backprop-trace-pytorch-helper"
 SCHEMA_FORMAT = "framework-trace.v0.7.0"
+# v0.13 — SGD coupled L2 (the documented Rule 7 third branch) FORCES a schema
+# bump: the v0.7.0 sidecar schema rejects weight_decay for the SGD family. A
+# sidecar carrying coupled-L2 weight_decay on sgd / sgd_momentum declares this
+# format instead. (Adam/AdamW weight_decay is DECOUPLED and stays on v0.7.0.)
+SCHEMA_FORMAT_COUPLED_L2 = "framework-trace.v0.8.0"
 DEFAULT_TOLERANCE_ATOL = 1e-6
 DEFAULT_TOLERANCE_RTOL = 1e-4
 DEFAULT_PRECISION = 17
@@ -654,15 +667,21 @@ def _detect_optimizer_family(optimizer: "torch.optim.Optimizer") -> str:
         # Inspect the (single) param_group for momentum + weight_decay + dampening.
         any_momentum = False
         for group in optimizer.param_groups:
+            # v0.13 — SGD coupled L2 (the documented Rule 7 third branch) is now
+            # SUPPORTED. PyTorch's torch.optim.SGD(weight_decay=lambda) folds the
+            # decay into the gradient before the buffer/update: d_p = grad +
+            # lambda*param. The helper derives the BASE loss gradient analytically
+            # from the loss (signal*upstream) — the coupled-L2 term is recovered
+            # by the reconciler (Rule 5 / Rule 21) from update = wa - wb and
+            # optimizer_config.weight_decay, so the receipt stays self-consistent.
+            # weight_decay >= 0 is accepted; only a negative value (which PyTorch
+            # itself rejects) is refused here.
             wd = group.get("weight_decay", 0.0)
-            if wd > 0:
+            if wd < 0:
                 raise HelperUnsupportedError(
-                    "helper: torch.optim.SGD with weight_decay > 0 "
-                    "(coupled L2 form) is deferred (Rule 7 third branch). "
-                    "Supported: SGD (no weight_decay), sgd_momentum (no "
-                    "weight_decay), Adam, and AdamW (decoupled weight_decay). "
-                    "Hand-authored sidecars continue to work via the existing "
-                    "bp import pytorch path."
+                    "helper: torch.optim.SGD with weight_decay < 0 is invalid "
+                    "(PyTorch requires weight_decay >= 0). Coupled L2 needs a "
+                    "non-negative lambda."
                 )
             momentum = group.get("momentum", 0.0)
             dampening = group.get("dampening", 0.0)
@@ -706,25 +725,37 @@ def _build_optimizer_block(
 ) -> Optional[dict[str, Any]]:
     """Build the top-level `optimizer` block of the sidecar.
 
-    Returns None for plain SGD (the optimizer block is optional in the
-    schema; absence ⇒ SGD by default for byte-equality with v0.6/v0.7
-    SGD sidecars).
+    Returns None for plain SGD with NO weight decay (the optimizer block is
+    optional in the schema; absence ⇒ SGD by default for byte-equality with
+    v0.6/v0.7 SGD sidecars). v0.13: plain SGD WITH weight_decay > 0 (coupled
+    L2) returns {name, learning_rate, weight_decay}.
 
     For adam / adamw / sgd_momentum, returns the full hyperparameter
     block:
       - adam:         {name, learning_rate, beta1, beta2, epsilon, t}
-      - adamw:        same as adam + weight_decay
-      - sgd_momentum: {name, learning_rate, momentum, nesterov?}
+      - adamw:        same as adam + weight_decay (DECOUPLED weight decay)
+      - sgd_momentum: {name, learning_rate, momentum, nesterov?, weight_decay?}
         - nesterov is emitted only when True (preserves v0.6.0 byte-equal
           for classical sgd_momentum)
+        - weight_decay (v0.13) is emitted only when > 0 — COUPLED L2 (folded
+          into the gradient before the buffer). Absence ⇒ 0 (no decay),
+          preserving v0.6/v0.7 byte-equality.
         - dampening is NOT emitted: SGD with dampening != 0 is rejected
           upstream by _detect_optimizer_family (it cannot round-trip the
           engine's uniform Rule 21a on the buffer-init step), so the live
           helper only ever observes dampening == 0 here.
     """
-    if family == "sgd":
-        return None
     g = optimizer.param_groups[0]
+    if family == "sgd":
+        # v0.13 — plain SGD coupled L2: emit a block ONLY when weight_decay > 0.
+        wd = float(g.get("weight_decay", 0.0))
+        if wd > 0:
+            return {
+                "name": "sgd",
+                "learning_rate": float(g["lr"]),
+                "weight_decay": wd,
+            }
+        return None
     if family == "adam":
         beta1, beta2 = g["betas"]
         return {
@@ -752,6 +783,12 @@ def _build_optimizer_block(
             "learning_rate": float(g["lr"]),
             "momentum": float(g["momentum"]),
         }
+        # v0.13 — emit weight_decay only when > 0 (COUPLED L2; folded into the
+        # gradient before the momentum buffer). Absence ⇒ 0 (no decay),
+        # preserving v0.6/v0.7 classical-sgd_momentum byte-equality.
+        wd = float(g.get("weight_decay", 0.0))
+        if wd > 0:
+            block["weight_decay"] = wd
         nesterov = bool(g.get("nesterov", False))
         if nesterov:
             block["nesterov"] = True
@@ -1024,8 +1061,23 @@ class TraceDumper:
             params_before, params_after, inputs_override, targets_override, state_before, state_after
         )
 
+        # v0.13 — SGD coupled L2 (the documented Rule 7 third branch) forces a
+        # FORCED schema bump: the v0.7.0 sidecar schema REJECTS weight_decay for
+        # the SGD family. A sidecar carrying coupled-L2 weight_decay on sgd /
+        # sgd_momentum declares format "framework-trace.v0.8.0". Without it the
+        # sidecar stays at SCHEMA_FORMAT (v0.7.0) for byte-equality. Adam/AdamW
+        # weight_decay is DECOUPLED and was always permitted, so it does NOT
+        # trigger the v0.8.0 bump.
+        sidecar_format = SCHEMA_FORMAT
+        if (
+            optimizer_block is not None
+            and optimizer_block.get("name") in ("sgd", "sgd_momentum")
+            and float(optimizer_block.get("weight_decay", 0.0)) > 0
+        ):
+            sidecar_format = SCHEMA_FORMAT_COUPLED_L2
+
         sidecar = {
-            "format": SCHEMA_FORMAT,
+            "format": sidecar_format,
             "source_framework": {
                 "name": "pytorch",
                 "version": torch.__version__,

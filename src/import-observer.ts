@@ -118,6 +118,7 @@ export type FrameworkTraceSidecar = {
     | "framework-trace.v0.5.0"
     | "framework-trace.v0.6.0"
     | "framework-trace.v0.7.0"
+    | "framework-trace.v0.8.0"
   source_framework: SourceFramework
   /**
    * v0.10+ FORENSIC live-helper attribution. Present when the sidecar was
@@ -436,7 +437,12 @@ export function buildObserverReceiptFromSidecar(
       : declaredFmt === "framework-trace.v0.5.0" ||
           declaredFmt === "framework-trace.v0.6.0"
         ? (["sgd_momentum"] as const)
-        : undefined
+        : // v0.13 — v0.8.0 is SGD coupled L2 (the documented Rule 7 third
+          // branch): it MUST carry an optimizer block with name ∈ {sgd,
+          // sgd_momentum} AND weight_decay > 0 (the coupled-L2 hyperparameter).
+          declaredFmt === "framework-trace.v0.8.0"
+          ? (["sgd", "sgd_momentum"] as const)
+          : undefined
   if (requiredOptimizerNames !== undefined) {
     const optName = sidecar.optimizer?.name
     if (optName === undefined || !requiredOptimizerNames.includes(optName as never)) {
@@ -687,8 +693,19 @@ export function buildObserverReceiptFromSidecar(
     }
     let engineInput: GeneralInput = engineInputBase
     // v0.9.1 — Adam/AdamW dispatch. v0.9.2 — sgd_momentum dispatch.
-    if (sidecar.optimizer !== undefined && sidecar.optimizer.name !== "sgd") {
-      const ocIn = sidecar.optimizer
+    // v0.13 — plain SGD coupled L2: when name === "sgd" AND weight_decay > 0, the
+    // engine recompute MUST see the weight_decay so the differential folds the
+    // same coupled-L2 term into the update. Plain SGD without weight_decay (and
+    // plain SGD with weight_decay 0) falls through to the byte-equal no-decay path.
+    const sidecarHasStatefulOptimizer =
+      sidecar.optimizer !== undefined && sidecar.optimizer.name !== "sgd"
+    const sidecarPlainSgdCoupledL2 =
+      sidecar.optimizer !== undefined &&
+      sidecar.optimizer.name === "sgd" &&
+      typeof sidecar.optimizer.weight_decay === "number" &&
+      sidecar.optimizer.weight_decay !== 0
+    if (sidecarHasStatefulOptimizer || sidecarPlainSgdCoupledL2) {
+      const ocIn = sidecar.optimizer!
       const oc: OptimizerConfig = {
         name: ocIn.name,
         learning_rate: ocIn.learning_rate,
@@ -733,11 +750,13 @@ export function buildObserverReceiptFromSidecar(
           }
         }
       }
-      engineInput = {
-        ...engineInputBase,
-        optimizer_config: oc,
-        optimizer_state_before: stateBefore,
-      }
+      // v0.13 — plain SGD (coupled L2) has NO per-parameter state; the engine
+      // rejects a (non-undefined) optimizer_state_before for name === "sgd".
+      // Only attach state_before for the stateful optimizers.
+      engineInput =
+        ocIn.name === "sgd"
+          ? { ...engineInputBase, optimizer_config: oc }
+          : { ...engineInputBase, optimizer_config: oc, optimizer_state_before: stateBefore }
     }
     engineReceipt = runGeneralStep(engineInput)
 
@@ -819,13 +838,24 @@ export function buildObserverReceiptFromSidecar(
     sidecar.optimizer !== undefined &&
     ((sidecar.optimizer.nesterov === true) ||
       (sidecar.optimizer.dampening !== undefined && sidecar.optimizer.dampening !== 0))
-  const receiptSchemaVersion: "0.4.0" | "0.5.0" | "0.6.0" | "0.7.0" = usesNesterovOrDampening
-    ? "0.7.0"
-    : isSgdMomentumImport
-      ? "0.6.0"
-      : isAdamFamilyImport
-        ? "0.5.0"
-        : "0.4.0"
+  // v0.13 — SGD coupled L2 (the documented Rule 7 third branch). A sidecar
+  // carrying weight_decay > 0 on the SGD family (sgd / sgd_momentum) maps to a
+  // v0.8.0 receipt. Adam/AdamW weight_decay is DECOUPLED and does NOT trigger
+  // the bump. weight_decay === 0 (or absent) collapses to the prior version.
+  const usesCoupledL2 =
+    sidecar.optimizer !== undefined &&
+    (sidecar.optimizer.name === "sgd" || sidecar.optimizer.name === "sgd_momentum") &&
+    typeof sidecar.optimizer.weight_decay === "number" &&
+    sidecar.optimizer.weight_decay !== 0
+  const receiptSchemaVersion: "0.4.0" | "0.5.0" | "0.6.0" | "0.7.0" | "0.8.0" = usesCoupledL2
+    ? "0.8.0"
+    : usesNesterovOrDampening
+      ? "0.7.0"
+      : isSgdMomentumImport
+        ? "0.6.0"
+        : isAdamFamilyImport
+          ? "0.5.0"
+          : "0.4.0"
 
   const receipt: GeneralReceipt = {
     schema_version: receiptSchemaVersion,
@@ -853,7 +883,10 @@ export function buildObserverReceiptFromSidecar(
     // SGD observer-mode receipt byte-equality with v0.6-v0.9.0). The block
     // carries name + lr + beta1/beta2/epsilon/t (and weight_decay for adamw).
     // v0.9.2 — same emission for sgd_momentum (momentum hyperparameter).
-    ...((isAdamFamilyImport || isSgdMomentumImport) && sidecar.optimizer !== undefined
+    // v0.13 — also emit for plain SGD coupled L2 (usesCoupledL2: weight_decay > 0
+    // on the SGD family). The block carries name + lr + weight_decay. Plain SGD
+    // without weight_decay still omits the block (byte-equality preserved).
+    ...((isAdamFamilyImport || isSgdMomentumImport || usesCoupledL2) && sidecar.optimizer !== undefined
       ? {
           optimizer_config: {
             name: sidecar.optimizer.name,
@@ -1137,6 +1170,9 @@ const SINGLE_STEP_SUPPORTED_FORMATS: readonly string[] = [
   "framework-trace.v0.5.0",
   "framework-trace.v0.6.0",
   "framework-trace.v0.7.0",
+  // v0.13 — SGD coupled-L2 weight-decay sidecar (the documented Rule 7 third
+  // branch). Carries weight_decay on sgd / sgd_momentum (coupled L2).
+  "framework-trace.v0.8.0",
 ]
 
 /** imports-B-001 — the multi-step (JSONL stream) sidecar baseline format. */
@@ -1711,13 +1747,16 @@ export function buildObserverReceiptStreamFromSidecar(
       validation.schemaVersion !== "0.4.0" &&
       validation.schemaVersion !== "0.5.0" &&
       validation.schemaVersion !== "0.6.0" &&
-      validation.schemaVersion !== "0.7.0"
+      validation.schemaVersion !== "0.7.0" &&
+      // v0.13 — SGD coupled L2 (the documented Rule 7 third branch): multi-step
+      // sidecars carrying weight_decay on the SGD family declare v0.8.0.
+      validation.schemaVersion !== "0.8.0"
     ) {
       throw new Error(
         `${callerLabel}: sidecar line ${i + 1} declares format='framework-trace.v${validation.schemaVersion}' but multi-step ` +
           `ingestion requires 'framework-trace.v0.2.0', 'framework-trace.v0.3.0', ` +
-          `'framework-trace.v0.4.0', 'framework-trace.v0.5.0', 'framework-trace.v0.6.0', or 'framework-trace.v0.7.0'. ` +
-          `Use the single-step subcommand for v0.1.0 sidecars.`,
+          `'framework-trace.v0.4.0', 'framework-trace.v0.5.0', 'framework-trace.v0.6.0', 'framework-trace.v0.7.0', or ` +
+          `'framework-trace.v0.8.0'. Use the single-step subcommand for v0.1.0 sidecars.`,
       )
     }
     // ING-2 — verifier-owned ingest cap (per-record structural layer). Each
@@ -1941,8 +1980,18 @@ export function buildObserverReceiptStreamFromSidecar(
         bias_policy: resolveBiasPolicyForSidecar(sidecar),
       }
       let engineInput: GeneralInput = engineInputBase
-      if (sidecar.optimizer !== undefined && sidecar.optimizer.name !== "sgd") {
-        const ocIn = sidecar.optimizer
+      // v0.13 — also dispatch for plain SGD coupled L2 (name === "sgd" with
+      // weight_decay > 0) so the engine recompute folds the same coupled-L2 term.
+      const recordPlainSgdCoupledL2 =
+        sidecar.optimizer !== undefined &&
+        sidecar.optimizer.name === "sgd" &&
+        typeof sidecar.optimizer.weight_decay === "number" &&
+        sidecar.optimizer.weight_decay !== 0
+      if (
+        (sidecar.optimizer !== undefined && sidecar.optimizer.name !== "sgd") ||
+        recordPlainSgdCoupledL2
+      ) {
+        const ocIn = sidecar.optimizer!
         const oc: OptimizerConfig = {
           name: ocIn.name,
           learning_rate: ocIn.learning_rate,
@@ -1971,7 +2020,7 @@ export function buildObserverReceiptStreamFromSidecar(
               if (typeof sbMom.buffer === "number") {
                 stateBefore[u.parameter_id] = { buffer: sbMom.buffer }
               }
-            } else {
+            } else if (ocIn.name !== "sgd") {
               const sbAdam = sb as Partial<AdamState>
               if (typeof sbAdam.m === "number" && typeof sbAdam.v === "number") {
                 stateBefore[u.parameter_id] = { m: sbAdam.m, v: sbAdam.v }
@@ -1979,11 +2028,12 @@ export function buildObserverReceiptStreamFromSidecar(
             }
           }
         }
-        engineInput = {
-          ...engineInputBase,
-          optimizer_config: oc,
-          optimizer_state_before: stateBefore,
-        }
+        // Plain SGD (coupled L2) has no per-parameter state — the engine rejects
+        // a non-undefined optimizer_state_before for name === "sgd".
+        engineInput =
+          ocIn.name === "sgd"
+            ? { ...engineInputBase, optimizer_config: oc }
+            : { ...engineInputBase, optimizer_config: oc, optimizer_state_before: stateBefore }
       }
       engineReceipt = runGeneralStep(engineInput)
 
@@ -2066,13 +2116,22 @@ export function buildObserverReceiptStreamFromSidecar(
       sidecar.optimizer !== undefined &&
       ((sidecar.optimizer.nesterov === true) ||
         (sidecar.optimizer.dampening !== undefined && sidecar.optimizer.dampening !== 0))
-    const recordSchemaVersion: "0.4.0" | "0.5.0" | "0.6.0" | "0.7.0" = recordUsesNesterovOrDampening
-      ? "0.7.0"
-      : isSgdMomentumRecord
-        ? "0.6.0"
-        : isAdamFamilyRecord
-          ? "0.5.0"
-          : "0.4.0"
+    // v0.13 — SGD coupled L2 (the documented Rule 7 third branch): a record
+    // carrying weight_decay > 0 on the SGD family maps to a v0.8.0 receipt.
+    const recordUsesCoupledL2 =
+      sidecar.optimizer !== undefined &&
+      (sidecar.optimizer.name === "sgd" || sidecar.optimizer.name === "sgd_momentum") &&
+      typeof sidecar.optimizer.weight_decay === "number" &&
+      sidecar.optimizer.weight_decay !== 0
+    const recordSchemaVersion: "0.4.0" | "0.5.0" | "0.6.0" | "0.7.0" | "0.8.0" = recordUsesCoupledL2
+      ? "0.8.0"
+      : recordUsesNesterovOrDampening
+        ? "0.7.0"
+        : isSgdMomentumRecord
+          ? "0.6.0"
+          : isAdamFamilyRecord
+            ? "0.5.0"
+            : "0.4.0"
     const receipt: GeneralReceipt = {
       schema_version: recordSchemaVersion,
       fixture: `${fixtureLabelBase}-step-${i}`,
@@ -2099,7 +2158,8 @@ export function buildObserverReceiptStreamFromSidecar(
       learning_rate: sidecar.learning_rate,
       // v0.9.1 — emit optimizer_config block ONLY for Adam/AdamW records.
       // v0.9.2 — same emission for sgd_momentum records.
-      ...((isAdamFamilyRecord || isSgdMomentumRecord) && sidecar.optimizer !== undefined
+      // v0.13 — also emit for plain SGD coupled L2 (recordUsesCoupledL2).
+      ...((isAdamFamilyRecord || isSgdMomentumRecord || recordUsesCoupledL2) && sidecar.optimizer !== undefined
         ? {
             optimizer_config: {
               name: sidecar.optimizer.name,
