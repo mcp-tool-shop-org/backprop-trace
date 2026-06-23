@@ -13,13 +13,11 @@
   <a href="https://mcp-tool-shop-org.github.io/backprop-trace/"><img alt="Landing Page" src="https://img.shields.io/badge/landing-page-blue.svg"></a>
 </p>
 
-Un vérificateur déterministe, basé sur 26 règles, pour les étapes de formation des réseaux neuronaux. Vous lui fournissez un fichier contenant tous les facteurs qui ont contribué à une mise à jour du gradient ; le vérificateur recalcule chaque affirmation et rejette les incohérences. Conformément à la philosophie de Csmith/CompCert, *"l'oracle ne doit pas consulter l'artefact qu'il juge."*
+Un vérificateur déterministe basé sur 26 règles pour les étapes d’entraînement des réseaux de neurones. Vous lui fournissez un enregistrement indiquant tous les facteurs qui ont contribué à une mise à jour du gradient ; le réconciliateur redérive chaque affirmation et rejette en cas de désaccord. Dans la lignée Csmith/CompCert, on rappelle que « l’oracle ne doit pas consulter l’artefact qu’il juge ».
 
-**Statut : version intermédiaire v0 (v0.12.0) — version axée sur la robustesse.** Fonctionne uniquement sur CPU. Le vérificateur couvre SGD + Adam + AdamW + l'impulsion de SGD de type PyTorch (classique + Nesterov + amortissement).
-L'outil d'aide PyTorch en direct (`scripts/extract/pytorch.py`) couvre la même matrice d'optimiseurs. Fonctionne uniquement en tant qu'observateur — [la règle 14](./docs/reconciliation.md) est la référence.
-La version v0.11 était la première version publiée sur npm ; la version v0.12.0 renforce la robustesse après un audit complet réalisé par des experts — plafonds de tolérance gérés par le vérificateur (un reçu ne peut plus élargir sa propre plage de validité), règle 14 activée par des marqueurs, saut automatique multi-étapes désactivé, et limites de ressources. 792 tests, 12 invariants de confiance. La version 1.0 est toujours conditionnée par [un cas d'utilisation réel + validation par les utilisateurs](#whats-not-in-this-version-yet). Consultez [`docs/live-helpers.md`](./docs/live-helpers.md) avant toute utilisation en production.
+> **v1.0.0 — Uniquement CPU, déterministe.** Le vérificateur couvre SGD, Adam, AdamW, SGD avec momentum (classique/Nesterov/amortissement), **SGD couplé à une décroissance L2 des poids**, sur 26 règles de réconciliation. Des assistants **PyTorch et JAX** en direct extraient une étape d’entraînement réelle dans un enregistrement vérifiable — uniquement pour l’observateur, la [Règle 14](./docs/reconciliation.md) est la référence pour chaque élément importé. 940 tests déterministes ; seuils de tolérance définis par le vérificateur ; mécanisme anti-circularité. Consultez [`docs/live-helpers.md`](./docs/live-helpers.md) avant une utilisation en production et le [JOURNAL DES MODIFICATIONS](./CHANGELOG.md) pour l’historique des versions.
 
-## Démarrage rapide en 30 secondes
+## Démarrage rapide en 30 secondes
 
 ```bash
 pnpm add @mcptoolshop/backprop-trace
@@ -39,17 +37,17 @@ npx bp generate mazur | sha256sum
 # 9-sig-fig canonical bytes (V8/Node 22.x) — in-toto v1 attestation seam
 ```
 
-L'exemple Mazur 2-2-2 est la description la plus citée, étape par étape, de la rétropropagation disponible sur le web ([Matt Mazur, 2015](https://mattmazur.com/2015/03/17/a-step-by-step-backpropagation-example/)). Chaque nombre peut être dérivé manuellement.
+Le modèle Mazur 2-2-2 est la démonstration de rétropropagation pas à pas la plus citée sur le web ([Matt Mazur, 2015](https://mattmazur.com/2015/03/17/a-step-by-step-backpropagation-example/)). Chaque nombre qu’il contient peut être dérivé manuellement.
 
-## Ce qu'est cet outil
+## Ce que c’est
 
-Un vérificateur de la correction numérique pour une seule étape de formation. Le vérificateur applique 26 règles qui recalculent chaque affirmation à partir des facteurs spécifiés. Si une règle quelconque présente une divergence, même minime (`atol + rtol`), le fichier est rejeté. Les règles 9 et 10 (multi-étapes), les règles 18 et 19 (regroupement), les règles 22 à 24 (récurrence de l'impulsion Adam), les règles 20 et 21a/21b/21c + 25 + 26 (récurrence de l'impulsion SGD) et la règle 14 (recalcul différentiel du moteur à partir des traces du framework importé) couvrent les aspects pertinents pour la production.
+Un vérificateur de correction numérique pour une étape d’entraînement. Le réconciliateur examine 26 règles qui redérivent chaque affirmation à partir des facteurs nommés. Si une règle quelconque est en désaccord dans la tolérance hybride (`atol + rtol`), l’enregistrement est rejeté. Les étapes multiples (Règles 9 et 10), les traitements par lots (Règles 18 et 19), les récurrences de momentum Adam (Règles 22-24), la récurrence de momentum SGD (Règles 20 + 21a/21b/21c + 25 + 26) et le recalcul différentiel du moteur sur les traces importées du framework (Règle 14) couvrent les aspects pertinents pour la production.
 
-Il **ne** valide pas l'ensemble de la formation, ne prouve pas que le modèle est correct, et ne remplace pas un outil de suivi des expériences. Il prouve que chaque étape enregistrée est mathématiquement cohérente et que la chaîne est intacte. Des ensembles de données adverses permettent de tester un vérificateur ([Csmith PLDI 2011](https://users.cs.utah.edu/~regehr/papers/pldi11-preprint.pdf); [CompCert CACM 2009](https://xavierleroy.org/publi/compcert-CACM.pdf)) ; chaque règle est accompagnée d'une configuration incorrecte correspondante, située dans le répertoire [`fixtures/bad/`](./fixtures/bad), que le vérificateur doit rejeter *avant* de lire les métadonnées `fixture_status`.
+Il ne valide **pas** l’ensemble de l’exécution de l’entraînement, ne prouve pas que le modèle est correct et ne remplace pas un outil de suivi des expériences. Il prouve que chaque étape enregistrée est mathématiquement cohérente et que la chaîne est intacte. Des corpus adverses prouvent qu’un vérificateur fonctionne ([Csmith PLDI 2011](https://users.cs.utah.edu/~regehr/papers/pldi11-preprint.pdf) ; [CompCert CACM 2009](https://xavierleroy.org/publi/compcert-CACM.pdf)) — chaque règle est livrée avec un exemple incorrect associé dans [`fixtures/bad/`](./fixtures/bad) que le vérificateur doit rejeter *avant* de lire les métadonnées `fixture_status`.
 
-## Utilitaire PyTorch en direct (v0.10+)
+## Assistant PyTorch en direct (v0.10+)
 
-Un seul fichier Python lisible. Pas de paquet pip par conception ; copiez-le dans votre dépôt, lisez-le et exécutez-le.
+Fichier Python unique et auditable. Pas de package pip par conception — copiez-le dans votre dépôt, lisez-le, exécutez-le.
 
 ```bash
 # 1. Install + copy the helper
@@ -68,20 +66,20 @@ npx bp import pytorch trace.jsonl | npx bp verify multi -
 # exit 0 — clean · 1 — Rule violation · 2 — I/O error
 ```
 
-L'utilitaire génère un fichier auxiliaire `framework-trace.v0.7.0` contenant un bloc "helper" avec des informations forensiques (nom, version, hash de la source, version du framework, environnement d'exécution, horodatage de l'extraction). Ce bloc **n'est pas une preuve d'authenticité** ; la règle 14 (recalcul différentiel du moteur) est la référence pour chaque fichier auxiliaire généré, quel que soit ce que l'utilitaire prétend. Un `source_hash` falsifié, incorrect ou manquant **ne contourne pas** la règle 14. Consultez le fichier [`docs/live-helpers.md`](./docs/live-helpers.md) pour la déclaration de limite de confiance, la liste des éléments interdits, le catalogue de 9 configurations adverses et le contrat de distribution sans pip.
+L’assistant émet un fichier secondaire `framework-trace.v0.7.0` avec un bloc `helper` à des fins d’analyse (nom, version, hachage de la source, version du framework, environnement d’exécution, horodatage de l’extraction). Le bloc n’est **pas une information d’identification** — la Règle 14 (recalcul différentiel du moteur) est la référence pour chaque fichier secondaire émis par l’assistant, quels que soient les éléments que l’assistant prétend. Un `source_hash` falsifié/incorrect/manquant ne contourne **pas** la Règle 14. Consultez [`docs/live-helpers.md`](./docs/live-helpers.md) pour connaître la déclaration sur la limite de confiance, la liste interdite, le catalogue adversarial à 9 éléments et le contrat d’absence de distribution pip.
 
-**Pris en charge (v0.10.x)** : PyTorch SGD + Adam + AdamW + sgd_momentum (classique/Nesterov/amortissement, avec l'inversion du signe de l'impulsion `momentum_buffer` de l'ascension à la descente, comme décrit dans [l'article PyTorch #1099](https://github.com/pytorch/pytorch/issues/1099)). Fonctionne uniquement sur CPU. Prise en charge des configurations simples et multi-étapes.
-**Exclusions :** AMP/autocast, CUDA/MPS/XLA, SGD avec décroissance de poids L2 couplée, AMSGrad/NAdam/RAdam/Lion/LBFGS, topologies multi-couches cachées. Les fichiers auxiliaires créés manuellement pour ces frameworks/optimiseurs continuent de fonctionner via le chemin standard `bp import`.
+**Pris en charge :** PyTorch SGD + Adam + AdamW + sgd_momentum (classique/Nesterov/amortissement) + **SGD couplé à une décroissance L2 des poids**, avec l’inversion du signe `momentum_buffer` de l’ascension vers la descente, comme indiqué dans [le problème PyTorch n° 1099](https://github.com/pytorch/pytorch/issues/1099). Priorité au CPU. Étape unique + étapes multiples. Un **assistant JAX en direct parallèle** (`scripts/extract/jax.py`) couvre SGD + Adam avec une limite de confiance plus stricte — il inclut un résumé `jax.make_jaxpr(jax.grad(loss))` dans le bloc d’analyse (le graphe de gradient inspectable que PyTorch eager n’a pas) et refuse de s’exécuter sans `jax_enable_x64` + CPU. Consultez [`docs/live-helpers.md`](./docs/live-helpers.md).
+**Rejeté à la limite :** AMP/autocast, CUDA/MPS/XLA, AMSGrad/NAdam/RAdam/Lion/LBFGS, topologies multi-couches cachées. Les fichiers secondaires créés manuellement pour ces frameworks/optimiseurs continuent de fonctionner via le chemin standard `bp import`.
 
-## Ce que ce n'est pas
+## Ce que ce n’est pas
 
-- **Ce n'est pas un outil de suivi d'expériences.** Utilisez [MLflow](https://mlflow.org), [Weights & Biases](https://wandb.ai), [TensorBoard](https://www.tensorflow.org/tensorboard) ; ces outils enregistrent les informations relatives aux expériences. `backprop-trace` permet de vérifier la cohérence interne des calculs.
-- **Ce n'est pas une preuve de l'apprentissage (Proof-of-Learning) ni une preuve cryptographique de l'apprentissage (zkML).** [PoL](https://arxiv.org/abs/2103.05633) a été démontré comme pouvant être falsifié lors d'entraînements réels ([Fang et al. EuroS&P 2023](https://arxiv.org/abs/2208.03567)) ; zkML produit des preuves cryptographiques. `backprop-trace` n'est pas cryptographique, fonctionne par étapes, et est destiné à être utilisé par un humain ou un outil de revue de code.
-- **Ce n'est pas une attestation de la chaîne d'approvisionnement.** [La signature de modèles Sigstore](https://github.com/sigstore/model-transparency), [SLSA-for-models](https://slsa.dev), [CycloneDX ML-BOM](https://cyclonedx.org/capabilities/mlbom/) attestent de l'origine des pipelines ; `backprop-trace` atteste de la cohérence numérique. Un ML-BOM peut référencer un reçu `backprop-trace` comme une condition de cohérence interne.
+- **Pas un outil de suivi des expériences.** Utilisez [MLflow](https://mlflow.org), [Weights & Biases](https://wandb.ai), [TensorBoard](https://www.tensorflow.org/tensorboard) — ces outils enregistrent les affirmations ; la rétropropagation redérive si les calculs sont cohérents en interne.
+- **Pas une preuve d’apprentissage ou un zkML.** Il a été démontré que [PoL](https://arxiv.org/abs/2103.05633) pouvait être falsifié sur des données d’entraînement réelles ([Fang et al. EuroS&P 2023](https://arxiv.org/abs/2208.03567)) ; zkML produit des preuves cryptographiques. La rétropropagation n’est pas cryptographique, elle est effectuée en une seule étape et son public est un humain ou un réviseur CI.
+- **Pas une attestation de la chaîne d’approvisionnement.** [Sigstore model-signing](https://github.com/sigstore/model-transparency), [SLSA-for-models](https://slsa.dev), [CycloneDX ML-BOM](https://cyclonedx.org/capabilities/mlbom/) attestent de la provenance du pipeline ; la rétropropagation atteste de la cohérence numérique. Un ML-BOM peut faire référence à un enregistrement de rétropropagation en tant que prédicat de cohérence interne.
 
 ## Modèle de menace
 
-Ce qui est couvert : tout reçu qui devrait être rejeté mais qui est accepté, notamment les contournements de schéma, les injections de NaN/Infinity, les divergences d'émission canonique, les violations de circularité, et les désaccords de recalcul du moteur concernant les modules complémentaires importés. Ce qui n'est pas couvert : la fiabilité de l'exécution d'entraînement elle-même, les attaques par canaux cachés sur le processus de vérification. Le déterminisme est limité : une sortie identique au niveau des octets est garantie uniquement pour la même version de `backprop-trace`, Node.js 22.x et la même spécification d'émission canonique. Consultez [SECURITY.md](./SECURITY.md) pour la liste complète et le calendrier des divulgations.
+Ce qui est pris en compte : tout enregistrement qui devrait être rejeté mais est accepté — contournement du schéma, empoisonnement par NaN/Infini, divergence d’émission canonique, violations de l’anti-circularité, désaccord sur le recalcul du moteur sur les fichiers secondaires importés. Ce qui n’est pas pris en compte : la fiabilité de l’exécution de l’entraînement elle-même, les attaques par canaux auxiliaires sur le processus de vérification. Le déterminisme est limité : une sortie identique au niveau des octets n’est garantie que pour la même version de rétropropagation, Node.js 22.x et la même spécification d’émission canonique. Consultez [SECURITY.md](./SECURITY.md) pour l’énumération complète + le calendrier de divulgation.
 
 ## Installation
 
@@ -89,27 +87,27 @@ Ce qui est couvert : tout reçu qui devrait être rejeté mais qui est accepté,
 pnpm add @mcptoolshop/backprop-trace   # or: npm install @mcptoolshop/backprop-trace
 ```
 
-Fixé à Node 22.x (le déterminisme de `Math.exp` de V8 fdlibm est essentiel - voir [`docs/computation-order.md`](./docs/computation-order.md)).
+Fixé à Node 22.x (le déterminisme de `Math.exp` de V8 fdlibm est essentiel — voir [`docs/computation-order.md`](./docs/computation-order.md)).
 
-## Interface en ligne de commande (CLI)
+## CLI
 
-Référence complète : [`docs/cli.md`](./docs/cli.md).
+Référence complète : [`docs/cli.md`](./docs/cli.md).
 
 | Verbe | Objectif |
 |---|---|
-| `bp reconcile receipt <file>` | Exécuter les 26 règles ; quitter avec le code 1 en cas de première erreur. |
-| `bp verify mazur` | Vérification complète de la fixture Mazur intégrée. |
-| `bp verify general <file>` | Vérification généralisée (récépés v0.2+ : XOR, iris, softmax+CE, mode observateur). |
-| `bp verify multi <file.jsonl>` | Fichier JSONL multi-enregistrements + règles 9/10 inter-enregistrements. |
-| `bp generate {mazur,xor,iris}` | Relancer le moteur spécifié, générer des octets canoniques. |
-| `bp generate from-config <file>` | Relancer le moteur à partir d'une topologie et d'une entrée au format JSON. |
-| `bp scaffold topology --topology mazur` | `xor` | `iris` | Créer un fichier de configuration de base. |
-| `bp validate-input <file>` | Valider le schéma d'une topologie et d'une entrée. |
-| `bp validate <file>` | Valider le schéma d'un reçu (détection automatique de la version 0.1 à 0.7). |
-| `bp import {pytorch,jax,tensorflow} [multi] <sidecar>` | Importer une trace d'un framework externe. |
-| `bp examples pytorch [--print]` | Afficher le chemin (ou afficher le contenu) de l'outil PyTorch intégré. |
+| `bp reconcile receipt <file>` | Exécuter les 26 règles ; quitter avec le code 1 en cas de première erreur |
+| `bp verify mazur` | Validation complète sur l’ensemble de données Mazur fourni. |
+| `bp verify general <file>` | Porte généralisée (v0.2+ : XOR, iris, softmax+CE, mode observateur) |
+| `bp verify multi <file.jsonl>` | JSONL multi-enregistrements + règles inter-enregistrements (9/10) |
+| `bp generate {mazur,xor,iris}` | Relancer le moteur spécifié et générer les octets canoniques |
+| `bp generate from-config <file>` | Relancer le moteur à partir d’une topologie + d’un fichier JSON en entrée |
+| `bp scaffold topology --topology mazur\ | xor\ | iris` | Écrire une configuration d’entrée de base |
+| `bp validate-input <file>` | Valider la conformité d’une configuration de topologie + d’entrée par rapport à un schéma |
+| `bp validate <file>` | Valider la conformité d’un résultat (détection automatique des versions v0.1-v0.7) |
+| `bp import {pytorch,jax,tensorflow} [multi] <sidecar>` | Ingérer les données de traçage d’une infrastructure externe |
+| `bp examples {pytorch,jax} [--print]` | Afficher le chemin d’accès (ou afficher le contenu) du module d’aide PyTorch/JAX actif inclus |
 
-Options courantes : `--out <file>`, `--json`, `--verbose`/`-V`, `--color=auto|never|always`, l'argument de fichier `-` représente l'entrée standard. Codes de sortie : `0` succès · `1` échec de vérification · `2` erreur d'utilisation/I-O · `3` argument CLI invalide · `4` framework non implémenté.
+Options courantes : `--out <fichier>`, `--json`, `--verbose`/`-V`, `--color=auto\|never\|always`, argument de fichier `-` = entrée standard. Codes de sortie : `0` succès, `1` échec de la vérification, `2` utilisation/E-S, `3` argument CLI non valide, `4` infrastructure non implémentée.
 
 ## Bibliothèque
 
@@ -122,62 +120,70 @@ import {
 
 const receipt = runMazurStep(MAZUR_INPUT);
 const validated = validateReceiptSchema(receipt);    // schema gate
-const result = reconcileReceipt(receipt);             // 26-rule gate
+const result = reconcileReceipt(receipt);             // 26-rule internal-consistency gate
 const sha = hashReceipt(receipt);                     // in-toto seam
-const repro = verifyEngineReproduces(receipt);        // bit-equal recompute
+const repro = verifyEngineReproduces(receipt);        // engine-reproduce: re-derives from inputs
 
 const { receipt: imported, differentialPassed } =
   importPytorchSidecar(sidecarBytes);                 // observer-mode + Rule 14
 ```
 
-Importations de sous-répertoires : `./reconcile`, `./engine`, `./general-engine`, `./mazur`, `./topology`, `./activations`, `./emit`, `./validate`, `./parse`, `./parse-input`, `./hash`, `./schema-loader`, `./verify-engine`, `./extract`, `./import-pytorch`, `./import-jax`, `./import-tensorflow`, `./import-observer`, ainsi que la famille de schémas `./schema/...`.
+> **Quelle porte prouve quoi.** `reconcileReceipt` prouve que les calculs du résultat sont
+> *internement cohérents* (les 26 règles redérivent chaque affirmation à partir des
+> propres facteurs du résultat). Pour un résultat d’**origine inconnue**, associez-le au
+> module de vérification de la reproduction du moteur : `verifyEngineReproduces` (ou `bp verify general`),
+> qui relance le moteur déterministe à partir des entrées du résultat et compare
+> champ par champ. Cette deuxième porte est celle qui ferme l’enveloppe anti-circularité :
+> la cohérence interne seule ne peut pas détecter un résultat étranger qui aurait été
+> renommé comme étant généré par le moteur, car aucune règle spécifique au résultat ne redérive
+> le passage avant pour un résultat généré par le moteur. Les importations en mode observateur
+> (`importPytorchSidecar`) exécutent automatiquement la comparaison différentielle de reproduction du moteur (règle 14) ; `bp verify` exécute toujours les deux portes.
 
-## Les 16 règles
+Importations de sous-répertoires : `./reconcile`, `./engine`, `./general-engine`, `./mazur`, `./topology`, `./activations`, `./emit`, `./validate`, `./parse`, `./parse-input`, `./hash`, `./schema-loader`, `./verify-engine`, `./extract`, `./import-pytorch`, `./import-jax`, `./import-tensorflow`, `./import-observer`, ainsi que la famille de schémas `./schema/...`.
 
-Instructions complètes + fixtures adverses : [`docs/reconciliation.md`](./docs/reconciliation.md).
+## Les 26 règles
+
+Déclarations complètes + exemples contradictoires : [`docs/reconciliation.md`](./docs/reconciliation.md).
 
 | # | Règle |
 |---|---|
-| 0 | Sentinelle de défaillance structurelle (au niveau du schéma) |
-| 0.8 | Limites de probabilité : les sorties softmax doivent être comprises entre [0, 1] |
-| 1-4 | Signaux d'erreur (sortie, en aval, cachés) + cohérence de la mise à jour du gradient. |
-| 5-7 | Mise à jour de la valeur, progression du poids, état final (branche AdamW pour le wd découplé, règles 6/7). |
-| 8 | Cohérence de la référence d'origine |
-| 9-10 | Chaîne de paramètres multi-étapes + identité de la trace. |
-| 11-13 | Normalisation softmax + formule de perte + forme duale (GATED). |
-| 14 | Différentiel de recalcul du moteur (OBLIGATOIRE pour les imports en mode observateur). |
-| 15-17 | Base de saut + liaison de la somme de contrôle signée + liaison de la racine du paquet (GATED). |
-| 18-19 | Cohérence de la réduction par lots + cohérence de l'ensemble d'échantillons (GATED). |
-| 20 | Forme de l'état de l'optimiseur (Adam `{m, v}` / sgd_momentum `{buffer}`). |
-| 21 | **Momentum SGD de type PyTorch** : 21a récurrence du buffer + 21b direction effective + 21c mise à jour du paramètre. |
-| 22-24 | Adam : récurrences, correction des biais, mise à jour des paramètres (epsilon en dehors de la racine carrée). |
-| 25-26 | Chaîne d'optimiseurs à plusieurs étapes + constance de la configuration de l'optimiseur. |
+| 0 | Sentinelle de défaillance structurelle (niveau schéma) |
+| 0.8 | Limites de probabilité : sorties softmax dans [0, 1] |
+| 1-4 | Signaux d’erreur (sortie, en aval, cachés) + cohérence du gradient de mise à jour |
+| 5-7 | Valeur de mise à jour, progression des poids, état final (branche AdamW sur les règles 6/7 pour une décroissance pondérale découplée) |
+| 8 | Cohérence de la référence de provenance |
+| 9-10 | Chaîne de paramètres multi-étapes + identité du traçage |
+| 11-13 | Normalisation softmax + formule de perte + forme duale (GATED) |
+| 14 | Comparaison différentielle de recalcul par le moteur (OBLIGATOIRE pour les importations en mode observateur) |
+| 15-17 | Liaison de base de saut + liaison de hachage signé + liaison à la racine du paquet (GATED) |
+| 18-19 | Cohérence de réduction par lot + cohérence de l’ensemble d’échantillons (GATED) |
+| 20 | Forme de l’état de l’optimiseur (Adam `{m, v}` / sgd_momentum `{buffer}`) |
+| 21 | **Momentum SGD de type PyTorch :** 21a récurrence du tampon + 21b direction effective + 21c mise à jour des paramètres |
+| 22-24 | Récurrences du moment Adam + correction de biais + mise à jour des paramètres (epsilon À L’EXTÉRIEUR de la racine carrée) |
+| 25-26 | Chaîne d’état de l’optimiseur multi-étapes + constance de la configuration de l’optimiseur |
 
 ## Portée du déterminisme
 
-Contractuel pour Node 22.x × {ubuntu, macos, windows} × backprop-trace 0.10.x : données de référence exactes en octets (Mazur, XOR, iris, softmax+CE, multi-étape, par lots, modules complémentaires externes) ; l'ancre Mazur `post_update_loss.total = 0.29102777369359933` ; réconciliation par règle avec `atol=1e-12` et `rtol=1e-9` pour les éléments générés par le moteur.
+Contractuel sur Node 22.x × {ubuntu, macos, windows} × backprop-trace 0.12.x : valeurs dorées identiques (Mazur, XOR, iris, softmax+CE, multi-étapes, par lots, modules externes) ; l’ancrage Mazur `post_update_loss.total = 0.29102777369359933` ; réconciliation par règle dans `atol=1e-12`, `rtol=1e-9` pour les résultats générés par le moteur.
 
-NON contractuel : inter-moteurs (Bun, Deno, navigateurs) ; inter-versions majeures de Node (24.x+) ; modifications mineures arbitraires de V8. Un "canari" `Math.exp(-0.5)` est déclenché dans chaque cellule CI comme indicateur de dérive de fdlibm de V8.
+NON contractuel : inter-moteurs (Bun, Deno, navigateurs) ; inter-Node majeur (24.x+) ; modifications mineures arbitraires de V8. Un indicateur `Math.exp(-0.5)` se déclenche sur chaque cellule CI en tant que sirène de dérive fdlibm de V8.
 
-## Ce qui n'est pas inclus dans cette version (pour l'instant)
+## Ce qui n’est pas inclus dans cette version (pour l’instant)
 
-backprop-trace v0.12.0 renforce la robustesse, mais est **toujours en version intermédiaire v0**. Le moteur, le réconciliateur, le contrat d'émission canonique, le chemin d'ingestion externe et l'outil d'aide PyTorch en direct sont réels et stables. La feuille de route ci-dessous est classée par ordre d'utilisation × faisabilité de la vérification — chaque ligne est conditionnée par un recalcul CPU en forme fermée que le réconciliateur peut réellement gérer :
+La v1.0.0 couvre le cas d’utilisation du CPU déterministe de bout en bout : le moteur, le réconciliateur, le contrat d’émission canonique, le chemin d’ingestion externe, les modules d’aide PyTorch **et** JAX actifs, les optimiseurs de la famille SGD, y compris la décroissance pondérale couplée L2, un exemple représentatif et un ensemble de conformité fonctionnel [ici](./docs/compliance.md). La feuille de route ci-dessous indique ce qui n’est **pas encore couvert**, par ordre d’utilisation × faisabilité de vérification, chaque élément étant conditionné par un recalcul CPU en forme fermée que le réconciliateur peut réellement gérer :
 
-- **Décroissance de poids L2 couplée à SGD** — la troisième branche de la règle 7 documentée (`grad += lambda*theta` avant le tampon d'impulsion). Lacune la plus demandée ; recalcul CPU en forme fermée. *v0.13.*
-- **NAdam (+ éventuellement RAdam)** — variantes Adam peu coûteuses. Ensuite, **vérification de l'ordonnancement du taux d'apprentissage**, qui s'applique à tous les optimiseurs. *v0.14.*
-- **Cas d'utilisation réel** — Mazur 2-2-2 + softmax+CE + sgd_momentum-Mazur sont les héros d'aujourd'hui ; un petit réseau convolutif → ReLU → dense, reproductible en octets sur CPU, est la condition pour la version 1.0. *v1.0.*
-- **Validation par les utilisateurs** — pas d'étude de cas de chercheurs externes, pas d'adoption dans les cours, pas de bundle de conformité disponible pour le moment. *Condition pour la version 1.0.*
-- **Outil d'aide JAX** — les modules complémentaires JAX/TF écrits à la main sont déjà importés via la règle 14 ; un outil d'aide utilisant `jax.make_jaxpr(grad)` offre une limite de confiance plus forte que PyTorch eager (CPU + `jax_enable_x64` + XLA épinglé). *v1.0.*
-- **AMSGrad / découpage du gradient selon la norme globale / taux d'apprentissage par groupe / Lion** — chacun est conditionné par une extension de reçu/réconciliateur. *Plus tard.*
-- **Traces multi-framework hétérogènes** — uniquement des bundles pour un seul framework ; les flux multi-framework ne sont pas pris en charge. *Peut ne pas être inclus.*
-- **Tailles de lot hétérogènes entre les étapes** — taille de lot fixe par flux. *Peut ne pas être inclus.*
-- **Gradients par échantillon dans les reçus groupés** — uniquement des gradients réduits pour le moment ; la décomposition par échantillon est utile pour les audits d'influence, mais n'est pas encore disponible. *Plus tard.*
-- **Liaison de l'identité du producteur dans les traces multi-étapes** — la règle 17 détecte les échecs d'intégrité du bundle, mais pas l'authenticité du producteur. À combiner avec la règle 16 / Sigstore / attestation hors bande. Surface d'application, pas une fonctionnalité intégrée.
-- **Déterminisme bit à bit du GPU / des noyaux fusionnés** — hors de portée et permanent. L'absence d'associativité des nombres à virgule flottante rend impossible l'obtention d'une exactitude bit à bit dans les noyaux fusionnés/parallèles ([arXiv:2408.05148](https://arxiv.org/abs/2408.05148); atomiques cuDNN ConvolutionBackwardFilter selon [CMU SEI](https://www.sei.cmu.edu/blog/the-myth-of-machine-learning-reproducibility-and-randomness-for-acquisitions-and-testing-evaluation-verification-and-validation/)). Le produit est le coin déterministe du CPU.
+- **NAdam (+ éventuellement RAdam)** : variantes économiques d’Adam. Ensuite, **vérification du programme d’apprentissage**, qui s’applique à chaque optimiseur. *Ensuite.*
+- **AMSGrad / écrêtage de gradient global / taux d’apprentissage par groupe / Lion** : chacun est activé via une extension de réception/de réconciliation. *Plus tard.*
+- **Topologies Conv / multi-couches cachées** : le moteur est une couche dense à une seule couche cachée ; l’élément clé est un classificateur dense ReLU→softmax reconnaissable. Conv apporte un ordre FP avec noyau fusionné qui lutte contre la déterminisme au niveau du bit (voir GPU ci-dessous). *Probablement en dehors du domaine de déterminisme CPU.*
+- **Traces multi-cadres hétérogènes** : uniquement des ensembles à cadre unique ; les flux multi-cadres ne sont pas pris en charge. *Pourrait rester hors du champ d’application.*
+- **Tailles de lots hétérogènes entre les étapes** : taille de lot fixe par flux. *Pourrait rester hors du champ d’application.*
+- **Gradients par échantillon dans les réceptions groupées** : uniquement des gradients réduits aujourd’hui ; la décomposition par échantillon est utile pour les audits d’influence, mais n’est pas encore disponible. *Plus tard.*
+- **Liaison de l’identité du producteur sur les traces multi-étapes** : la règle 17 détecte les échecs d’intégrité de l’ensemble, et non l’authenticité du producteur. Combiner avec la règle 16 / Sigstore / attestation hors bande. Surface opérateur, pas une fonctionnalité intégrée.
+- **GPU / déterminisme au niveau du bit avec noyau fusionné** : hors du champ d’application et permanent. La non-associativité des nombres à virgule flottante rend l’exactitude au niveau du bit inatteignable dans les noyaux fusionnés/parallèles ([arXiv:2408.05148](https://arxiv.org/abs/2408.05148) ; opérations atomiques cuDNN ConvolutionBackwardFilter selon [CMU SEI](https://www.sei.cmu.edu/blog/the-myth-of-machine-learning-reproducibility-and-randomness-for-acquisitions-and-testing-evaluation-verification-and-validation/)). Le résultat est le domaine CPU déterministe.
 
-Si votre flux de travail dépend de l'une de ces fonctionnalités, cette version n'est pas encore adaptée à vos besoins.
+Si votre flux de travail dépend de l’un de ces éléments, cette version n’est pas encore adaptée à vos besoins.
 
-## Définir une topologie personnalisée
+## Créer une topologie personnalisée
 
 ```bash
 bp scaffold topology --topology xor --out my-net.input.json
@@ -187,37 +193,37 @@ bp generate from-config my-net.input.json --out my-net.golden.jsonl
 bp verify general my-net.golden.jsonl
 ```
 
-Voir [`docs/authoring.md`](./docs/authoring.md) — schémas d'entrée par rapport aux reçus, limite de confiance de l'émission canonique.
+Voir [`docs/authoring.md`](./docs/authoring.md) : schémas d’entrée par rapport aux schémas de réception, limite de confiance pour l’émission canonique.
 
-## Où ce système trouve sa place
+## Où cela s’intègre
 
-- **Auteurs d'articles axés sur la reproductibilité** (NeurIPS/ICML/CoLLAs ; sensibilisation à [REFORMS](https://www.science.org/doi/10.1126/sciadv.adk3452)) — preuves dérivables par étape que le réviseur exécute en 30 secondes.
-- **Pédagogie de l'apprentissage automatique** (Karpathy zero-to-hero, cours universitaires de deep learning, préparation aux entretiens) — une seule étape d'entraînement nommée avec tous les facteurs visibles et un réconciliaur qui *rejette* les configurations délibérément corrompues.
-- **Ingénieurs de frameworks / compilateurs d'apprentissage automatique** (PyTorch / JAX / MLIR / contributeurs XLA) — trace connue et fiable pour chaque opération pour les tests différentiels.
-- **Ingénieurs de conformité / d'audit de l'apprentissage automatique** ([Article 10 de la loi européenne sur l'IA](https://artificialintelligenceact.eu/annex/4/); SLSA-for-ML) — reçu par étape en dessous de la signature du modèle, attaché à une carte de modèle ou à un bundle d'audit.
+- **Auteurs d’articles axés sur la reproductibilité** (NeurIPS/ICML/CoLLAs ; conscients de [REFORMS](https://www.science.org/doi/10.1126/sciadv.adk3452)) : preuves étape par étape qui peuvent être reproduites et que le relecteur peut exécuter en 30 secondes.
+- **Pédagogie de l’apprentissage automatique** (Karpathy, du zéro au héros, cours universitaires sur l’apprentissage profond, préparation aux entretiens) : une seule étape d’entraînement nommée avec tous les facteurs visibles et un réconciliateur qui *rejette* délibérément les éléments défectueux.
+- **Ingénieurs de cadres / compilateurs d’apprentissage automatique** (contributeurs PyTorch / JAX / MLIR / XLA) : trace opération par opération connue pour les tests différentiels.
+- **Ingénieurs de conformité / d’audit de l’apprentissage automatique** ([Annexe IV, § 2(g) du règlement européen sur l’IA, journaux de validation/tests + article 15 sur la robustesse](https://artificialintelligenceact.eu/annex/4/) ; SLSA pour l’apprentissage automatique) : une réception étape par étape en tant qu’enregistrement de test vérifiable, daté et signable, placé sous la signature du modèle. Voir l’ensemble de conformité élaboré [ici](./docs/compliance.md) (et le champ d’application honnête : les reçus attestent des *mathématiques*, pas de la gouvernance des données).
 
-## La pile de règles
+## L’ensemble des lois
 
-Extrait du fichier `docs/canonical-emission.md` :
+Extrait de `docs/canonical-emission.md` :
 
-> Le contrat précède le moteur. La politique de formatage précède le formatage en temps réel. Les reçus incorrects précèdent les reçus corrects. Le formatage en temps réel précède Mazur. Mazur précède les diagnostics.
+> Le contrat précède le moteur. La politique du formateur précède la mise en forme à l’exécution. Les mauvais reçus précèdent les bons reçus. La mise en forme à l’exécution précède Mazur. Mazur précède les diagnostics.
 
 ## Liens
 
-- [`docs/quickstart.md`](./docs/quickstart.md) — Guide rapide en cinq minutes.
-- [`docs/cli.md`](./docs/cli.md) — Référence de la sous-commande `bp`.
-- [`docs/live-helpers.md`](./docs/live-helpers.md) — Assistants PyTorch en direct v0.10 : flux de travail, limites de confiance, catalogue d'attaques, justification de l'absence de dépendance à `pip`.
-- [`docs/authoring.md`](./docs/authoring.md) — Création d'une topologie personnalisée.
-- [`docs/reconciliation.md`](./docs/reconciliation.md) — Les 26 règles de réconciliation, en détail.
-- [`docs/topology.md`](./docs/topology.md) — Création de topologies générales.
-- [`docs/multi-step.md`](./docs/multi-step.md) — Procédures d'entraînement en plusieurs étapes.
-- [`docs/canonical-emission.md`](./docs/canonical-emission.md) — Contrat d'encodage au niveau des octets.
-- [`docs/computation-order.md`](./docs/computation-order.md) — Ordre des opérations IEEE 754 ; interdiction de FMA ; limites du déterminisme.
-- [`docs/schema.md`](./docs/schema.md) — Explication détaillée du schéma, champ par champ.
-- [`docs/attestation.md`](./docs/attestation.md) — Intégration de l'attestation in-toto v1.
-- [`CONTRIBUTING.md`](./CONTRIBUTING.md) — Mécanisme anti-circularité ; principe "les mauvaises entrées précèdent les bonnes".
-- [`SECURITY.md`](./SECURITY.md) — Ce qui constitue une vulnérabilité pour un vérificateur.
-- [`CHANGELOG.md`](./CHANGELOG.md) — Historique des versions.
+- [`docs/quickstart.md`](./docs/quickstart.md) : présentation rapide en cinq minutes
+- [`docs/cli.md`](./docs/cli.md) : référence de la sous-commande `bp`
+- [`docs/live-helpers.md`](./docs/live-helpers.md) : assistant PyTorch v0.10 en direct : flux de travail, limite de confiance, catalogue d’attaques adverses, justification de l’absence de pip
+- [`docs/authoring.md`](./docs/authoring.md) : créer une topologie personnalisée
+- [`docs/reconciliation.md`](./docs/reconciliation.md) : les 26 règles du réconciliateur en intégralité
+- [`docs/topology.md`](./docs/topology.md) : création de topologies générales
+- [`docs/multi-step.md`](./docs/multi-step.md) : reçus d’entraînement multi-étapes
+- [`docs/canonical-emission.md`](./docs/canonical-emission.md) : contrat d’encodage au niveau des octets
+- [`docs/computation-order.md`](./docs/computation-order.md) : ordre IEEE 754 ; interdiction de FMA ; limite du déterminisme
+- [`docs/schema.md`](./docs/schema.md) : présentation détaillée du schéma, champ par champ
+- [`docs/attestation.md`](./docs/attestation.md) : point d’attestation in-toto v1
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md) : mécanisme anti-circularité ; doctrine des mauvais reçus qui précèdent les bons
+- [`SECURITY.md`](./SECURITY.md) : ce qui constitue une vulnérabilité pour un vérificateur
+- [`CHANGELOG.md`](./CHANGELOG.md) : historique version par version
 
 ## Licence
 

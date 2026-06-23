@@ -105,7 +105,7 @@ Full reference: [`docs/cli.md`](./docs/cli.md).
 | `bp validate-input <file>` | Schema-validate a topology+input config |
 | `bp validate <file>` | Schema-validate a receipt (auto-detects v0.1-v0.7) |
 | `bp import {pytorch,jax,tensorflow} [multi] <sidecar>` | Ingest external framework trace |
-| `bp examples pytorch [--print]` | Print path of (or cat) the bundled PyTorch helper |
+| `bp examples {pytorch,jax} [--print]` | Print path of (or cat) the bundled live PyTorch / JAX helper |
 
 Common flags: `--out <file>`, `--json`, `--verbose`/`-V`, `--color=auto\|never\|always`, file arg `-` = stdin. Exit codes: `0` pass · `1` verification failure · `2` usage/I-O · `3` invalid CLI arg · `4` framework not implemented.
 

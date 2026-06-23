@@ -13,11 +13,9 @@
   <a href="https://mcp-tool-shop-org.github.io/backprop-trace/"><img alt="Landing Page" src="https://img.shields.io/badge/landing-page-blue.svg"></a>
 </p>
 
-ニューラルネットワークの学習ステップを検証するための、決定論的な26ルールベースの検証ツールです。このツールは、勾配更新に関与するすべての要素を記述した情報を入力として受け取り、入力された情報と検証結果を照合し、不一致がある場合はエラーを返します。これは、Csmith/CompCertの「検証ツールは、検証対象のアーティファクトを参照してはならない」という原則に基づいています。
+ニューラルネットワークの学習ステップに対する、決定的な26個のルールを持つ検証器。この検証器には、ある勾配更新に寄与したすべての要素を記述したログを提供します。そして、再調整器がすべての主張を再検証し、矛盾がある場合は拒否します。『オラクルは、自身が評価するアーティファクトを参照してはならない』というCsmith/CompCertの系譜における原則に従います。
 
-**Status: mid-v0 (v0.12.0) — 堅牢性の強化リリース。** CPUのみ対応。Verifierは、SGD、Adam、AdamW、およびPyTorchスタイルのSGDモメンタム（古典的、Nesterov、ダンピング）をカバーします。
-PyTorchヘルパー (`scripts/extract/pytorch.py`) は、同じ最適化アルゴリズムをカバーします。Observerのみ対応 — [ルール14](./docs/reconciliation.md) が権威です。
-v0.11は、npmで公開された最初のリリースでした。v0.12.0では、徹底的な敵対的監査を行った後、堅牢性が強化されました。verifierが管理する許容範囲の上限（レシートは、自身の許容範囲を広げることができなくなりました）、マーカーによるルール14の適用、マルチステップの自己スキップ機能の停止、およびリソース制限が適用されました。792個のテスト、12個の信頼性の invariants。v1.0は、[実際のユースケースと導入者による検証](#whats-not-in-this-version-yet) に依存しています。本番環境で使用する前に、[`docs/live-helpers.md`](./docs/live-helpers.md) をご確認ください。
+> **v1.0.0 — CPU専用、決定的な検証**。この検証器は、SGD、Adam、AdamW、SGD-momentum（古典的／ネステロフ／ダンピング）、および26個の再調整ルールにわたる**SGD結合L2重み減衰**をカバーします。ライブの**PyTorchとJAX**ヘルパーが、実際の学習ステップを検証可能なログに抽出します。これは観察者専用であり、[Rule 14](./docs/reconciliation.md)がすべてのインポートされたサイドカーに関する権限を持ちます。940個の決定的なテスト、検証器によって定義された許容範囲の上限、および循環防止メカニズムを備えています。本番環境で使用する前に[`docs/live-helpers.md`](./docs/live-helpers.md)を参照し、バージョン履歴については[CHANGELOG](./CHANGELOG.md)を確認してください。
 
 ## 30秒で始める
 
@@ -39,17 +37,17 @@ npx bp generate mazur | sha256sum
 # 9-sig-fig canonical bytes (V8/Node 22.x) — in-toto v1 attestation seam
 ```
 
-Matt Mazur氏による、バックプロパゲーションのステップごとの解説 ([Matt Mazur, 2015](https://mattmazur.com/2015/03/17/a-step-by-step-backpropagation-example/)) は、広く引用されています。この解説に含まれるすべての数値は、手計算で導き出すことができます。
+Mazur 2-2-2は、オープンなウェブ上で最も引用されている単一ステップの逆伝播の説明です（[Matt Mazur, 2015](https://mattmazur.com/2015/03/17/a-step-by-step-backpropagation-example/)）。その中のすべての数値は、手動で検証できます。
 
-## このツールの概要
+## これは何なのか
 
-単一の学習ステップにおける数値的な正確性を検証するツールです。このツールは、入力された情報から各要素を再計算する26のルールを実行し、その結果を検証します。いずれかのルールで許容範囲 (`atol + rtol`) を超える不一致が見つかった場合、入力された情報は無効と判断されます。複数ステップ (ルール9 + 10)、バッチ処理 (ルール18 + 19)、Adamのモメンタムの再帰 (ルール22-24)、SGDのモメンタムの再帰 (ルール20 + 21a/21b/21c + 25 + 26)、およびインポートされたフレームワークのトレースにおけるエンジンによる微分再計算 (ルール14) は、本番環境で重要な要素をカバーしています。
+単一の学習ステップに対する数値的な正確性を検証するものです。再調整器は、名前が付けられた要素から各主張を再検証する26個のルールに従います。いずれかのルールがハイブリッド許容範囲（`atol + rtol`）内で矛盾する場合、ログは拒否されます。複数ステップ（ルール9 + 10）、バッチ処理（ルール18 + 19）、Adamモーメントの再帰（ルール22-24）、SGDモーメントの再帰（ルール20 + 21a/21b/21c + 25 + 26）、およびインポートされたフレームワークトレースに対するエンジンによる再計算（ルール14）は、本番環境に関連する範囲をカバーします。
 
-このツールは、**全体の学習プロセスを検証するものではありません**。また、モデルが正しいことを証明するものでも、実験の追跡ツールを置き換えるものでもありません。各記録されたステップが数学的に一貫性があり、データが破損していないことを証明します。検証ツールに対する攻撃的なデータセットの作成は、検証ツールの有効性を示すために行われています ([Csmith PLDI 2011](https://users.cs.utah.edu/~regehr/papers/pldi11-preprint.pdf); [CompCert CACM 2009](https://xavierleroy.org/publi/compcert-CACM.pdf))。検証ツールは、検証対象のデータセットを読み込む前に、意図的に不正なデータセット (`fixtures/bad/`) を拒否する必要があります。
+これは、全体的な学習実行を検証したり、モデルが正しいことを証明したり、実験トラッカーに置き換えたりするものではありません。各記録されたステップが数学的に一貫しており、チェーンが損なわれていないことを証明します。敵対的データセットは、検証器の有効性を示します（[Csmith PLDI 2011](https://users.cs.utah.edu/~regehr/papers/pldi11-preprint.pdf); [CompCert CACM 2009](https://xavierleroy.org/publi/compcert-CACM.pdf)）。すべてのルールには、[`fixtures/bad/`](./fixtures/bad)にペアで格納された不良のテストケースが付属しており、検証器は`fixture_status`メタデータを読み取る前に、それを拒否する必要があります。
 
-## ライブPyTorchヘルパー (v0.10以降)
+## ライブPyTorchヘルパー（v0.10以降）
 
-単一の監査可能なPythonファイルです。意図的にpipパッケージとして提供されていません。このファイルをリポジトリにコピーし、内容を確認して実行してください。
+監査可能な単一のPythonファイル。設計上、pipパッケージはありません。リポジトリにコピーし、読み込み、実行してください。
 
 ```bash
 # 1. Install + copy the helper
@@ -68,20 +66,20 @@ npx bp import pytorch trace.jsonl | npx bp verify multi -
 # exit 0 — clean · 1 — Rule violation · 2 — I/O error
 ```
 
-このヘルパーは、`framework-trace.v0.7.0` というサイドカーファイルを作成します。このファイルには、フォレンジック用の `helper` ブロックが含まれており、名前、バージョン、ソースハッシュ、フレームワークのバージョン、実行環境、および抽出日時が記録されています。このブロックは、**認証情報ではありません**。ルール14（エンジンによる微分再計算）が、ヘルパーによって生成されたすべてのサイドカーファイルに対する基準となります。`source_hash` が改ざんされた場合や、正しくない場合、または存在しない場合でも、ルール14は適用されます。信頼境界に関する記述、禁止事項、9つの攻撃的なデータセットのカタログ、およびpipによる配布を禁止する契約については、[`docs/live-helpers.md`](./docs/live-helpers.md) をご確認ください。
+このヘルパーは、フォレンジックな`helper`ブロック（名前、バージョン、ソースハッシュ、フレームワークバージョン、ランタイム、抽出タイムスタンプ）を含む`framework-trace.v0.7.0`サイドカーを出力します。このブロックは**認証情報ではありません**。ルール14（エンジンによる再計算）が、ヘルパーが主張する内容に関係なく、すべてのヘルパーによって出力されるサイドカーの権限を持ちます。偽造された/誤った/欠落した`source_hash`は、ルール14を回避しません。信頼境界に関する記述、禁止リスト、9個のテストケースを含む敵対的カタログ、およびpipによる配布なしの契約については、[`docs/live-helpers.md`](./docs/live-helpers.md)を参照してください。
 
-**サポート対象 (v0.10.x)**: PyTorch SGD、Adam、AdamW、およびsgd_momentum（古典的、Nesterov、減衰付き。`momentum_buffer` の ascent→descent の符号反転は、[PyTorch issue #1099](https://github.com/pytorch/pytorch/issues/1099) で参照）。CPU優先。単一ステップと複数ステップに対応。
-**境界でサポート対象外**: AMP/autocast、CUDA/MPS/XLA、SGDと結合されたL2重み減衰、AMSGrad/NAdam/RAdam/Lion/LBFGS、および複数隠れ層のトポロジー。これらのフレームワーク/最適化アルゴリズムに対する手動で作成されたサイドカーファイルは、標準の `bp import` パスを使用して引き続き機能します。
+**サポート対象**: PyTorch SGD + Adam + AdamW + sgd_momentum（古典的／ネステロフ／ダンピング）+ **SGD結合L2重み減衰**。`momentum_buffer`の方向転換（上昇→下降）は、[PyTorch issue #1099](https://github.com/pytorch/pytorch/issues/1099)に従います。CPUを優先します。単一ステップと複数ステップの両方をサポートします。より強力な信頼境界を持つ、並列の**ライブJAXヘルパー**（`scripts/extract/jax.py`）は、SGD + Adamをカバーします。これは、`jax.make_jaxpr(jax.grad(loss))`ダイジェストをフォレンジックブロックに折り込みます（PyTorchのイージーモードには見られない、検査可能な勾配グラフ）。また、`jax_enable_x64`とCPUがなければ実行されません。詳細については、[`docs/live-helpers.md`](./docs/live-helpers.md)を参照してください。
+**境界で拒否**: AMP/autocast、CUDA/MPS/XLA、AMSGrad/NAdam/RAdam/Lion/LBFGS、多層隠れ層トポロジー。これらのフレームワーク/オプティマイザーに対する手動作成のサイドカーは、標準の`bp import`パスを介して引き続き機能します。
 
-## このツールの機能範囲
+## これは何ではないのか
 
-- **実験追跡機能ではありません。** [MLflow](https://mlflow.org)、[Weights & Biases](https://wandb.ai)、[TensorBoard](https://www.tensorflow.org/tensorboard) などのツールを使用してください。これらのツールはログを記録します。`backprop-trace` は、内部的な整合性が保たれているかどうかを再計算します。
-- **学習証明 (Proof-of-Learning) や zkML ではありません。** [PoL](https://arxiv.org/abs/2103.05633) は、実際の学習において偽造可能であることが示されています ([Fang et al. EuroS&P 2023](https://arxiv.org/abs/2208.03567))。zkML は暗号的な証明を生成します。`backprop-trace` は暗号化を使用せず、単一ステップで実行され、対象は人間またはCIのレビュー担当者です。
-- **サプライチェーンの信頼性保証機能ではありません。** [Sigstore model-signing](https://github.com/sigstore/model-transparency)、[SLSA-for-models](https://slsa.dev)、[CycloneDX ML-BOM](https://cyclonedx.org/capabilities/mlbom/) は、パイプラインの信頼性を保証します。`backprop-trace` は、数値的な整合性を保証します。ML-BOM は、`backprop-trace` の結果を内部整合性の条件として参照できます。
+- **実験トラッカーではありません**。[MLflow](https://mlflow.org)、[Weights & Biases](https://wandb.ai)、[TensorBoard](https://www.tensorflow.org/tensorboard)を使用してください。これらは主張を記録します。バックプロパゲーショントレースは、数学的な整合性を内部的に検証します。
+- **Proof-of-LearningやzkMLではありません**。[PoL](https://arxiv.org/abs/2103.05633)は、実際の学習で偽造可能であることが示されました（[Fang et al. EuroS&P 2023](https://arxiv.org/abs/2208.03567)）。zkMLは暗号化された証明を生成します。バックプロパゲーショントレースは非暗号化であり、単一ステップで、対象者は人間またはCIレビュー担当者です。
+- **サプライチェーンの認証ではありません**。[Sigstore model-signing](https://github.com/sigstore/model-transparency)、[SLSA-for-models](https://slsa.dev)、[CycloneDX ML-BOM](https://cyclonedx.org/capabilities/mlbom/)は、パイプラインの出所を認証します。バックプロパゲーショントレースは、数値的な整合性を認証します。ML-BOMは、内部整合性の述語としてバックプロパゲーショントレースログを参照できます。
 
 ## 脅威モデル
 
-対象範囲: 拒否されるべきだが受け入れられてしまう場合 — スキーマのバイパス、NaN/Infinity による汚染、正準出力の乖離、循環性の違反、エンジン再計算におけるサイドカーとの不一致。 範囲外: 学習自体や、検証プロセスに対するサイドチャネル攻撃。 決定性は制限されます。同一の `backprop-trace` バージョン、Node.js 22.x、および同一の正準出力仕様においてのみ、バイト単位の同一出力が保証されます。 詳細な情報と公開スケジュールについては、[SECURITY.md](./SECURITY.md) を参照してください。
+対象範囲：拒否されるべきだが受け入れられるログ（スキーマのバイパス、NaN/Infinityによる汚染、カノニカル出力のずれ、循環防止違反、インポートされたサイドカーに対するエンジンによる再計算の不一致）。対象外：学習実行自体の信頼性、検証プロセスに対するサイドチャネル攻撃。決定性は限定的です。バイト単位で同一の出力は、同じバックプロパゲーショントレースバージョン、Node.js 22.x、および同じカノニカル出力仕様でのみ保証されます。完全な列挙と開示タイムラインについては、[SECURITY.md](./SECURITY.md)を参照してください。
 
 ## インストール
 
@@ -89,27 +87,27 @@ npx bp import pytorch trace.jsonl | npx bp verify multi -
 pnpm add @mcptoolshop/backprop-trace   # or: npm install @mcptoolshop/backprop-trace
 ```
 
-Node 22.x に固定 (V8 fdlibm `Math.exp` の決定性は重要 — `docs/computation-order.md` を参照)。
+Node 22.xに固定（V8 fdlibm `Math.exp`の決定性が重要です。詳細については、[`docs/computation-order.md`](./docs/computation-order.md)を参照）。
 
-## CLI (コマンドラインインターフェース)
+## CLI
 
-詳細な参照: [`docs/cli.md`](./docs/cli.md)。
+完全なリファレンス：[`docs/cli.md`](./docs/cli.md)。
 
-| コマンド | 目的 |
+| 動詞 | 目的 |
 |---|---|
-| `bp reconcile receipt <file>` | 26 個のすべてのルールを実行し、最初の失敗で終了コード 1 を返す |
-| `bp verify mazur` | バンドルされた Mazur テストスイートに対する完全な検証 |
-| `bp verify general <file>` | 汎用的な検証 (v0.2+ の結果: XOR、iris、softmax+CE、observerモード) |
-| `bp verify multi <file.jsonl>` | 複数のレコードを持つ JSONL ファイルと、レコード間のルール 9/10 の検証 |
-| `bp generate {mazur,xor,iris}` | 指定されたエンジンを再実行し、正準バイトを出力する |
-| `bp generate from-config <file>` | トポロジーと入力を含む JSON ファイルからエンジンを再実行する |
-| `bp scaffold topology --topology mazur` | `xor` | `iris` | 入力設定ファイルのテンプレートを作成する |
-| `bp validate-input <file>` | トポロジーと入力設定ファイルをスキーマ検証する |
-| `bp validate <file>` | 結果ファイルをスキーマ検証する (v0.1～v0.7 を自動的に検出) |
-| `bp import {pytorch,jax,tensorflow} [multi] <sidecar>` | 外部フレームワークのトレースをインポートする |
-| `bp examples pytorch [--print]` | バンドルされた PyTorch ヘルパーのパスを表示する (または内容を表示する) |
+| `bp reconcile receipt <file>` | 26個すべてのルールを実行し、最初の失敗時に1を返して終了します。 |
+| `bp verify mazur` | バンドルされたMazurのテストケースに対して完全なゲートを行います。 |
+| `bp verify general <file>` | 汎用ゲート（v0.2+、検証対象：XOR、iris、softmax+CE、オブザーバーモード） |
+| `bp verify multi <file.jsonl>` | 複数レコードのJSONL + レコードをまたぐルール（9/10） |
+| `bp generate {mazur,xor,iris}` | 指定されたエンジンを再実行し、標準化されたバイト列を出力する |
+| `bp generate from-config <file>` | トポロジーと入力JSONからエンジンを再実行する |
+| `bp scaffold topology --topology mazur\ | xor\ | iris` | 初期入力設定ファイルを記述する |
+| `bp validate-input <file>` | トポロジーと入力設定ファイルのスキーマ検証を行う |
+| `bp validate <file>` | 検証対象のスキーマを検証する（v0.1～v0.7を自動検出） |
+| `bp import {pytorch,jax,tensorflow} [multi] <sidecar>` | 外部フレームワークのトレースを取り込む |
+| `bp examples {pytorch,jax} [--print]` | バンドルされたライブPyTorch / JAXヘルパーのパスを出力する（または内容を表示する） |
 
-共通のオプション: `--out <ファイル名>`, `--json`, `--verbose`/`-V`, `--color=auto|never|always`, ファイル引数 `-` は標準入力。 終了コード: `0` は成功、`1` は検証エラー、`2` は使用方法/I/O エラー、`3` は無効な CLI 引数、`4` はフレームワークが実装されていない。
+一般的なフラグ：`--out <ファイル>`、`--json`、`--verbose`/`-V`、`--color=auto\|never\|always`、ファイル引数 `-` = 標準入力。終了コード：`0`（成功）、`1`（検証失敗）、`2`（使用方法/I-Oエラー）、`3`（無効なCLI引数）、`4`（フレームワークが実装されていない）。
 
 ## ライブラリ
 
@@ -122,62 +120,62 @@ import {
 
 const receipt = runMazurStep(MAZUR_INPUT);
 const validated = validateReceiptSchema(receipt);    // schema gate
-const result = reconcileReceipt(receipt);             // 26-rule gate
+const result = reconcileReceipt(receipt);             // 26-rule internal-consistency gate
 const sha = hashReceipt(receipt);                     // in-toto seam
-const repro = verifyEngineReproduces(receipt);        // bit-equal recompute
+const repro = verifyEngineReproduces(receipt);        // engine-reproduce: re-derives from inputs
 
 const { receipt: imported, differentialPassed } =
   importPytorchSidecar(sidecarBytes);                 // observer-mode + Rule 14
 ```
 
-サブパスのインポート: `./reconcile`, `./engine`, `./general-engine`, `./mazur`, `./topology`, `./activations`, `./emit`, `./validate`, `./parse`, `./parse-input`, `./hash`, `./schema-loader`, `./verify-engine`, `./extract`, `./import-pytorch`, `./import-jax`, `./import-tensorflow`, `./import-observer`, およびスキーマ関連のファイル `./schema/...`.
+> **どのゲートが何を証明するか。** `reconcileReceipt`は、検証対象の計算結果が
+> *内部的に整合性がある*ことを証明する（26個のルールが、検証対象の独自の要素から各主張を再導出する）。**起源不明**の検証対象の場合、エンジン再現ゲートとペアにする—`verifyEngineReproduces`（または`bp verify general`）で、これは検証対象の入力から決定論的なエンジンを再実行し、フィールドごとに比較する。この2番目のゲートが、循環性を回避するための枠組みを完成させる：内部整合性だけでは、エンジンによって作成されたものとして再ラベル付けされた外部の検証対象を検出することはできない。なぜなら、各検証対象ごとのルールは、エンジンによって作成された検証対象に対するフォワードパスを再導出しないからである。オブザーバーモードインポート（`importPytorchSidecar`）は、エンジン再現差分（ルール14）を自動的に実行する。`bp verify`は常に両方のゲートを実行する。
 
-## 26 個のルール
+サブパスインポート：`./reconcile`、`./engine`、`./general-engine`、`./mazur`、`./topology`、`./activations`、`./emit`、`./validate`、`./parse`、`./parse-input`、`./hash`、`./schema-loader`、`./verify-engine`、`./extract`、`./import-pytorch`、`./import-jax`、`./import-tensorflow`、`./import-observer`、およびスキーマファミリー `./schema/...`。
 
-詳細な説明と敵対的なテストケース: [`docs/reconciliation.md`](./docs/reconciliation.md)。
+## 26個のルール
+
+完全なステートメント + 敵対的テストケース：[`docs/reconciliation.md`](./docs/reconciliation.md)。
 
 | # | ルール |
 |---|---|
-| 0 | 構造的なエラーの検出 (スキーマレベル) |
-| 0.8 | 確率の範囲 — softmax の出力が [0, 1] の範囲内であること |
-| 1-4 | エラー信号 (出力、後続の層、隠れ層) と、更新勾配の一貫性 |
-| 5-7 | 更新値、重みの変化、最終状態 (AdamW の場合、ルール 6/7 で重み減衰を分離) |
-| 8 | Provenance (データの出所) の参照の一貫性 |
-| 9-10 | 複数のパラメータの連鎖とトレースの一致 |
-| 11-13 | softmax の正規化、損失関数、および双対形式 (GATED) |
-| 14 | エンジン再計算微分（オブザーバーモードでのインポート時は必須） |
-| 15-17 | スキップベース + 署名付きダイジェスト結合 + バンドルルート結合（条件付き） |
-| 18-19 | バッチ削減の一貫性 + サンプルセットの整合性（条件付き） |
-| 20 | 最適化器の状態形状（Adam `{m, v}` / sgd_momentum `{buffer}`） |
-| 21 | **PyTorch スタイルの SGD モメンタム**: 21a バッファ再帰 + 21b 効果的な方向 + 21c パラメータ更新 |
-| 22-24 | Adam モメンタム再帰 + バイアス補正 + パラメータ更新（epsilon は sqrt の外側） |
-| 25-26 | マルチステップ最適化器の状態チェーン + 最適化器設定の一貫性 |
+| 0 | 構造的な失敗を示すセンチネル（スキーマレベル） |
+| 0.8 | 確率の範囲—softmax出力は[0, 1]の間 |
+| 1-4 | エラー信号（出力、下流、隠れ層）+ 更新勾配の一貫性 |
+| 5-7 | 更新値、重みの進行、最終状態（AdamWブランチをルール6/7に適用し、デカップリングされた重み減衰を実現） |
+| 8 | 起源参照の一貫性 |
+| 9-10 | 多段階のパラメータチェーン + トレースIDの一致 |
+| 11-13 | softmax正規化 + 損失関数 + 二次形式（GATED） |
+| 14 | エンジン再計算差分（オブザーバーモードインポートの場合に必須） |
+| 15-17 | スキップベース + 署名付きダイジェストバインド + バンドルルートバインド（GATED） |
+| 18-19 | バッチ削減の一貫性 + サンプルセットのコヒーレンス（GATED） |
+| 20 | オプティマイザー状態の形状（Adam `{m, v}` / sgd_momentum `{buffer}`） |
+| 21 | **PyTorchスタイルのSGDモーメンタム**: 21aバッファ再帰 + 21b有効方向 + 21cパラメータ更新 |
+| 22-24 | Adamモーメント再帰 + バイアス補正 + パラメータ更新（イプシロンは平方根の外側） |
+| 25-26 | 多段階のオプティマイザー状態チェーン + オプティマイザー設定の一貫性 |
 
 ## 決定論の範囲
 
-Node 22.x × {ubuntu, macos, windows} × backprop-trace 0.10.x に対して、バイト単位で一致する検証済みデータ（Mazur, XOR, iris, softmax+CE, マルチステップ, バッチ処理, 外部サイドカー）を使用。Mazur のアンカー値 `post_update_loss.total = 0.29102777369359933`。エンジンによって生成されたデータに対して、`atol=1e-12`、`rtol=1e-9` の範囲内でルールごとの整合性を検証。
+Node 22.x × {ubuntu, macos, windows} × backprop-trace 0.12.xにおいて契約により保証される：バイト単位で完全に一致するゴールデン値（Mazur、XOR、iris、softmax+CE、多段階、バッチ処理、外部サイドカー）。Mazurアンカー `post_update_loss.total = 0.29102777369359933`。エンジンによって作成されたものについては、`atol=1e-12`、`rtol=1e-9`で各ルールの整合性を検証する。
 
-検証対象外: クロスエンジン（Bun, Deno, ブラウザ）、Node のメジャーバージョン 24.x 以降、任意の V8 のマイナーバージョンアップ。`Math.exp(-0.5)` が、V8 の fdlibm のずれを検知するための指標として、すべての CI 環境で動作します。
+契約により保証されない：クロスエンジン（Bun、Deno、ブラウザ）、Nodeのメジャーバージョンが異なる場合（24.x+）、任意のV8マイナーアップデート。すべてのCIセルで、`Math.exp(-0.5)`カナリアテストを実行し、V8のfdlibmドリフトを検知する。
 
-## このバージョンに含まれていないもの（現時点では）
+## このバージョンにはまだ含まれていないもの
 
-backprop-trace v0.12.0 は堅牢性を強化していますが、**まだ mid-v0 の段階です。** エンジン、リコンサイラー、標準的なエミッション契約、外部からのデータ取り込みパス、およびPyTorchライブヘルパーは、実用段階であり、安定しています。以下のロードマップは、使用頻度と検証の容易さの順に並べられています。各項目は、リコンサイラーが実際に所有できる、閉じた形式のCPU再計算に依存します。
+v1.0.0は、決定論的なCPU環境でエンドツーエンドに動作するように設計されている：エンジン、整合性検証ツール、標準化された出力契約、外部入力パス、ライブPyTorch **および** JAXヘルパー、結合されたL2重み減衰を含むSGDファミリーのオプティマイザー、認識可能な主要なテストケース、および[コンプライアンスバンドル](./docs/compliance.md)。以下に示すロードマップは、**意図的にまだカバーされていないもの**であり、使用頻度×検証可能性の順に並べられ、それぞれが整合性検証ツールが実際に所有できるクローズドフォームのCPU再計算に基づいてゲートされている。
 
-- **SGDと結合されたL2重み減衰** — ドキュメントに記載されているルール7の3番目のブランチ (`grad += lambda*theta` がモメンタムバッファの前に配置されます)。最も需要の高い機能であり、閉じた形式のCPU再計算が必要です。*v0.13.*
-- **NAdam (+ オプションでRAdam)** — Adamの派生アルゴリズムであり、比較的容易に実装できます。次に、**学習率スケジュールの検証**を行います。これは、すべての最適化アルゴリズムと組み合わせて使用されます。*v0.14.*
-- **実際のユースケースのテストモデル** — 現在の主要なモデルは、Mazur 2-2-2 + softmax+CE + sgd_momentum-Mazurです。小さな畳み込み→ReLU→全結合ネットワークで、CPU上で再現可能であり、これがv1.0の基準となります。*v1.0.*
-- **導入者による検証** — 外部の研究機関による事例研究、教育機関での導入、およびコンプライアンスバンドルの実証例はまだありません。*v1.0の目標です。*
-- **JAXライブヘルパー** — JAX/TFのサイドカーは、すでにルール14によってインポートされています。`jax.make_jaxpr(grad)` を使用したライブヘルパーは、PyTorch eagerモード（CPU + `jax_enable_x64` + ピンされたXLA）よりも、より高い信頼境界を提供します。*v1.0.*
-- **AMSGrad / グローバルノルムによる勾配クリッピング / グループごとの学習率 / Lion** — それぞれが、レシート/リコンサイラーの拡張機能に依存します。*今後の予定です。*
-- **異なるフレームワークの組み合わせによるトレース** — シングルフレームワークのバンドルのみをサポートします。異なるフレームワークを組み合わせたストリームはサポートされていません。*今後の検討課題です。*
-- **ステップごとの異なるバッチサイズ** — 各ストリームで固定されたバッチサイズを使用します。*今後の検討課題です。*
-- **バッチ処理されたレシートにおけるサンプルごとの勾配** — 現在は、勾配を削減する機能のみが提供されています。サンプルごとの分解は、影響分析に役立ちますが、まだ実装されていません。*今後の予定です。*
-- **マルチステップトレースにおけるプロデューサーIDのバインディング** — ルール17は、バンドルの整合性エラーを検出しますが、プロデューサーの認証は行いません。ルール16 / Sigstore / オフバンド認証と組み合わせて使用します。オペレーターのインターフェースであり、組み込み機能ではありません。
-- **GPU / 融合カーネルにおけるビット決定性** — 範囲外であり、今後も変更されることはありません。浮動小数点数の非結合性により、融合/並列カーネルにおけるビット単位の正確性は達成できません ([arXiv:2408.05148](https://arxiv.org/abs/2408.05148); cuDNN ConvolutionBackwardFilter atomics は [CMU SEI](https://www.sei.cmu.edu/blog/the-myth-of-machine-learning-reproducibility-and-randomness-for-acquisitions-and-testing-evaluation-verification-and-validation/) で説明されています)。この製品は、決定論的なCPUの領域に特化しています。
+- **NAdam（オプションでRAdam）** - 安価なAdamのバリエーション。次に、すべてのオプティマイザーと組み合わせて使用できる**学習率スケジュールの検証**を行います。*次へ。*
+- **AMSGrad / グローバルノルム勾配クリッピング / パーグループ学習率 / Lion** - それぞれが、レシート/リコンサイラー拡張に基づいて制御されます。*後で。*
+- **Conv / 複数隠れ層のトポロジー** - エンジンは単一の隠れ層を持つ密結合層です。重要な要素は、認識可能な密結合ReLU→ソフトマックス分類器です。Convは、ビット決定性に対抗する融合カーネルFP順序を導入します（GPU以下を参照）。*CPUで決定的な結果を得るという制約から外れる可能性が高い。*
+- **異種マルチフレームワークのトレース** - 単一のフレームワークバンドルのみ。複数のフレームワークのストリームはサポートされていません。*スコープから外れる可能性があります。*
+- **ステップ間で異なるバッチサイズを持つ異種データ** - 各ストリームで固定された`batch_size`を使用します。*スコープから外れる可能性があります。*
+- **バッチ処理されたレシート内のサンプルごとの勾配** - 現在は、勾配の削減のみを行います。サンプルごとの分解は、影響監査に役立ちますが、まだ公開されていません。*後で。*
+- **複数ステップのトレースにおけるプロデューサーIDのバインディング** - ルール17は、バンドルの整合性の失敗を検出し、プロデューサーの信頼性を検証するものではありません。ルール16 / Sigstore / 外部認証と組み合わせます。これは、組み込み機能ではなく、オペレーターの表面です。
+- **GPU / 融合カーネルによるビット決定性** - スコープ外であり、恒久的です。浮動小数点演算の非結合性により、融合/並列カーネル全体で正確なビット単位の一致を実現することは不可能です（[arXiv:2408.05148](https://arxiv.org/abs/2408.05148); cuDNN ConvolutionBackwardFilterアトミック演算については、[CMU SEI](https://www.sei.cmu.edu/blog/the-myth-of-machine-learning-reproducibility-and-randomness-for-acquisitions-and-testing-evaluation-verification-and-validation/)を参照）。結果として得られるのは、決定的なCPU環境です。
 
-これらの機能のいずれかにワークフローが依存している場合は、このバージョンはまだ適していません。
+これらのいずれかに依存している場合は、現時点ではこのバージョンは適切ではありません。
 
-## カスタムのトポロジーを定義する
+## カスタムトポロジーを作成する
 
 ```bash
 bp scaffold topology --topology xor --out my-net.input.json
@@ -187,40 +185,40 @@ bp generate from-config my-net.input.json --out my-net.golden.jsonl
 bp verify general my-net.golden.jsonl
 ```
 
-[`docs/authoring.md`](./docs/authoring.md) を参照してください。入力とレシートのスキーマ、正規出力の信頼境界について説明されています。
+[`docs/authoring.md`](./docs/authoring.md)を参照してください - 入力とレシートのスキーマ、標準的な出力信頼境界。
 
-## このソフトウェアがどのように位置づけられるか
+## この機能がどのように役立つか
 
-- **再現性を重視した論文の著者** (NeurIPS/ICML/CoLLAs; [REFORMS](https://www.science.org/doi/10.1126/sciadv.adk3452)に対応) — レビュー担当者が30秒で確認できる、各ステップごとの再現可能な証拠。
-- **機械学習教育** (Karpathyのゼロからヒーロー、大学の深層学習コース、面接対策) — すべての要素が可視化された、名前付きのトレーニングステップと、意図的に破壊された設定を*拒否する*機能。
-- **機械学習フレームワーク/コンパイラエンジニア** (PyTorch / JAX / MLIR / XLAの貢献者) — 微分テストのための、各演算ごとに検証済みのトレース情報。
-- **機械学習のコンプライアンス/監査エンジニア** ([EU AI Act Article 10](https://artificialintelligenceact.eu/annex/4/); SLSA-for-ML) — モデルの署名の下に、各ステップごとの記録が添付され、モデルカードまたは監査パッケージに紐付けられます。
+- **再現性を重視する論文著者**（NeurIPS / ICML / CoLLAs; [REFORMS](https://www.science.org/doi/10.1126/sciadv.adk3452)を考慮） - レビュー担当者が30秒で実行できる、ステップごとの証拠を再構築可能にする。
+- **機械学習の教育**（Karpathyによるゼロから始める方法、大学の深層学習コース、面接対策） - すべての要素が可視化され、意図的に壊された要素を*拒否する*リコンサイラーを備えた、名前付きの単一のトレーニングステップ。
+- **機械学習フレームワーク/コンパイラエンジニア**（PyTorch / JAX / MLIR / XLAコントリビューター） - 差分テスト用の既知の良好なオペレーションごとのトレース。
+- **機械学習のコンプライアンス/監査エンジニア**（[EU AI Act Annex IV §2(g)検証/テストログ + Article 15堅牢性](https://artificialintelligenceact.eu/annex/4/)；SLSA-for-ML） - モデル署名の下にある、検証可能で日付が記録され、署名可能なテストログレコードとして機能するステップごとのレシート。関連する[コンプライアンスバンドル](./docs/compliance.md)（および正直なスコープ：レシートは*数学*を証明し、データガバナンスを証明するものではありません）を参照してください。
 
-## 法規のスタック
+## 法律の体系
 
-`docs/canonical-emission.md` に記載されています。
+`docs/canonical-emission.md`より：
 
-> コントラクトはエンジンよりも優先されます。フォーマッタのポリシーは、実行時のフォーマットよりも優先されます。不正なレシートは、正しいレシートよりも優先されます。実行時のフォーマットは、Mazurよりも優先されます。Mazurは、診断よりも優先されます。
+> 契約はエンジンに先行します。フォーマッターポリシーは、実行時のフォーマットに先行します。悪いレシートは、良いレシートに先行します。実行時のフォーマットは、Mazurに先行します。Mazurは、診断に先行します。
 
 ## リンク
 
-- [`docs/quickstart.md`](./docs/quickstart.md) — 5分間のチュートリアル
-- [`docs/cli.md`](./docs/cli.md) — `bp`サブコマンドのリファレンス
-- [`docs/live-helpers.md`](./docs/live-helpers.md) — v0.10のライブPyTorchヘルパー：ワークフロー、信頼境界、敵対的攻撃カタログ、pipを使用しない理由
-- [`docs/authoring.md`](./docs/authoring.md) — カスタムトポロジーの作成
-- [`docs/reconciliation.md`](./docs/reconciliation.md) — 26の調整ルールを詳細に解説
-- [`docs/topology.md`](./docs/topology.md) — 一般的なトポロジーの作成
-- [`docs/multi-step.md`](./docs/multi-step.md) — 複数ステップのトレーニング記録
-- [`docs/canonical-emission.md`](./docs/canonical-emission.md) — バイトレベルのエンコーディング契約
-- [`docs/computation-order.md`](./docs/computation-order.md) — IEEE 754の順序付け; FMAの禁止; 決定性の境界
-- [`docs/schema.md`](./docs/schema.md) — フィールドごとのスキーマ解説
-- [`docs/attestation.md`](./docs/attestation.md) — in-toto v1の認証機能
-- [`CONTRIBUTING.md`](./CONTRIBUTING.md) — 循環参照を防ぐ仕組み; 良い記録が悪い記録よりも優先される原則
-- [`SECURITY.md`](./SECURITY.md) — 検証者が脆弱性として認識するものの定義
-- [`CHANGELOG.md`](./CHANGELOG.md) — バージョンごとの変更履歴
+- [`docs/quickstart.md`](./docs/quickstart.md) - 5分間のウォークスルー
+- [`docs/cli.md`](./docs/cli.md) - `bp`サブコマンドのリファレンス
+- [`docs/live-helpers.md`](./docs/live-helpers.md) - v0.10のライブPyTorchヘルパー：ワークフロー、信頼境界、敵対的カタログ、pipを使用しない理由
+- [`docs/authoring.md`](./docs/authoring.md) - カスタムトポロジーを作成する
+- [`docs/reconciliation.md`](./docs/reconciliation.md) - 26のレコンサイラールールをすべて表示
+- [`docs/topology.md`](./docs/topology.md) - 一般的なトポロジの作成
+- [`docs/multi-step.md`](./docs/multi-step.md) - 複数ステップのトレーニングレシート
+- [`docs/canonical-emission.md`](./docs/canonical-emission.md) - バイトレベルのエンコーディング契約
+- [`docs/computation-order.md`](./docs/computation-order.md) - IEEE 754順序; FMA禁止; 決定性の境界
+- [`docs/schema.md`](./docs/schema.md) - フィールドごとのスキーマのウォークスルー
+- [`docs/attestation.md`](./docs/attestation.md) - in-toto v1アテステーションシーム
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md) - 循環性のないラチェット; 悪いレシートが先にくるという原則
+- [`SECURITY.md`](./SECURITY.md) - 検証者にとっての脆弱性とは何か
+- [`CHANGELOG.md`](./CHANGELOG.md) - バージョンごとの履歴
 
 ## ライセンス
 
-MIT — [LICENSE](./LICENSE) を参照してください。
+MIT - [LICENSE](./LICENSE)を参照してください。
 
 <sub>Built by <a href="https://mcp-tool-shop.github.io/">MCP Tool Shop</a></sub>
