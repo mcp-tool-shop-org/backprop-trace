@@ -1,0 +1,38 @@
+# CPU-only JAX + jaxlib pin for the jax-e2e CI lane.
+#
+# WHY PINNED: the jax-e2e lane validates the LIVE JAX helper
+# (scripts/extract/jax.py) against real JAX. If jax / jaxlib float unpinned, a
+# silent upstream point-release can change XLA CPU codegen, jax.grad tracing, or
+# float64 rounding and turn this lane red (or worse, green on a regression) for
+# reasons unrelated to the PR under test. Pinning makes the live-helper
+# validation reproducible: the lane re-runs byte-for-byte across time, per the
+# PIN_PER_STEP workflow standard.
+#
+# WHY THESE VERSIONS: jax/jaxlib 0.4.35 is a CPU wheel set the helper's APIs
+# (jax_enable_x64 float64, jax.grad, jax.make_jaxpr, jax.nn.{sigmoid,softmax})
+# are validated against. jaxlib bundles XLA; pinning it freezes the CPU
+# codegen. The transitive deps (numpy / scipy / ml_dtypes / opt_einsum) are
+# pinned to the exact set resolved during live validation so the env is
+# byte-reproducible.
+#
+# DETERMINISM CONTRACT (LOAD-BEARING): the helper REFUSES to run unless
+# jax_enable_x64 is True and the device is CPU. JAX defaults to float32; the
+# engine runs binary64. Without x64 the extracted scalars are float32 and Rule
+# 14 surfaces tolerance disagreements on FP drift alone. GPU/TPU FP reductions
+# are non-associative across kernels (arXiv:2408.05148) and would diverge from
+# the engine's pinned scalar recompute, so the helper is CPU-only. This file
+# pins the CPU jaxlib; the helper enforces x64 + CPU at the extraction boundary.
+#
+# HOW TO BUMP: change a pin here, run the jax-e2e lane, confirm
+# test/import-jax-helper.jax-e2e.test.ts still passes, and note the bump in
+# CHANGELOG. Do NOT loosen to unbounded ranges — that defeats the purpose.
+#
+# NOTE: this file pins ONLY the CI validation environment. It is NOT a runtime
+# dependency of @mcptoolshop/backprop-trace (the npm package ships no Python
+# deps; the helper is copied into the user's own JAX environment).
+jax==0.4.35
+jaxlib==0.4.35
+numpy==2.5.0
+scipy==1.18.0
+ml_dtypes==0.5.4
+opt_einsum==3.4.0

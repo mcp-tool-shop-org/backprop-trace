@@ -118,6 +118,7 @@ export type FrameworkTraceSidecar = {
     | "framework-trace.v0.5.0"
     | "framework-trace.v0.6.0"
     | "framework-trace.v0.7.0"
+    | "framework-trace.v0.8.0"
   source_framework: SourceFramework
   /**
    * v0.10+ FORENSIC live-helper attribution. Present when the sidecar was
@@ -257,6 +258,17 @@ export type ObserverImportResult = {
     fieldPath: string
     delta: number
     appliedTolerance: number
+    // The two operands behind `delta`, mirroring the verify-path Rule-14
+    // quartet (reconcile.ts ReconciliationFailure.stored/recomputed): `stored`
+    // is the receipt/sidecar-CLAIMED value, `recomputed` is the engine value
+    // re-derived at import time. An operator needs BOTH to tell a real tamper
+    // (large, structured divergence) from benign FP/Node drift — delta +
+    // tolerance alone do not reveal the magnitudes being compared. For
+    // structural completeness failures (delta === NaN) the quartet is
+    // meaningless and both are 0, the same convention reconcile.ts uses for
+    // its rule-0 failures.
+    stored: number
+    recomputed: number
   }>
 }
 
@@ -292,8 +304,27 @@ export function buildObserverReceiptFromSidecar(
   callerLabel: string,
   opts?: ObserverImportOptions,
 ): ObserverImportResult {
+  // ING-B-005 (Stage C / degradation-UX) — empty / whitespace-only sidecar
+  // diagnostic. parse.ts (parseReceiptJsonl) and parse-input.ts already emit a
+  // dedicated "empty input" message; the importer historically fell through to
+  // JSON.parse and surfaced the opaque `Unexpected end of JSON input` instead.
+  // Mirror the sibling parsers' early check so an operator who pipes an empty
+  // file (a common shell mistake — `bp import pytorch < missing.jsonl`) gets an
+  // actionable message naming the importer + the empty condition. Runs BEFORE
+  // the source-hash binding so the hash is only computed for real content.
+  assertSidecarNotEmpty(sidecarBytes, callerLabel)
+
   // 1. Hash raw bytes BEFORE parsing.
   const sourceHash = `sha256:${createHash("sha256").update(sidecarBytes, "utf8").digest("hex")}`
+
+  // ING-2 — verifier-owned ingest cap (raw-byte layer). Reject an oversized
+  // sidecar with a diagnosable structured error BEFORE parse / validate /
+  // iterate / emit, so an unbounded body becomes a clear "exceeds ingest cap"
+  // message instead of a multi-second hold or a raw `Invalid string length`.
+  // Hashing first preserves source_hash binding on the (small) accepted path;
+  // the cap rejection short-circuits before any further work. Mirrors the
+  // MAX_BATCH_SAMPLES discipline — the verifier owns the limit.
+  assertSidecarWithinIngestCap(sidecarBytes, callerLabel)
 
   // 2. Parse + validate against framework-trace.v0.1.0.
   let parsed: unknown
@@ -352,6 +383,17 @@ export function buildObserverReceiptFromSidecar(
     }
   }
 
+  // ING-B-003 (Stage C / degradation-UX) — unsupported-optimizer diagnostic.
+  // `optimizer.name` is a CLOSED enum in every framework-trace schema; an
+  // unsupported value (e.g. "lion", "amsgrad", "rmsprop") fails Ajv with the
+  // opaque "/optimizer/name: must be equal to one of the allowed values", which
+  // discards the useful part — it never tells the operator what IS accepted.
+  // Detect the case BEFORE the generic validation summary and surface a message
+  // that NAMES the supported optimizer set, so the operator can correct the
+  // sidecar without spelunking the schema. NOT a soundness change — this only
+  // improves the rejection message for an input the schema already rejects.
+  assertSidecarOptimizerSupported(parsed, callerLabel)
+
   const validation = validateFrameworkTraceSidecar(parsed)
   if (!validation.ok) {
     const summary = validation.errors
@@ -395,7 +437,12 @@ export function buildObserverReceiptFromSidecar(
       : declaredFmt === "framework-trace.v0.5.0" ||
           declaredFmt === "framework-trace.v0.6.0"
         ? (["sgd_momentum"] as const)
-        : undefined
+        : // v0.13 — v0.8.0 is SGD coupled L2 (the documented Rule 7 third
+          // branch): it MUST carry an optimizer block with name ∈ {sgd,
+          // sgd_momentum} AND weight_decay > 0 (the coupled-L2 hyperparameter).
+          declaredFmt === "framework-trace.v0.8.0"
+          ? (["sgd", "sgd_momentum"] as const)
+          : undefined
   if (requiredOptimizerNames !== undefined) {
     const optName = sidecar.optimizer?.name
     if (optName === undefined || !requiredOptimizerNames.includes(optName as never)) {
@@ -409,6 +456,29 @@ export function buildObserverReceiptFromSidecar(
       )
     }
   }
+
+  // ING-2 — verifier-owned ingest cap (structural layer). Post-validation
+  // mirror of the raw-byte cap: reject a sidecar whose updates[] / number-maps
+  // carry more than MAX_SIDECAR_COLLECTION_ENTRIES entries, BEFORE the
+  // per-field differential iteration + emit. The schemas' maxItems /
+  // maxProperties already enforce this at validation; this guarantees the check
+  // holds even for a sidecar that validated against a bound-less schema, and
+  // keeps a diagnosable cap message ahead of any downstream throw.
+  assertSidecarCollectionsWithinCap(sidecar, callerLabel)
+
+  // ING-B-002 (Stage C / degradation) — sidecar completeness pre-emit. A
+  // sidecar that declares a parameter in topology.parameter_order but OMITS it
+  // from parameters_after is a cross-reference invariant the JSON-shape schema
+  // does NOT enforce (parameters_after is a free number-map). Such a sidecar
+  // currently builds a receipt and only fails LATER at reconcile (Rule 14
+  // COMPLETENESS / FIX-2, reconcile.ts — parameters_after key-set must EQUAL
+  // parameter_order). Fail EARLY at import time with a structured error naming
+  // the missing key(s) so the operator gets an actionable diagnostic at the
+  // ingest boundary rather than a deferred reconcile failure. NOT a new
+  // soundness gate — Rule 14 remains the authority and still re-checks every
+  // accepted receipt; this is the helpful early-failure half of the
+  // verifier-owned-limits discipline.
+  assertSidecarCrossReferencesComplete(sidecar, callerLabel)
 
   // 4. Resolve defaults.
   // imports-B-003 (observability note): `differentialTolerance` is passed
@@ -446,6 +516,8 @@ export function buildObserverReceiptFromSidecar(
         fieldPath,
         delta: check.delta,
         appliedTolerance: check.appliedTolerance,
+        stored: claimedVal,
+        recomputed: engineVal,
       })
     }
   }
@@ -488,20 +560,109 @@ export function buildObserverReceiptFromSidecar(
       const engineSample = engineReceipt.per_sample?.[sid]
       const sidecarSample = sidecar.per_sample[sid]
       if (!engineSample || !sidecarSample) continue
-      for (const uId of Object.keys(engineSample.forward)) {
+      // R14-PERSAMPLE-OMISSION mirror — the producer-side verification_state
+      // claim must not be WEAKER than the verifier's (reconcile.ts Rule 14
+      // per-sample COMPLETENESS). Pre-fix this loop used `if (!c) continue`
+      // for a missing per-sample forward unit and `if (typeof cVal !== "number")
+      // continue` for a missing per-sample loss component, so a sidecar that
+      // DROPPED a nested per_sample field still reported differentialPassed=true.
+      // Treat any omitted/incomplete per-sample forward unit or loss field as a
+      // differential disagreement (key-set-EQUAL + both-scalars-present), so a
+      // dropped per-sample field cannot escape the producer's claim by omission.
+      const sForward = sidecarSample.forward ?? {}
+      const eForwardKeys = Object.keys(engineSample.forward)
+      const eForwardSet = new Set<string>(eForwardKeys)
+      for (const uId of eForwardKeys) {
         const e = engineSample.forward[uId]!
-        const c = sidecarSample.forward[uId]
-        if (!c) continue
-        compare(`per_sample.${sid}.forward.${uId}.net`, e.net, c.net)
-        compare(`per_sample.${sid}.forward.${uId}.out`, e.out, c.out)
+        const c = sForward[uId]
+        if (!c) {
+          // COMPLETENESS — per-sample forward unit absent from the sidecar.
+          disagreements.push({
+            fieldPath: `per_sample.${sid}.forward.${uId}`,
+            delta: Number.NaN,
+            appliedTolerance: 0,
+            stored: 0,
+            recomputed: 0,
+          })
+          continue
+        }
+        if (typeof c.net !== "number") {
+          disagreements.push({
+            fieldPath: `per_sample.${sid}.forward.${uId}.net`,
+            delta: Number.NaN,
+            appliedTolerance: 0,
+            stored: 0,
+            recomputed: 0,
+          })
+        } else {
+          compare(`per_sample.${sid}.forward.${uId}.net`, e.net, c.net)
+        }
+        if (typeof c.out !== "number") {
+          disagreements.push({
+            fieldPath: `per_sample.${sid}.forward.${uId}.out`,
+            delta: Number.NaN,
+            appliedTolerance: 0,
+            stored: 0,
+            recomputed: 0,
+          })
+        } else {
+          compare(`per_sample.${sid}.forward.${uId}.out`, e.out, c.out)
+        }
       }
-      for (const uId of Object.keys(engineSample.loss.per_output)) {
+      // COMPLETENESS — extra per-sample forward unit not produced by the engine.
+      for (const uId of Object.keys(sForward)) {
+        if (!eForwardSet.has(uId)) {
+          disagreements.push({
+            fieldPath: `per_sample.${sid}.forward.${uId}`,
+            delta: Number.NaN,
+            appliedTolerance: 0,
+            stored: 0,
+            recomputed: 0,
+          })
+        }
+      }
+      const sLossPerOutput = sidecarSample.loss?.per_output ?? {}
+      const eLossPerOutputKeys = Object.keys(engineSample.loss.per_output)
+      const eLossPerOutputSet = new Set<string>(eLossPerOutputKeys)
+      for (const uId of eLossPerOutputKeys) {
         const eVal = engineSample.loss.per_output[uId]!
-        const cVal = sidecarSample.loss.per_output[uId]
-        if (typeof cVal !== "number") continue
+        const cVal = sLossPerOutput[uId]
+        if (typeof cVal !== "number") {
+          // COMPLETENESS — per-sample loss component absent from the sidecar.
+          disagreements.push({
+            fieldPath: `per_sample.${sid}.loss.per_output.${uId}`,
+            delta: Number.NaN,
+            appliedTolerance: 0,
+            stored: 0,
+            recomputed: 0,
+          })
+          continue
+        }
         compare(`per_sample.${sid}.loss.per_output.${uId}`, eVal, cVal)
       }
-      compare(`per_sample.${sid}.loss.total`, engineSample.loss.total, sidecarSample.loss.total)
+      for (const uId of Object.keys(sLossPerOutput)) {
+        if (!eLossPerOutputSet.has(uId)) {
+          disagreements.push({
+            fieldPath: `per_sample.${sid}.loss.per_output.${uId}`,
+            delta: Number.NaN,
+            appliedTolerance: 0,
+            stored: 0,
+            recomputed: 0,
+          })
+        }
+      }
+      // COMPLETENESS — per-sample loss.total must be present and numeric.
+      if (typeof sidecarSample.loss?.total !== "number") {
+        disagreements.push({
+          fieldPath: `per_sample.${sid}.loss.total`,
+          delta: Number.NaN,
+          appliedTolerance: 0,
+          stored: 0,
+          recomputed: 0,
+        })
+      } else {
+        compare(`per_sample.${sid}.loss.total`, engineSample.loss.total, sidecarSample.loss.total)
+      }
     }
     // Reduced loss comparison.
     for (const uId of Object.keys(engineReceipt.loss.per_output)) {
@@ -532,8 +693,19 @@ export function buildObserverReceiptFromSidecar(
     }
     let engineInput: GeneralInput = engineInputBase
     // v0.9.1 — Adam/AdamW dispatch. v0.9.2 — sgd_momentum dispatch.
-    if (sidecar.optimizer !== undefined && sidecar.optimizer.name !== "sgd") {
-      const ocIn = sidecar.optimizer
+    // v0.13 — plain SGD coupled L2: when name === "sgd" AND weight_decay > 0, the
+    // engine recompute MUST see the weight_decay so the differential folds the
+    // same coupled-L2 term into the update. Plain SGD without weight_decay (and
+    // plain SGD with weight_decay 0) falls through to the byte-equal no-decay path.
+    const sidecarHasStatefulOptimizer =
+      sidecar.optimizer !== undefined && sidecar.optimizer.name !== "sgd"
+    const sidecarPlainSgdCoupledL2 =
+      sidecar.optimizer !== undefined &&
+      sidecar.optimizer.name === "sgd" &&
+      typeof sidecar.optimizer.weight_decay === "number" &&
+      sidecar.optimizer.weight_decay !== 0
+    if (sidecarHasStatefulOptimizer || sidecarPlainSgdCoupledL2) {
+      const ocIn = sidecar.optimizer!
       const oc: OptimizerConfig = {
         name: ocIn.name,
         learning_rate: ocIn.learning_rate,
@@ -578,11 +750,13 @@ export function buildObserverReceiptFromSidecar(
           }
         }
       }
-      engineInput = {
-        ...engineInputBase,
-        optimizer_config: oc,
-        optimizer_state_before: stateBefore,
-      }
+      // v0.13 — plain SGD (coupled L2) has NO per-parameter state; the engine
+      // rejects a (non-undefined) optimizer_state_before for name === "sgd".
+      // Only attach state_before for the stateful optimizers.
+      engineInput =
+        ocIn.name === "sgd"
+          ? { ...engineInputBase, optimizer_config: oc }
+          : { ...engineInputBase, optimizer_config: oc, optimizer_state_before: stateBefore }
     }
     engineReceipt = runGeneralStep(engineInput)
 
@@ -664,13 +838,24 @@ export function buildObserverReceiptFromSidecar(
     sidecar.optimizer !== undefined &&
     ((sidecar.optimizer.nesterov === true) ||
       (sidecar.optimizer.dampening !== undefined && sidecar.optimizer.dampening !== 0))
-  const receiptSchemaVersion: "0.4.0" | "0.5.0" | "0.6.0" | "0.7.0" = usesNesterovOrDampening
-    ? "0.7.0"
-    : isSgdMomentumImport
-      ? "0.6.0"
-      : isAdamFamilyImport
-        ? "0.5.0"
-        : "0.4.0"
+  // v0.13 — SGD coupled L2 (the documented Rule 7 third branch). A sidecar
+  // carrying weight_decay > 0 on the SGD family (sgd / sgd_momentum) maps to a
+  // v0.8.0 receipt. Adam/AdamW weight_decay is DECOUPLED and does NOT trigger
+  // the bump. weight_decay === 0 (or absent) collapses to the prior version.
+  const usesCoupledL2 =
+    sidecar.optimizer !== undefined &&
+    (sidecar.optimizer.name === "sgd" || sidecar.optimizer.name === "sgd_momentum") &&
+    typeof sidecar.optimizer.weight_decay === "number" &&
+    sidecar.optimizer.weight_decay !== 0
+  const receiptSchemaVersion: "0.4.0" | "0.5.0" | "0.6.0" | "0.7.0" | "0.8.0" = usesCoupledL2
+    ? "0.8.0"
+    : usesNesterovOrDampening
+      ? "0.7.0"
+      : isSgdMomentumImport
+        ? "0.6.0"
+        : isAdamFamilyImport
+          ? "0.5.0"
+          : "0.4.0"
 
   const receipt: GeneralReceipt = {
     schema_version: receiptSchemaVersion,
@@ -698,7 +883,10 @@ export function buildObserverReceiptFromSidecar(
     // SGD observer-mode receipt byte-equality with v0.6-v0.9.0). The block
     // carries name + lr + beta1/beta2/epsilon/t (and weight_decay for adamw).
     // v0.9.2 — same emission for sgd_momentum (momentum hyperparameter).
-    ...((isAdamFamilyImport || isSgdMomentumImport) && sidecar.optimizer !== undefined
+    // v0.13 — also emit for plain SGD coupled L2 (usesCoupledL2: weight_decay > 0
+    // on the SGD family). The block carries name + lr + weight_decay. Plain SGD
+    // without weight_decay still omits the block (byte-equality preserved).
+    ...((isAdamFamilyImport || isSgdMomentumImport || usesCoupledL2) && sidecar.optimizer !== undefined
       ? {
           optimizer_config: {
             name: sidecar.optimizer.name,
@@ -744,6 +932,21 @@ export function buildObserverReceiptFromSidecar(
       sidecar.post_update_loss ?? engineReceipt.post_update_loss,
   }
 
+  // ING-B-001 (Stage C / observability) — forensic helper-block passthrough.
+  // The sidecar's FrameworkTraceSidecar.helper block (live-helper attribution:
+  // name / version / source_hash / framework / runtime / extraction) was being
+  // DROPPED — the comment on the field promised it is "passed through to the
+  // receipt for post-hoc attribution", but neither receipt-build path attached
+  // it, so a downstream reader could never see which live helper produced the
+  // imported step. Attach it now (forensic attribution ONLY — it is NOT a
+  // credential; Rule 14 remains the authority and never consults this block for
+  // gate logic). The canonical emitter (emitGeneralReceipt) is a schema-ordered
+  // serializer that emits only the receipt's declared field set, so attaching
+  // helper to the in-memory receipt does NOT change the emitted bytes — every
+  // golden stays byte-identical — while the returned receipt object now exposes
+  // the attribution to any caller that inspects `result.receipt.helper`.
+  attachHelperAttribution(receipt, sidecar.helper)
+
   // 8. Emit canonical bytes.
   const emittedBytes = emitGeneralReceipt(receipt)
 
@@ -756,6 +959,154 @@ export function buildObserverReceiptFromSidecar(
 }
 
 // --- Helpers ---------------------------------------------------------------
+
+/**
+ * ING-B-005 (Stage C / degradation-UX) — closed list of the optimizer names the
+ * verifier accepts, in the canonical doc order. Exported so the rejection
+ * message (assertSidecarOptimizerSupported) and any future caller name the same
+ * set the schemas + engine enforce (general-engine.ts runGeneralStep:
+ * "optimizer_config.name must be 'sgd', 'adam', 'adamw', or 'sgd_momentum'").
+ */
+export const SUPPORTED_OPTIMIZER_NAMES: readonly string[] = [
+  "sgd",
+  "sgd_momentum",
+  "adam",
+  "adamw",
+]
+
+/**
+ * ING-B-005 (Stage C / degradation-UX) — reject an empty / whitespace-only
+ * sidecar with the SAME actionable diagnostic that parse.ts (parseReceiptJsonl)
+ * and parse-input.ts already emit, instead of letting it fall through to the
+ * opaque `JSON.parse` failure ("Unexpected end of JSON input"). A piped empty
+ * file is a common operator mistake; this names the importer + the empty
+ * condition + a remediation hint. Mirrors the importer's Tier-1 envelope (a
+ * thrown Error with a diagnosable message).
+ */
+function assertSidecarNotEmpty(sidecarBytes: string, callerLabel: string): void {
+  if (sidecarBytes.trim().length === 0) {
+    throw new Error(
+      `${callerLabel}: sidecar is empty (no non-whitespace content). ` +
+        `Hint: an empty or whitespace-only input usually means a missing or mis-piped file ` +
+        `(e.g. \`bp import ... < missing.jsonl\` or an empty redirection). Provide a sidecar ` +
+        `containing one JSON object (single-step) or one JSON object per line (multi-step JSONL).`,
+    )
+  }
+}
+
+/**
+ * ING-B-003 (Stage C / degradation-UX) — when a sidecar declares an
+ * `optimizer.name` outside the closed supported set, surface a message that
+ * NAMES the supported set instead of the opaque Ajv "must be equal to one of the
+ * allowed values". Runs on the raw parsed value BEFORE schema validation so the
+ * helpful message wins. Only fires for a STRING optimizer.name that is not
+ * supported — a missing/non-string optimizer block (legitimate plain-SGD
+ * sidecars omit it entirely) is a no-op, and any other shape problem still falls
+ * through to schema validation. NOT a soundness change — the schema already
+ * rejects these; this only improves the rejection message.
+ */
+function assertSidecarOptimizerSupported(
+  parsed: unknown,
+  callerLabel: string,
+): void {
+  if (typeof parsed !== "object" || parsed === null) return
+  const optimizer = (parsed as Record<string, unknown>).optimizer
+  if (typeof optimizer !== "object" || optimizer === null) return
+  const name = (optimizer as Record<string, unknown>).name
+  if (typeof name !== "string") return
+  if (SUPPORTED_OPTIMIZER_NAMES.includes(name)) return
+  throw new Error(
+    `${callerLabel}: sidecar declares optimizer.name='${name}', which is not a supported optimizer. ` +
+      `Supported optimizers: ${SUPPORTED_OPTIMIZER_NAMES.join(", ")}. ` +
+      `Hint: backprop-trace verifies a closed set of optimizers (plain SGD, SGD with momentum — ` +
+      `classical / Nesterov / dampening — and Adam / AdamW). An unsupported optimizer (e.g. Lion, ` +
+      `AMSGrad, RMSProp) cannot be re-derived by the engine, so the sidecar is rejected here rather ` +
+      `than producing an unverifiable receipt. Re-run the training step with a supported optimizer, ` +
+      `or omit the optimizer block for a plain-SGD step.`,
+  )
+}
+
+/**
+ * ING-B-002 (Stage C / degradation) — fail EARLY at import time when a sidecar's
+ * `parameters_after` omits a parameter declared in `topology.parameter_order`
+ * (or carries an extra undeclared one). This is a cross-reference invariant the
+ * JSON-shape schema does NOT enforce — `parameters_after` is a free number-map —
+ * so without this check the importer builds a receipt and the omission is only
+ * caught LATER at reconcile (Rule 14 COMPLETENESS / FIX-2, reconcile.ts, which
+ * requires parameters_after's key set to EQUAL parameter_order).
+ *
+ * This is NOT a new soundness gate: Rule 14 remains the authority and still
+ * re-checks every accepted receipt. It is the helpful early-failure half of the
+ * verifier-owned-limits discipline — an operator who drops a final-state value
+ * gets an actionable message naming the missing key(s) at the ingest boundary
+ * instead of a deferred reconcile failure. The message mirrors Rule 14's
+ * COMPLETENESS wording so the early and late diagnostics read the same.
+ *
+ * Applies the same key-set-EQUAL check to the batched `per_sample[*].forward`
+ * maps when cheaply consistent (each per-sample forward must declare exactly the
+ * topology's unit_order hidden+output units the engine recomputes). Missing keys
+ * are named; extras are named. Both directions matter — a smuggled extra key is
+ * the same omission class as a dropped one.
+ */
+function assertSidecarCrossReferencesComplete(
+  sidecar: FrameworkTraceSidecar,
+  callerLabel: string,
+): void {
+  const declaredOrder = sidecar.topology?.parameter_order
+  if (!Array.isArray(declaredOrder)) return // schema guarantees presence; defensive
+  const after = sidecar.parameters_after ?? {}
+  const afterKeys = new Set<string>(Object.keys(after))
+  const declaredSet = new Set<string>(declaredOrder)
+
+  const missing = declaredOrder.filter((pid) => !afterKeys.has(pid))
+  if (missing.length > 0) {
+    throw new Error(
+      `${callerLabel}: sidecar parameters_after is missing parameter(s) ${JSON.stringify(missing)} ` +
+        `declared in topology.parameter_order; every declared parameter must have an after-value. ` +
+        `Hint: parameters_after's key set must EQUAL topology.parameter_order (the same COMPLETENESS ` +
+        `invariant Rule 14 enforces at reconcile — caught here EARLY so a dropped final-state value is ` +
+        `named at import time, not deferred to verification). Add the missing after-value(s), or remove ` +
+        `the parameter(s) from parameter_order if the step genuinely did not produce them.`,
+    )
+  }
+  const extra = Object.keys(after).filter((pid) => !declaredSet.has(pid))
+  if (extra.length > 0) {
+    throw new Error(
+      `${callerLabel}: sidecar parameters_after declares parameter(s) ${JSON.stringify(extra)} ` +
+        `NOT present in topology.parameter_order; parameters_after's key set must EQUAL ` +
+        `topology.parameter_order (no extra/undeclared final-state keys). ` +
+        `Hint: add the parameter(s) to parameter_order if they are real, or remove the stray ` +
+        `after-value(s). (Same key-set-EQUAL invariant Rule 14 enforces at reconcile.)`,
+    )
+  }
+}
+
+/**
+ * ING-B-001 (Stage C / observability) — attach the sidecar's forensic
+ * `helper` block to a built receipt so a downstream reader can see the live
+ * helper's name / version / source_hash / framework / runtime / extraction. The
+ * `helper` field is documented (FrameworkTraceSidecar.helper) as "passed through
+ * to the receipt for post-hoc attribution" but was being dropped by both
+ * receipt-build paths; this wires it through.
+ *
+ * NEVER a credential — Rule 14 (engine-recompute differential) remains the
+ * authority on every external_imported receipt regardless of what this block
+ * claims. The canonical emitter (emitGeneralReceipt) is a schema-ordered
+ * serializer that emits only the receipt's declared field set, so attaching
+ * `helper` to the in-memory receipt object does NOT change the emitted bytes
+ * (every golden stays byte-identical) — it only exposes the attribution to
+ * callers that inspect the returned receipt object. A no-op when the sidecar
+ * carries no helper block (preserves byte- and shape-equality for hand-authored
+ * sidecars). Attached via a typed cast because the engine's GeneralReceipt type
+ * does not declare this forensic field.
+ */
+function attachHelperAttribution(
+  receipt: GeneralReceipt,
+  helper: HelperBlock | undefined,
+): void {
+  if (helper === undefined) return
+  ;(receipt as GeneralReceipt & { helper?: HelperBlock }).helper = helper
+}
 
 /**
  * imports-B-002 (Stage C) — split an extractor identity string into
@@ -819,10 +1170,132 @@ const SINGLE_STEP_SUPPORTED_FORMATS: readonly string[] = [
   "framework-trace.v0.5.0",
   "framework-trace.v0.6.0",
   "framework-trace.v0.7.0",
+  // v0.13 — SGD coupled-L2 weight-decay sidecar (the documented Rule 7 third
+  // branch). Carries weight_decay on sgd / sgd_momentum (coupled L2).
+  "framework-trace.v0.8.0",
 ]
 
 /** imports-B-001 — the multi-step (JSONL stream) sidecar baseline format. */
 const MULTI_STEP_BASELINE_FORMAT = "framework-trace.v0.2.0"
+
+/**
+ * ING-2 — verifier-owned ingest byte cap for a SINGLE sidecar record.
+ *
+ * The framework-trace schemas now bound every collection
+ * (updates[]/factors[]/summation_order[] maxItems, UnitNumberMap /
+ * ParameterMap / ForwardMap / loss.per_output maxProperties — see
+ * schemas/framework-trace.v0.1.0..v0.7.0). This raw-byte cap is the SECOND
+ * layer of the defense-in-depth: it converts the unbounded ingest path into a
+ * diagnosable rejection BEFORE the importer parses, validates, iterates, and
+ * emits — so even a schema that somehow lacks a bound, or the raw
+ * `Invalid string length` thrown by JSON.stringify at emit when the body is
+ * enormous, becomes a clear "sidecar exceeds verifier ingest cap" message
+ * instead of a multi-second hang or an undiagnosable runtime throw.
+ *
+ * Mirrors the MAX_BATCH_SAMPLES discipline (general-engine.ts): the verifier
+ * owns the limit; the bound is an INCLUSIVE maximum far above any legitimate
+ * single-step sidecar (the engine only ever consumes topology.unit_order /
+ * topology.parameter_order keys — at most 64 units / a few hundred parameters —
+ * so a legitimate sidecar is a few KB to low tens of KB; the largest shipped
+ * golden line is ~14 KB). 8 MiB sits ~600x above that yet ~64x BELOW V8's
+ * ~512 MB max-string-length (where the raw `Invalid string length` lives), so a
+ * 2,000,000-entry updates[] or a 3,000,000-unit forward map — both many MB — is
+ * rejected here long before it can be parsed or emitted. NOT a soundness change:
+ * Rule 14 remains the authority on every accepted receipt; this only bounds the
+ * DoS surface.
+ *
+ * Exported so tests can pin the value — a silent raise re-opens the hang/OOM
+ * surface; a silent lower could reject a legitimate sidecar. Both are
+ * regressions that must surface in CI.
+ */
+export const MAX_SIDECAR_INGEST_BYTES = 8 * 1024 * 1024 // 8 MiB
+
+/**
+ * ING-2 — verifier-owned structural cap on the count of entries in any single
+ * ingested collection (updates[], forward / parameters maps, loss.per_output,
+ * etc.). Kept in lockstep with the schemas' maxItems / maxProperties bound
+ * (4096) so the importer's own check and the schema agree. This is the
+ * post-validation structural mirror of MAX_SIDECAR_INGEST_BYTES: it fires for a
+ * collection that is individually under the byte cap but still pathologically
+ * large, and guarantees the check holds even for a hypothetical sidecar that
+ * validated against a schema version lacking the bound. INCLUSIVE maximum.
+ *
+ * Exported for test pinning (same rationale as MAX_SIDECAR_INGEST_BYTES).
+ */
+export const MAX_SIDECAR_COLLECTION_ENTRIES = 4096
+
+/**
+ * ING-2 — reject a sidecar whose raw bytes exceed MAX_SIDECAR_INGEST_BYTES
+ * BEFORE any parse / validate / iterate / emit. Mirrors the MAX_BATCH_SAMPLES
+ * guard's message shape: name the cap, the observed size, and a remediation
+ * hint. Throws a structured Error (the importer's Tier-1 envelope is a thrown
+ * Error with a diagnosable message — same pattern as every other guard in this
+ * file). Byte length is measured as UTF-8 (Buffer.byteLength), matching the
+ * bytes the operator actually ingested.
+ */
+function assertSidecarWithinIngestCap(
+  sidecarBytes: string,
+  callerLabel: string,
+): void {
+  const byteLength = Buffer.byteLength(sidecarBytes, "utf8")
+  if (byteLength > MAX_SIDECAR_INGEST_BYTES) {
+    throw new Error(
+      `${callerLabel}: sidecar exceeds verifier ingest cap ` +
+        `(${byteLength} bytes > MAX_SIDECAR_INGEST_BYTES=${MAX_SIDECAR_INGEST_BYTES}). ` +
+        `Hint: the importer parses, validates, and re-emits the whole sidecar; an unbounded ` +
+        `sidecar (e.g. a multi-million-entry updates[] or forward map) would be held in memory ` +
+        `and walked at emit (a multi-second hang, or an undiagnosable runtime string-length ` +
+        `failure once it crosses V8's ~512MB string limit) rather than fail cleanly. The cap is an ` +
+        `inclusive maximum far above any legitimate single-step sidecar (the engine consumes at ` +
+        `most 64 units / a few hundred parameters; the largest shipped golden line is ~14KB). If ` +
+        `this is a genuine large trace, it is malformed for single-step ingestion — split it or ` +
+        `correct the producer.`,
+    )
+  }
+}
+
+/**
+ * ING-2 — post-validation structural cap. Asserts that no single ingested
+ * collection (updates[], the forward / parameters / loss number-maps) carries
+ * more than MAX_SIDECAR_COLLECTION_ENTRIES entries. The schemas' maxItems /
+ * maxProperties already enforce this at validation time; this is the
+ * verifier-owned mirror so the check holds even for a sidecar that somehow
+ * validated against a schema lacking the bound, and so a diagnosable cap message
+ * wins over any downstream `Invalid string length`. Runs BEFORE the per-field
+ * differential iteration + emit. Throws the same structured Error shape.
+ */
+function assertSidecarCollectionsWithinCap(
+  sidecar: FrameworkTraceSidecar,
+  callerLabel: string,
+): void {
+  const reject = (what: string, count: number): never => {
+    throw new Error(
+      `${callerLabel}: sidecar exceeds verifier ingest cap — ${what} has ${count} entries ` +
+        `(> MAX_SIDECAR_COLLECTION_ENTRIES=${MAX_SIDECAR_COLLECTION_ENTRIES}). ` +
+        `Hint: the importer iterates and re-emits every entry; an unbounded collection is a DoS ` +
+        `surface. The cap is an inclusive maximum far above any legitimate single-step sidecar ` +
+        `(the engine consumes at most 64 units / a few hundred parameters). This sidecar is ` +
+        `malformed for single-step ingestion — split it or correct the producer.`,
+    )
+  }
+  if (Array.isArray(sidecar.updates) && sidecar.updates.length > MAX_SIDECAR_COLLECTION_ENTRIES) {
+    reject("updates[]", sidecar.updates.length)
+  }
+  const mapEntryCount = (m: unknown): number =>
+    typeof m === "object" && m !== null ? Object.keys(m as object).length : 0
+  const maps: Array<[string, unknown]> = [
+    ["inputs", sidecar.inputs],
+    ["targets", sidecar.targets],
+    ["parameters_before", sidecar.parameters_before],
+    ["parameters_after", sidecar.parameters_after],
+    ["forward", sidecar.forward],
+    ["loss.per_output", sidecar.loss?.per_output],
+  ]
+  for (const [name, m] of maps) {
+    const n = mapEntryCount(m)
+    if (n > MAX_SIDECAR_COLLECTION_ENTRIES) reject(name, n)
+  }
+}
 
 const DEFAULT_NUMERIC_POLICY_FOR_OBSERVER: GeneralInput["numeric_policy"] = {
   number_encoding: "decimal",
@@ -1132,6 +1605,11 @@ export type ObserverImportStreamStep = {
     fieldPath: string
     delta: number
     appliedTolerance: number
+    // See ObserverImportResult.differentialDisagreements — `stored` is the
+    // sidecar-CLAIMED value, `recomputed` is the engine value re-derived at
+    // import time. Same verify-path Rule-14 quartet semantics.
+    stored: number
+    recomputed: number
   }>
 }
 
@@ -1203,6 +1681,14 @@ export function buildObserverReceiptStreamFromSidecar(
   callerLabel: string,
   opts?: ObserverImportOptions,
 ): ObserverImportStreamResult {
+  // ING-B-005 (Stage C / degradation-UX) — empty / whitespace-only stream
+  // diagnostic. Mirrors the single-step entry + parse.ts (parseReceiptJsonl) +
+  // parse-input.ts so an operator who pipes an empty file to the multi-step
+  // subcommand gets an actionable "empty input" message naming the importer,
+  // rather than the (correct but less direct) "zero records" message that only
+  // surfaces after the split. Runs BEFORE the source-hash binding.
+  assertSidecarNotEmpty(sidecarBytes, callerLabel)
+
   // 1. Hash whole stream BEFORE parsing.
   const sourceHash = `sha256:${createHash("sha256").update(sidecarBytes, "utf8").digest("hex")}`
 
@@ -1231,6 +1717,13 @@ export function buildObserverReceiptStreamFromSidecar(
         }`,
       )
     }
+    // ING-B-003 (Stage C / degradation-UX) — unsupported-optimizer diagnostic
+    // (per-record mirror of the single-step path). Name the supported optimizer
+    // set so an unsupported `optimizer.name` in any record yields an actionable
+    // message instead of the opaque Ajv "must be equal to one of the allowed
+    // values". Names the offending line too (multi-step diagnosability).
+    assertSidecarOptimizerSupported(parsed, `${callerLabel}: sidecar line ${i + 1}`)
+
     const validation = validateFrameworkTraceSidecar(parsed)
     if (!validation.ok) {
       const summary = validation.errors
@@ -1254,15 +1747,40 @@ export function buildObserverReceiptStreamFromSidecar(
       validation.schemaVersion !== "0.4.0" &&
       validation.schemaVersion !== "0.5.0" &&
       validation.schemaVersion !== "0.6.0" &&
-      validation.schemaVersion !== "0.7.0"
+      validation.schemaVersion !== "0.7.0" &&
+      // v0.13 — SGD coupled L2 (the documented Rule 7 third branch): multi-step
+      // sidecars carrying weight_decay on the SGD family declare v0.8.0.
+      validation.schemaVersion !== "0.8.0"
     ) {
       throw new Error(
         `${callerLabel}: sidecar line ${i + 1} declares format='framework-trace.v${validation.schemaVersion}' but multi-step ` +
           `ingestion requires 'framework-trace.v0.2.0', 'framework-trace.v0.3.0', ` +
-          `'framework-trace.v0.4.0', 'framework-trace.v0.5.0', 'framework-trace.v0.6.0', or 'framework-trace.v0.7.0'. ` +
-          `Use the single-step subcommand for v0.1.0 sidecars.`,
+          `'framework-trace.v0.4.0', 'framework-trace.v0.5.0', 'framework-trace.v0.6.0', 'framework-trace.v0.7.0', or ` +
+          `'framework-trace.v0.8.0'. Use the single-step subcommand for v0.1.0 sidecars.`,
       )
     }
+    // ING-2 — verifier-owned ingest cap (per-record structural layer). Each
+    // record of the stream is a single step bounded by the same per-step
+    // schema maxItems / maxProperties; assert it here so an unbounded
+    // collection in any one record fails with a diagnosable cap message
+    // (naming the line) before the per-record engine recompute + emit. The
+    // whole-stream byte size is intentionally NOT capped here — a legitimate
+    // multi-step training trace can be a very large JSONL (see cli-B-001 in
+    // src/bin/bp.ts) — the DoS surface is per-record collection size, which
+    // this bounds.
+    assertSidecarCollectionsWithinCap(
+      validation.sidecar as FrameworkTraceSidecar,
+      `${callerLabel}: sidecar line ${i + 1}`,
+    )
+    // ING-B-002 (Stage C / degradation) — per-record completeness pre-emit. A
+    // record declaring a parameter in topology.parameter_order but omitting it
+    // from parameters_after fails EARLY here (naming the line + missing key)
+    // instead of at reconcile (Rule 14 COMPLETENESS). Same cross-reference
+    // invariant as the single-step path; NOT a new soundness gate.
+    assertSidecarCrossReferencesComplete(
+      validation.sidecar as FrameworkTraceSidecar,
+      `${callerLabel}: sidecar line ${i + 1}`,
+    )
     sidecars.push(validation.sidecar as FrameworkTraceSidecarV2)
   }
 
@@ -1372,6 +1890,8 @@ export function buildObserverReceiptStreamFromSidecar(
           fieldPath,
           delta: check.delta,
           appliedTolerance: check.appliedTolerance,
+          stored: claimedVal,
+          recomputed: engineVal,
         })
       }
     }
@@ -1460,8 +1980,18 @@ export function buildObserverReceiptStreamFromSidecar(
         bias_policy: resolveBiasPolicyForSidecar(sidecar),
       }
       let engineInput: GeneralInput = engineInputBase
-      if (sidecar.optimizer !== undefined && sidecar.optimizer.name !== "sgd") {
-        const ocIn = sidecar.optimizer
+      // v0.13 — also dispatch for plain SGD coupled L2 (name === "sgd" with
+      // weight_decay > 0) so the engine recompute folds the same coupled-L2 term.
+      const recordPlainSgdCoupledL2 =
+        sidecar.optimizer !== undefined &&
+        sidecar.optimizer.name === "sgd" &&
+        typeof sidecar.optimizer.weight_decay === "number" &&
+        sidecar.optimizer.weight_decay !== 0
+      if (
+        (sidecar.optimizer !== undefined && sidecar.optimizer.name !== "sgd") ||
+        recordPlainSgdCoupledL2
+      ) {
+        const ocIn = sidecar.optimizer!
         const oc: OptimizerConfig = {
           name: ocIn.name,
           learning_rate: ocIn.learning_rate,
@@ -1490,7 +2020,7 @@ export function buildObserverReceiptStreamFromSidecar(
               if (typeof sbMom.buffer === "number") {
                 stateBefore[u.parameter_id] = { buffer: sbMom.buffer }
               }
-            } else {
+            } else if (ocIn.name !== "sgd") {
               const sbAdam = sb as Partial<AdamState>
               if (typeof sbAdam.m === "number" && typeof sbAdam.v === "number") {
                 stateBefore[u.parameter_id] = { m: sbAdam.m, v: sbAdam.v }
@@ -1498,11 +2028,12 @@ export function buildObserverReceiptStreamFromSidecar(
             }
           }
         }
-        engineInput = {
-          ...engineInputBase,
-          optimizer_config: oc,
-          optimizer_state_before: stateBefore,
-        }
+        // Plain SGD (coupled L2) has no per-parameter state — the engine rejects
+        // a non-undefined optimizer_state_before for name === "sgd".
+        engineInput =
+          ocIn.name === "sgd"
+            ? { ...engineInputBase, optimizer_config: oc }
+            : { ...engineInputBase, optimizer_config: oc, optimizer_state_before: stateBefore }
       }
       engineReceipt = runGeneralStep(engineInput)
 
@@ -1585,13 +2116,22 @@ export function buildObserverReceiptStreamFromSidecar(
       sidecar.optimizer !== undefined &&
       ((sidecar.optimizer.nesterov === true) ||
         (sidecar.optimizer.dampening !== undefined && sidecar.optimizer.dampening !== 0))
-    const recordSchemaVersion: "0.4.0" | "0.5.0" | "0.6.0" | "0.7.0" = recordUsesNesterovOrDampening
-      ? "0.7.0"
-      : isSgdMomentumRecord
-        ? "0.6.0"
-        : isAdamFamilyRecord
-          ? "0.5.0"
-          : "0.4.0"
+    // v0.13 — SGD coupled L2 (the documented Rule 7 third branch): a record
+    // carrying weight_decay > 0 on the SGD family maps to a v0.8.0 receipt.
+    const recordUsesCoupledL2 =
+      sidecar.optimizer !== undefined &&
+      (sidecar.optimizer.name === "sgd" || sidecar.optimizer.name === "sgd_momentum") &&
+      typeof sidecar.optimizer.weight_decay === "number" &&
+      sidecar.optimizer.weight_decay !== 0
+    const recordSchemaVersion: "0.4.0" | "0.5.0" | "0.6.0" | "0.7.0" | "0.8.0" = recordUsesCoupledL2
+      ? "0.8.0"
+      : recordUsesNesterovOrDampening
+        ? "0.7.0"
+        : isSgdMomentumRecord
+          ? "0.6.0"
+          : isAdamFamilyRecord
+            ? "0.5.0"
+            : "0.4.0"
     const receipt: GeneralReceipt = {
       schema_version: recordSchemaVersion,
       fixture: `${fixtureLabelBase}-step-${i}`,
@@ -1618,7 +2158,8 @@ export function buildObserverReceiptStreamFromSidecar(
       learning_rate: sidecar.learning_rate,
       // v0.9.1 — emit optimizer_config block ONLY for Adam/AdamW records.
       // v0.9.2 — same emission for sgd_momentum records.
-      ...((isAdamFamilyRecord || isSgdMomentumRecord) && sidecar.optimizer !== undefined
+      // v0.13 — also emit for plain SGD coupled L2 (recordUsesCoupledL2).
+      ...((isAdamFamilyRecord || isSgdMomentumRecord || recordUsesCoupledL2) && sidecar.optimizer !== undefined
         ? {
             optimizer_config: {
               name: sidecar.optimizer.name,
@@ -1664,6 +2205,13 @@ export function buildObserverReceiptStreamFromSidecar(
       post_update_loss:
         sidecar.post_update_loss ?? engineReceipt.post_update_loss,
     }
+
+    // ING-B-001 (Stage C / observability) — forensic helper-block passthrough
+    // (per-record mirror of the single-step path). Attach this record's helper
+    // attribution so a downstream reader of any per-step receipt sees which live
+    // helper produced it. Forensic ONLY — Rule 14 is the authority. Does not
+    // change emitted bytes (schema-ordered emitter ignores the field).
+    attachHelperAttribution(receipt, sidecar.helper)
 
     steps.push({ receipt, differentialPassed, differentialDisagreements: disagreements })
   }

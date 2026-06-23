@@ -16,11 +16,12 @@ to have done actually add up?**
 If the answer is "no," the reconciler refuses to certify the receipt and
 the verifier fails closed.
 
-## Quick reference: the 26 rules (+ Rule 0.8 structural sub-check)
+## Quick reference: the 26 rules (+ Rule 0.8 / 0.9 structural sub-checks)
 
 | # | Rule | Status |
 |---|------|--------|
 | 0.8 | Softmax probability bounds: when `topology.activation_output === "softmax"`, every `forward[output].out` MUST be in `[0, 1]` (Rule 0 sub-check; failure record uses `rule: 0` with "Rule 0.8" in message) | **implemented (v0.5)** |
+| 0.9 | Forward-map completeness: when `topology.unit_order.output` is present, the `forward` map's key set MUST EQUAL `unit_order.hidden ∪ output` — every declared forward unit present with numeric `net` AND `out`, no missing/extra (Rule 0 sub-check; failure record uses `rule: 0` with "Rule 0.9" in message). Closes the gated-rule omission hole: Rules 0.8/11/12 each silently SKIP a forward output unit they don't find, so an engine-side softmax+CE receipt that drops one output from `forward` (keeping it in `unit_order.output` + a legitimately-0 `loss.per_output` entry) would otherwise reconcile `ok:true` even though the survivors don't sum to 1.0. Owns the COMPLEMENT of Rule 14 (observer-mode forward completeness is Rule 14's ENG-2). | **implemented (v0.12)** |
 | 1 | Output error signal == product(factors) | **implemented (v0.2)** |
 | 2 | Backpropagated sum == sum(downstream contributions) AND contribution.value == downstream_signal * weight_value | **implemented (v0.2)** |
 | 3 | Hidden error signal == backprop_sum * activation_derivative | **implemented (v0.2)** |
@@ -214,6 +215,51 @@ test (which scans integer rule numbers) continues to work unchanged. The
 bad fixture `fixtures/bad/softmax-ce.bad-prob-bound.jsonl` mutates
 `forward.o1.out` to `-0.01` to exercise this path.
 
+### v0.12 — Rule 0.9 (forward-map completeness)
+
+When `topology.unit_order.output` is present, the `forward` map's key set
+MUST EQUAL `unit_order.hidden ∪ unit_order.output` — the units that carry
+forward activations (inputs are not in `forward`). Every such declared unit
+must be present with BOTH a numeric `net` and a numeric `out` (mirroring the
+schema's `ForwardUnit.required = [net, out]`); no unit missing, no
+undeclared/extra unit. Like Rule 0.8 the check fires inside the Phase 0
+structural pass and SHORT-CIRCUITS the numeric rules, and its failure record
+uses `rule: 0` with `"Rule 0.9 (forward completeness)"` in the message so the
+doctrine ratchet (which scans integer rule numbers) is unaffected.
+
+**Why it exists — the gated-rule omission hole.** Rules 0.8 (probability
+bounds), 11 (softmax normalization), and 12 (`cross_entropy_softmax`) each
+iterate only the forward keys they FIND and silently skip a declared output
+unit they DON'T: Rule 11 hits its `anyMissing` branch and `return`s, Rule 0.8
+`continue`s past the missing unit, Rule 12 sets `totalReconstructable = false`
+and `continue`s. So an engine-side softmax+CE receipt (Rule 14 off "by
+design") that DROPS one output unit from `forward` — while keeping it declared
+in `unit_order.output` AND keeping a legitimately-0 `loss.per_output` entry
+(its target is 0, so G-018 loss-component coherence stays satisfied) — used to
+reconcile `ok:true` even though the surviving forward outputs no longer sum to
+1.0. Schema validation does not catch it either: `ForwardMap` is an open
+`additionalProperties` map with no per-output-unit requirement. Rule 0.9 fails
+it CLOSED. It mirrors G-018's `loss.per_output` key-set-EQUAL coherence and
+Rule 14's ENG-2 forward completeness, extending the same discipline to the
+per-receipt forward map.
+
+**Division of labor with Rule 14.** Rule 14's ENG-2 already enforces forward
+completeness for observer-mode receipts (`authoring_state ===
+"external_imported"` OR observer markers present) via the engine-recompute
+differential. Rule 0.9 owns the COMPLEMENT — the engine-side / no-marker
+receipts where Rule 14 no-ops, which is exactly where the hole lived. The gate
+is the negation of Rule 14's trigger, so an observer receipt is left for Rule
+14 (whose ENG-2 attributes the omission to the engine recompute) rather than
+being short-circuited by Rule 0.9 first. Hidden units get the same treatment
+as outputs (a dropped hidden forward unit would dangle the
+`from: "forward.h*.out"` upstream-activation provenance references Rules 4/8
+resolve).
+
+The bad fixture `fixtures/bad/softmax-ce.bad-forward-unit-dropped.jsonl` drops
+output unit `o3` from `forward` (leaving `o1=0.5, o2=0.3`, sum `0.8 ≠ 1.0`)
+while keeping `o3` in `unit_order.output` and in `loss.per_output` — the exact
+omission this rule closes.
+
 ### v0.5 — Rule 11 (softmax normalization)
 
 When `topology.activation_output === "softmax"`,
@@ -228,8 +274,22 @@ versa (`-0.5` paired with `1.5` sums to 1 but violates 0.8). The
 softmax+CE v0.5 numeric policy uses `{atol: 1e-11, rtol: 1e-7}` — softmax
 outputs sum to 1.0 within roughly 1-2 ULP, well under the tolerance.
 
+**GATED / silent-skip backstop (v0.12).** Rule 11 reads each declared
+`forward[output_unit].out` and, if ANY is missing or non-numeric, hits its
+`anyMissing` branch and `return`s WITHOUT firing — the normalization check is
+gated on the full output set being present. On its own that is a soundness
+hole: drop one output unit from `forward` and the surviving (non-normalized)
+distribution is never summed. That hole is closed structurally by **Rule 0.9
+(forward-map completeness)**, which fails closed on a missing/extra forward
+unit in the Phase 0 pass and short-circuits before Rule 11 runs (for
+observer-mode receipts the equivalent guarantee comes from Rule 14's ENG-2).
+So Rule 11's silent skip is safe: a dropped unit is rejected upstream, never
+laundered into an `ok:true`.
+
 The bad fixture `fixtures/bad/softmax-ce.bad-softmax-sum.jsonl` mutates
-`forward.o2.out` by `+0.1` to make the sum ~1.1.
+`forward.o2.out` by `+0.1` to make the sum ~1.1; the companion
+`fixtures/bad/softmax-ce.bad-forward-unit-dropped.jsonl` DROPS an output unit
+(the omission variant Rule 0.9 catches before Rule 11 can skip it).
 
 ### v0.5 — Rule 12 cross_entropy_softmax branch
 

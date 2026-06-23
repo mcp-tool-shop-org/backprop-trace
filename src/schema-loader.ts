@@ -84,6 +84,19 @@ import { dirname, resolve } from "node:path";
  *     (parameter update). PyTorch's torch.optim.SGD.__init__ raises
  *     ValueError on nesterov=true && dampening>0; v0.7.0 mirrors this
  *     rejection at schema (allOf if/then) + engine boundary.
+ *   - "0.8.0" — v0.13 SGD coupled-L2 weight-decay extension — the documented
+ *     Rule 7 "third branch" (FORCED bump: v0.7.0/v0.6.0 REJECTED weight_decay
+ *     for the SGD family via `not: { required: [weight_decay] }`; admitting
+ *     weight_decay on sgd/sgd_momentum is a relaxation a v0.7.0-pinned
+ *     validator cannot make in place). Coupled L2 folds the decay into the
+ *     gradient before the buffer/update (grad' = grad + weight_decay * param)
+ *     — DISTINCT from AdamW's decoupled decay (applied to the parameter at the
+ *     update step). weight_decay == 0 collapses byte-identically to the
+ *     no-decay path, so v0.7.0 sgd/sgd_momentum receipts WITHOUT weight_decay
+ *     stay byte-equal; v0.13 receipts that carry weight_decay on the SGD
+ *     family declare schema_version: "0.8.0". Rule 4's factors carry the
+ *     decay-augmented gradient; Rule 7's third branch re-derives the coupled
+ *     path. No new integer rule slot (folds into Rules 4/5/6/7/21/26).
  *
  * Receipts that say `schema_version: "0.1.0"` continue to validate against
  * the v0.1.0 schema for byte-equal preservation. v0.3-onward generalized
@@ -96,7 +109,7 @@ import { dirname, resolve } from "node:path";
  * sgd_momentum receipts declare "0.7.0" (classical sgd_momentum stays at
  * "0.6.0"; SGD at "0.4.0"; Adam/AdamW at "0.5.0"; all byte-equal preserved).
  */
-export const SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0"] as const;
+export const SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0", "0.8.0"] as const;
 
 /**
  * Union of currently-shipped receipt schema versions. Use this for any
@@ -276,8 +289,18 @@ export function getInputSchema(
  *     helper claims. v0.6.0 hand-authored sidecars stay byte-equal;
  *     v0.10 live-helper-emitted sidecars declare format:
  *     "framework-trace.v0.7.0".
+ *   - "0.8.0" — v0.13 SGD coupled-L2 weight-decay additive (FORCED bump:
+ *     v0.7.0/v0.5.0 REJECTED weight_decay for sgd_momentum at schema level;
+ *     admitting it for the SGD family is a relaxation). optimizer.weight_decay
+ *     (number >= 0) now accepted for name in {sgd, sgd_momentum} encoding
+ *     coupled L2 (folded into the gradient before the buffer/update). The
+ *     sidecar's updates[*].gradient carries PyTorch's param.grad (already
+ *     decay-augmented); the reconciler re-derives grad' = grad_base + wd*param.
+ *     v0.7.0 sidecars without weight_decay stay byte-equal; v0.13 sidecars
+ *     with weight_decay on the SGD family declare format:
+ *     "framework-trace.v0.8.0".
  */
-export const FRAMEWORK_TRACE_SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0"] as const;
+export const FRAMEWORK_TRACE_SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.7.0", "0.8.0"] as const;
 
 /**
  * Union of currently-shipped framework-trace sidecar schema versions.

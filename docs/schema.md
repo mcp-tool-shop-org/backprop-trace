@@ -823,7 +823,16 @@ See [`docs/authoring.md`](./authoring.md) for the full walkthrough.
 
 ## Reference
 
-- Receipt schema files: `schemas/receipt.v0.1.0.json` (Mazur), `schemas/receipt.v0.2.0.json` (generalized + multi-step; v0.4 additively widened for per-neuron bias)
+- Receipt schema files: `schemas/receipt.v0.1.0.json` (Mazur) through
+  `schemas/receipt.v0.7.0.json` — seven additively-widened versions
+  (v0.2 generalized + multi-step, v0.4 per-neuron bias + batch, v0.5
+  softmax+CE, v0.6 observer-mode/attestation, v0.7 SGD-momentum
+  Nesterov/dampening). The validator auto-dispatches on the receipt's
+  `schema_version`. The per-version field additions are documented in
+  the per-rule sections of `docs/reconciliation.md`; this guide covers
+  the v0.1–v0.2 core field-by-field.
+- Framework-trace sidecar schema files (observer-mode import):
+  `schemas/framework-trace.v0.1.0.json` through `…v0.7.0.json`
 - Input-config schema file (v0.4+): `schemas/topology-input.v0.4.0.json`
 - Reconciliation rules: `docs/reconciliation.md`
 - Computation order + hybrid tolerance + determinism boundary: `docs/computation-order.md`

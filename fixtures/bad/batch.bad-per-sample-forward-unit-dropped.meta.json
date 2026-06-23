@@ -1,0 +1,17 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "batch.bad-per-sample-forward-unit-dropped.meta",
+  "describes": "fixtures/bad/batch.bad-per-sample-forward-unit-dropped.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.softmax-ce.batched.golden.jsonl (external_imported batched observer golden, baseline reconcile ok:true). R14-PERSAMPLE-OMISSION residual-false-PASS fixture — the SCHEMA-PERMITTED variant.",
+  "mutation": {
+    "kind": "drop_whole_nested_per_sample_forward_unit",
+    "field_path": "per_sample.s0.forward.h1",
+    "note": "An entire NESTED per-sample forward unit (h1) is deleted from per_sample.s0.forward. Schema PERMITS this: ForwardMap is an open additionalProperties map with no per-output-unit requirement, so validateReceiptSchema returns ok:true. Pre-fix the per_sample differential used `if (!eUnit || !rUnit) continue`, silently skipping a unit ABSENT from the receipt, so reconcileReceipt returned ok:true. Rule 19 only catches a dropped WHOLE sample (the per_sample key set), not a dropped nested unit within a present sample. This fix is the SOLE gate. The fix asserts per_sample[sid].forward's key set EQUALS the engine's recomputed per-sample forward key set, raising a Rule 14 COMPLETENESS failure for the missing unit."
+  },
+  "reconciliation_check_targeted_first": "Rule 14 (engine-recompute COMPLETENESS): the engine recomputed per-sample forward unit \"h1\" for sample \"s0\" but the receipt's per_sample.s0.forward map has NO entry for it (key-set-EQUAL).",
+  "expected_rules_fired": [14],
+  "expected_field_path": "per_sample.s0.forward.h1",
+  "non_vacuity": "Reverting the per-sample COMPLETENESS additions makes reconcileReceipt return ok:true on this fixture (RED). Schema does NOT catch it (open ForwardMap), and no other rule visits the dropped nested unit — Rule 14's per-sample key-set-EQUAL check is the only defense.",
+  "schema_note": "validateReceiptSchema returns ok:true on this fixture (open ForwardMap permits the omission). reconcileReceipt is therefore the SOLE gate, which is exactly why the key-set-EQUAL completeness check is load-bearing.",
+  "purpose": "R14-PERSAMPLE-OMISSION anti-circularity fixture (schema-permitted variant). Proves Rule 14's per-sample differential enforces key-set EQUALITY against the engine's recomputed per-sample forward keys, not merely value agreement on present units."
+}

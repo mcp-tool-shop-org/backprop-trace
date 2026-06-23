@@ -66,7 +66,7 @@ CompCert lineage in the same doc for the academic precedent.
 
 ```bash
 npx bp --version
-# 0.12.0
+# 1.0.0
 
 npx bp --help
 # Usage:

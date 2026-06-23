@@ -281,6 +281,133 @@ function stripFlags(args: string[]): string[] {
 const argv = stripFlags(rawArgv);
 
 // =============================================================================
+// global unknown-flag rejection (CLI-1)
+// =============================================================================
+
+// The complete set of value-bearing flags: each consumes its next token as a
+// value (the `--flag value` form) OR carries it inline (the `--flag=value`
+// form). Mirrors the consumption logic in stripFlags / valueFlag exactly so a
+// flag's VALUE is never mistaken for an unknown flag. Note: `-` and `--` are
+// accepted as values (isFlagShaped excludes them) so a consumed `-` is never
+// flagged.
+const VALUE_BEARING_FLAGS = ["--out", "--topology", "--color"] as const;
+
+// Meta flags handled POSITIONALLY by the dispatcher (not in FLAG_TOKENS, so
+// stripFlags leaves them in argv on purpose — `bp --help`, `bp validate --help`,
+// `bp --version` all dispatch on argv position). They are RECOGNIZED for the
+// unknown-flag check so they are not wrongly rejected, but are NOT stripped.
+const META_FLAG_TOKENS = new Set(["--help", "-h", "--version", "-v"]);
+
+// Subcommand-LOCAL flags: recognized globally for the unknown-flag check (so
+// `bp examples pytorch --print` is not wrongly rejected by rejectUnknownFlags)
+// but, like META_FLAG_TOKENS, NOT in FLAG_TOKENS — stripFlags leaves them in
+// argv so the owning subcommand handler still reads them and validates context
+// (`bp examples pytorch` rejects `--print` misuse itself). These are not
+// verdict-changing, so global recognition does not reintroduce the
+// silent-gate-downgrade risk CLI-1 closed for --strict / --warn-as-fail.
+const SUBCOMMAND_LOCAL_FLAGS = new Set(["--print"]);
+
+// Recognized flags for suggestion + membership. Includes every FLAG_TOKENS
+// entry plus the value-bearing flags and the positional meta flags. Used both
+// to decide whether a token is known and (via Damerau-Levenshtein) to suggest
+// the intended flag for a typo.
+const RECOGNIZED_FLAGS: string[] = [
+  ...FLAG_TOKENS,
+  ...VALUE_BEARING_FLAGS,
+  ...META_FLAG_TOKENS,
+  ...SUBCOMMAND_LOCAL_FLAGS,
+];
+
+/**
+ * CLI-1: suggest the intended flag for an unrecognized flag-shaped token,
+ * reusing the same Damerau-Levenshtein distance the subcommand suggester uses
+ * (`--strcit` -> `--strict`, `--warn-as-fials` -> `--warn-as-fail`). Compares
+ * against the canonical long-flag names (the value-bearing flags are matched on
+ * their bare `--flag` form, so `--colr=always` still suggests `--color`).
+ * Returns null when nothing is within a length-scaled threshold so we never
+ * collapse a wholly-unrelated token onto a misleading suggestion.
+ */
+function suggestFlag(unknown: string): string | null {
+  // Strip an inline `=value` so `--colr=always` is matched as `--colr`.
+  const eqIdx = unknown.indexOf("=");
+  const head = eqIdx === -1 ? unknown : unknown.slice(0, eqIdx);
+  let best: { flag: string; dist: number } | null = null;
+  for (const flag of RECOGNIZED_FLAGS) {
+    const dist = damerauLevenshtein(head, flag);
+    const threshold = Math.max(2, Math.ceil(flag.length / 3));
+    if (dist > threshold) continue;
+    if (best === null || dist < best.dist || (dist === best.dist && flag.length < best.flag.length)) {
+      best = { flag, dist };
+    }
+  }
+  return best ? best.flag : null;
+}
+
+/**
+ * CLI-1: a flag-shaped token is RECOGNIZED if it is an exact FLAG_TOKENS entry,
+ * a value-bearing flag in either `--flag` or `--flag=value` form, or one of the
+ * bare `-` / `--` sentinels (which are legitimate value tokens, not flags).
+ */
+function isRecognizedFlagToken(token: string): boolean {
+  if (token === "-" || token === "--") return true;
+  if (FLAG_TOKENS.has(token)) return true;
+  if (META_FLAG_TOKENS.has(token)) return true;
+  if (SUBCOMMAND_LOCAL_FLAGS.has(token)) return true;
+  for (const flag of VALUE_BEARING_FLAGS) {
+    if (token === flag || token.startsWith(`${flag}=`)) return true;
+  }
+  return false;
+}
+
+/**
+ * CLI-1: global unknown-flag rejection. After stripFlags has removed every
+ * recognized flag (and consumed each value-bearing flag's value), any token
+ * that still looks like a flag — `/^--/` for long flags or `/^-[^-]/` for
+ * single-dash flags — and is NOT recognized was being silently dropped, so the
+ * CLI exited 0 on an unknown flag. That violates the documented exit-3 contract
+ * AND silently downgrades a CI gate when a verdict-changing flag is mistyped
+ * (`--warn-as-fail` -> `--warn-as-fials`, `--strict` -> `--strcit`). Walk
+ * rawArgv, skip every recognized flag and every consumed value, and exit 3 with
+ * a structured INVALID_FLAG envelope naming the first offending token (with a
+ * cheap fuzzy suggestion when one is in range). The bare `-` (stdin) and `--`
+ * (separator) sentinels stay exempt.
+ */
+function rejectUnknownFlags(args: string[]): void {
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i] ?? "";
+    // Sentinels and recognized flags are fine; recognized value-bearing flags
+    // also consume their following value so it is not re-examined as a flag.
+    if (isRecognizedFlagToken(token)) {
+      // For the `--flag value` form (not `--flag=value`), skip the consumed
+      // value token if it is a real value (present, not itself flag-shaped) —
+      // mirrors stripFlags / valueFlag so a value like `-` or a filename is
+      // never flag-rejected.
+      const isBareValueBearing = (VALUE_BEARING_FLAGS as readonly string[]).includes(token);
+      if (isBareValueBearing && !isFlagShaped(args[i + 1]) && args[i + 1] !== undefined) {
+        i += 1;
+      }
+      continue;
+    }
+    // Flag-shaped? `--xxx` (long) or `-x` (single-dash, not `--`/`-`). The
+    // isFlagShaped helper already excludes the bare `-` / `--` sentinels.
+    if (isFlagShaped(token)) {
+      const suggestion = suggestFlag(token);
+      exitWithUsageError(
+        `unrecognized flag ${JSON.stringify(token)}.` +
+          (suggestion ? ` Did you mean ${JSON.stringify(suggestion)}?` : "") +
+          ` Run 'bp --help' for the recognized options.`,
+        "INVALID_FLAG",
+        3,
+        suggestion ? { hint: `did you mean ${suggestion}?` } : undefined,
+      );
+    }
+    // Non-flag token (a subcommand or file argument) — not our concern here.
+  }
+}
+
+rejectUnknownFlags(rawArgv);
+
+// =============================================================================
 // color helpers (FT-C-004)
 // =============================================================================
 
@@ -1129,20 +1256,21 @@ function examplesUsageText(): string {
   return [
     "Usage: bp examples <framework> [--print]",
     "",
-    "  Print the absolute path of (or cat the contents of) a bundled",
-    "  framework helper. v0.10 ships only the PyTorch helper:",
+    "  Print the absolute path of (or cat the contents of) a bundled live",
+    "  framework helper. Ships PyTorch and JAX helpers:",
     "",
-    "    bp examples pytorch              Print the absolute path of",
+    "    bp examples pytorch              Print the path of",
     "                                     scripts/extract/pytorch.py.",
-    "    bp examples pytorch --print      Cat the helper to stdout (pipe",
-    "                                     into a local file: `bp examples",
-    "                                     pytorch --print > pytorch_trace",
-    "                                     _helper.py`).",
+    "    bp examples pytorch --print      Cat the PyTorch helper to stdout.",
+    "    bp examples jax                  Print the path of",
+    "                                     scripts/extract/jax.py.",
+    "    bp examples jax --print          Cat the JAX helper to stdout (pipe",
+    "                                     into a local file).",
     "",
-    "  TRUST BOUNDARY: the helper is an observer that extracts a",
-    "  framework-trace.v0.7.0 sidecar. It is NEVER a verifier. Rule 14",
-    "  (engine-recompute differential) in `bp import pytorch` is the",
-    "  authority on every helper-emitted sidecar. See docs/live-helpers.md.",
+    "  TRUST BOUNDARY: a helper is an observer that extracts a framework-trace",
+    "  sidecar. It is NEVER a verifier. Rule 14 (engine-recompute differential)",
+    "  in `bp import <framework>` is the authority on every helper-emitted",
+    "  sidecar. See docs/live-helpers.md.",
     "",
     "  Exit codes:",
     "    0  Success.",
@@ -1206,6 +1334,73 @@ function runExamplesPytorch(printFlag: string | undefined): never {
   exitWithUsageError(
     `bp examples pytorch: unrecognized flag ${JSON.stringify(printFlag)}. Use --print or no flag. ` +
       `Run 'bp examples pytorch --help' for usage.`,
+    "INVALID_FLAG",
+    3,
+  );
+}
+
+/**
+ * Resolve the absolute path of the bundled live JAX helper file
+ * (`<pkg root>/scripts/extract/jax.py`, shipped via `files[]: ["scripts/**"]`).
+ */
+function resolveJaxHelperPath(): string | null {
+  return resolveBundledFile("scripts/extract/jax.py");
+}
+
+function examplesJaxUsageText(): string {
+  return [
+    "Usage: bp examples jax [--print]",
+    "",
+    "  Default (no flag): print the absolute filesystem path of the bundled",
+    "  live JAX helper. The user can then `cat`, `cp`, or `less` it.",
+    "",
+    "    --print              Cat the helper's bytes to stdout. Useful for",
+    "                         pipe-into-file:",
+    "                             bp examples jax --print > jax_trace_helper.py",
+    "",
+    "  The JAX helper uses jax.grad (negated to descent) and folds a",
+    "  jax.make_jaxpr(jax.grad(loss)) digest into the forensic block — a",
+    "  stronger trust boundary than PyTorch eager. It REQUIRES",
+    "  jax.config.update('jax_enable_x64', True) + CPU (the determinism",
+    "  contract). Observer-only — Rule 14 is the authority. See",
+    "  docs/live-helpers.md.",
+    "",
+    "  Exit codes:",
+    "    0  Success.",
+    "    2  Usage or I/O error (helper file missing from package).",
+    "    3  Invalid CLI argument.",
+    "",
+  ].join("\n");
+}
+
+function runExamplesJax(printFlag: string | undefined): never {
+  const helperPath = resolveJaxHelperPath();
+  if (helperPath === null) {
+    exitWithUsageError(
+      "bp examples jax: helper file scripts/extract/jax.py not found in this package. " +
+        "The helper SHOULD ship with the npm package via package.json files[] — " +
+        "if you're running from a local checkout, ensure scripts/extract/jax.py exists; " +
+        "if from a pnpm/npm install, try reinstalling @mcptoolshop/backprop-trace.",
+      "HELPER_FILE_MISSING",
+      2,
+    );
+  }
+  if (printFlag === undefined) {
+    if (jsonMode) {
+      process.stdout.write(JSON.stringify({ ok: true, helper_path: helperPath }) + "\n");
+    } else {
+      process.stdout.write(helperPath + "\n");
+    }
+    process.exit(0);
+  }
+  if (printFlag === "--print") {
+    const bytes = readFileSync(helperPath, "utf-8");
+    process.stdout.write(bytes);
+    process.exit(0);
+  }
+  exitWithUsageError(
+    `bp examples jax: unrecognized flag ${JSON.stringify(printFlag)}. Use --print or no flag. ` +
+      `Run 'bp examples jax --help' for usage.`,
     "INVALID_FLAG",
     3,
   );
@@ -1710,6 +1905,16 @@ type VerifyReport = {
   math_gate_skipped?: boolean;
   /** G-006: the concrete rule numbers skipped via self-assertion (e.g. [14]). */
   skipped_rules?: number[];
+  /**
+   * PH-ENG-02 (rule-coverage transparency): the documented rules (1..26) that
+   * substantively RAN for this receipt vs were GATED OFF because their feature
+   * block was absent. Sourced from reconcileReceipt's additive diagnostics.
+   * Present whenever reconcile ran (i.e. schema validation passed). Let a
+   * consumer reading a green PASS see which substantive rules actually fired.
+   */
+  rules_evaluated?: number[];
+  /** PH-ENG-02: rules applicable-but-skipped (feature block absent). */
+  gated_off?: number[];
 };
 
 const VALID_AUTHORING_STATES = new Set([
@@ -1763,6 +1968,44 @@ function resolveReceiptPath(receipt: unknown, path: string): unknown {
 const CLAIM_PATHS: Record<string, string> = {
   post_update_total_error: "post_update_loss.total",
 };
+
+/**
+ * TST-4: convert an error thrown by the engine-reproduce recompute into a
+ * user-readable, diagnosable check detail — never a raw V8 TypeError / node
+ * internals stack. Mirrors reconcileReceipt's core-B-002 structured-failure
+ * conversion: a corrupted or structurally-malformed receipt (e.g. a
+ * post_update_forward / forward block that is a lifecycle placeholder rather
+ * than per-unit {net,out} data) makes the canonical emitter dereference an
+ * undefined unit and throw "Cannot read properties of undefined (reading
+ * 'net')". We name the likely cause so the operator can act, and keep the raw
+ * message only as a parenthetical (with its `Cannot read properties` / node:
+ * internal markers stripped) so no raw-stack text reaches the structured detail.
+ */
+function diagnoseEngineReproduceFailure(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  // A V8 property-access TypeError on an undefined unit is the canonical
+  // corrupted-receipt signature (missing forward / post_update_forward unit
+  // data the engine recompute + canonical emit dereference). Name the field
+  // class instead of echoing the raw "Cannot read properties of undefined"
+  // text. The `(reading 'X')` tail, when present, identifies the missing field.
+  const readingMatch = /reading '([^']+)'/.exec(raw);
+  if (/Cannot read properties|Cannot read property/.test(raw)) {
+    const field = readingMatch ? readingMatch[1] : undefined;
+    return (
+      `engine recompute aborted: the receipt is structurally malformed — the engine ` +
+      `re-run / canonical emit dereferenced a missing field` +
+      (field ? ` ('${field}')` : "") +
+      `, typically an absent forward / post_update_forward unit (a lifecycle ` +
+      `placeholder where per-unit {net, out} data was expected). Run ` +
+      `'bp validate <file>' against schemas/receipt.v0.1.0.json to locate the ` +
+      `offending field precisely.`
+    );
+  }
+  // Any other throw: surface the message, but defensively strip node-internal
+  // path markers so a stack frame can never leak into the structured detail.
+  const sanitized = raw.replace(/node:internal\S*/g, "(node internal)");
+  return `engine recompute aborted: ${sanitized}`;
+}
 
 function runVerifyMazur(opts: {
   receiptPath: string;
@@ -1842,10 +2085,18 @@ function runVerifyMazur(opts: {
       });
     }
   } catch (err) {
+    // TST-4: a corrupted receipt can make the engine recompute throw a raw V8
+    // TypeError (e.g. emitMazurReceipt dereferencing receipt.post_update_forward
+    // .<unit>.net when the block is a lifecycle placeholder, not unit data). The
+    // raw "Cannot read properties of undefined (reading 'net')" must NOT leak
+    // into the structured check detail (no-raw-stacks discipline). Convert it to
+    // a diagnosable detail — mirroring reconcileReceipt's core-B-002 structured-
+    // failure conversion — so the operator sees WHY the recompute aborted. The
+    // verdict is still 'fail' (the receipt is structurally broken).
     checks.push({
       name: "engine-reproduce",
       status: "fail",
-      message: err instanceof Error ? err.message : String(err),
+      message: diagnoseEngineReproduceFailure(err),
     });
   }
 
@@ -2020,7 +2271,17 @@ function runVerifyMazur(opts: {
     });
   }
 
-  return finalizeReport(checks, opts);
+  const report = finalizeReport(checks, opts);
+  // PH-ENG-02: carry the rule-coverage partition onto the report (same as the
+  // verify-general path) so the --verbose render + --json envelope expose which
+  // substantive rules ran vs were gated off.
+  if (reconciliation.rules_evaluated !== undefined) {
+    report.rules_evaluated = reconciliation.rules_evaluated;
+  }
+  if (reconciliation.gated_off !== undefined) {
+    report.gated_off = reconciliation.gated_off;
+  }
+  return report;
 }
 
 function finalizeReport(
@@ -2077,8 +2338,67 @@ function renderVerifyReport(report: VerifyReport): string {
       lines.push(evidence);
     }
   }
+  // PH-ENG-02: rule-coverage transparency. A green PASS does not tell the
+  // operator WHICH of the 26 documented rules actually ran — ~14 are gated and
+  // silently no-op when their feature block is absent. Render a coverage line so
+  // the reader can distinguish "9 substantive rules ran" from "all 26 ran".
+  // Shown in --verbose only to keep the default render concise (the machine-
+  // readable arrays are always on the --json report).
+  const coverageLine = formatCoverageLine(report.rules_evaluated, report.gated_off);
+  if (verboseMode && coverageLine !== undefined) {
+    lines.push("");
+    lines.push(`  ${coverageLine}`);
+  }
   lines.push("");
   return lines.join("\n");
+}
+
+/**
+ * PH-ENG-02 — format the rule-coverage summary line, e.g.
+ *   "rules evaluated: 9/26 (gated off, feature absent: 13,16,17,18,19,21-26)".
+ * Returns undefined when coverage data is absent (schema validation failed
+ * before reconcile ran, so there is nothing to report). The gated-off list
+ * collapses consecutive runs (e.g. 21,22,23,24,25,26 -> "21-26") to stay
+ * readable as the rule set grows.
+ */
+function formatCoverageLine(
+  evaluated: number[] | undefined,
+  gatedOff: number[] | undefined,
+): string | undefined {
+  if (evaluated === undefined || gatedOff === undefined) return undefined;
+  const total = evaluated.length + gatedOff.length;
+  const ran = evaluated.length;
+  if (gatedOff.length === 0) {
+    return `rules evaluated: ${ran}/${total} (all applicable rules ran)`;
+  }
+  return `rules evaluated: ${ran}/${total} (gated off, feature absent: ${formatRuleRanges(gatedOff)})`;
+}
+
+/**
+ * Collapse a sorted-ascending list of rule numbers into a compact run notation:
+ * [13,16,17,18,19,21,22,23,24,25,26] -> "13,16-19,21-26". Pure formatter.
+ */
+function formatRuleRanges(nums: number[]): string {
+  if (nums.length === 0) return "";
+  const sorted = [...nums].sort((a, b) => a - b);
+  const parts: string[] = [];
+  let runStart = sorted[0]!;
+  let prev = sorted[0]!;
+  const flush = (): void => {
+    parts.push(runStart === prev ? `${runStart}` : `${runStart}-${prev}`);
+  };
+  for (let i = 1; i < sorted.length; i += 1) {
+    const n = sorted[i]!;
+    if (n === prev + 1) {
+      prev = n;
+    } else {
+      flush();
+      runStart = n;
+      prev = n;
+    }
+  }
+  flush();
+  return parts.join(",");
 }
 
 // =============================================================================
@@ -2594,6 +2914,10 @@ function runImportFramework(
         fieldPath: string;
         delta: number;
         appliedTolerance: number;
+        // ING-B-004: the two operands behind `delta` — `stored` is the
+        // receipt/sidecar-claimed value, `recomputed` is the engine value.
+        stored: number;
+        recomputed: number;
       }>;
     }
   >(libExportName);
@@ -2693,7 +3017,7 @@ function runImportFramework(
   );
   for (const d of result.differentialDisagreements.slice(0, 10)) {
     process.stderr.write(
-      `  ${color("disagree", RED, useColor)} ${d.fieldPath}: delta=${d.delta} (tolerance=${d.appliedTolerance})\n`,
+      `  ${color("disagree", RED, useColor)} ${d.fieldPath}: stored=${d.stored} recomputed=${d.recomputed} delta=${d.delta} (tolerance=${d.appliedTolerance})\n`,
     );
   }
   if (result.differentialDisagreements.length > 10) {
@@ -2701,6 +3025,18 @@ function runImportFramework(
       `  ... and ${result.differentialDisagreements.length - 10} more.\n`,
     );
   }
+  // ING-B-004: the import-time render now carries the two operands behind each
+  // delta — `stored` (the receipt/sidecar-claimed value) and `recomputed` (the
+  // engine value) — so an operator can tell a real tamper (large, structured
+  // divergence) from benign FP/Node drift WITHOUT re-running the gate. The
+  // emitted receipt's Rule-14 failures carry the same quartet under --json, and
+  // `bp verify general` remains the source of truth for the full per-field
+  // differential across the whole field set; this render is the at-import
+  // preview of it.
+  process.stderr.write(
+    `  Values above are stored (receipt-claimed) vs recomputed (engine). For the\n` +
+      `  full per-field differential, run: bp verify general <emitted-receipt> --json\n`,
+  );
   process.stderr.write("\n");
   process.exit(1);
 }
@@ -2793,6 +3129,10 @@ function runImportFrameworkStream(
           fieldPath: string;
           delta: number;
           appliedTolerance: number;
+          // ING-B-004: `stored` = receipt/sidecar-claimed value;
+          // `recomputed` = engine value behind `delta`.
+          stored: number;
+          recomputed: number;
         }>;
       }>;
     }
@@ -2908,10 +3248,19 @@ function runImportFrameworkStream(
     process.stderr.write(`  step ${idx}: ${s.differentialDisagreements.length} field(s) disagreed\n`);
     for (const d of s.differentialDisagreements.slice(0, 5)) {
       process.stderr.write(
-        `    ${color("disagree", RED, useColor)} ${d.fieldPath}: delta=${d.delta} (tolerance=${d.appliedTolerance})\n`,
+        `    ${color("disagree", RED, useColor)} ${d.fieldPath}: stored=${d.stored} recomputed=${d.recomputed} delta=${d.delta} (tolerance=${d.appliedTolerance})\n`,
       );
     }
   }
+  // ING-B-004: see the single-step import render for rationale — the render now
+  // carries each delta's two operands inline (stored = receipt-claimed,
+  // recomputed = engine), so an operator can triage a real tamper vs FP/Node
+  // drift without re-running the gate. `bp verify multi` of the emitted bundle
+  // remains the source of truth for the full per-field differential.
+  process.stderr.write(
+    `  Values above are stored (receipt-claimed) vs recomputed (engine). For the\n` +
+      `  full per-field differential, run: bp verify multi <emitted-bundle.jsonl> --json\n`,
+  );
   process.stderr.write("\n");
   process.exit(1);
 }
@@ -3163,6 +3512,15 @@ function runVerifyGeneral(opts: {
     report.math_gate_skipped = true;
     report.skipped_rules = mathGateSkippedRules ?? [14];
   }
+  // PH-ENG-02: carry the rule-coverage partition onto the report so the
+  // --verbose render and the --json envelope both expose which substantive
+  // rules ran vs were gated off (feature block absent).
+  if (reconciliation.rules_evaluated !== undefined) {
+    report.rules_evaluated = reconciliation.rules_evaluated;
+  }
+  if (reconciliation.gated_off !== undefined) {
+    report.gated_off = reconciliation.gated_off;
+  }
   return report;
 }
 
@@ -3198,6 +3556,16 @@ type VerifyMultiReport = {
   math_gate_skipped?: boolean;
   /** Concrete rule numbers skipped via self-assertion (currently [14]). */
   skipped_rules?: number[];
+  /**
+   * PH-ENG-02: the documented rules (1..26) that substantively ran ACROSS the
+   * bundle (union over records + the multi-step-only rules 9/10/17/25/26 when
+   * their bundle-spanning gate is satisfied) vs were gated off. Present only
+   * when the cross-record pass ran (every record passed schema). Lets a
+   * consumer reading a green bundle PASS see which substantive rules fired.
+   */
+  rules_evaluated?: number[];
+  /** PH-ENG-02: bundle rules applicable-but-skipped (feature block absent). */
+  gated_off?: number[];
 };
 
 /**
@@ -3307,6 +3675,11 @@ function runVerifyMulti(opts: {
   // chains and Rule 10 checks trace_id/step_index, neither of which is
   // safe on a structurally invalid record.
   const crossChecks: VerifyCheck[] = [];
+  // PH-ENG-02: bundle-level rule-coverage, populated from reconcileMultiStep
+  // when the cross-record pass runs (all records valid). Undefined when the
+  // cross pass is skipped (a record failed schema) — nothing to report then.
+  let bundleRulesEvaluated: number[] | undefined;
+  let bundleGatedOff: number[] | undefined;
   const allRecordsValidated = typedReceipts.length === records.length;
   if (!allRecordsValidated) {
     crossChecks.push({
@@ -3323,18 +3696,30 @@ function runVerifyMulti(opts: {
     // normal path, so older helper builds that don't set it are handled too (the
     // per-record detection above is the independent floor).
     type MultiStepResult =
-      | { ok: true; math_gate_skipped?: boolean; skipped_rules?: number[] }
+      | {
+          ok: true;
+          math_gate_skipped?: boolean;
+          skipped_rules?: number[];
+          rules_evaluated?: number[];
+          gated_off?: number[];
+        }
       | {
           ok: false;
           failures: ReconciliationFailure[];
           math_gate_skipped?: boolean;
           skipped_rules?: number[];
+          rules_evaluated?: number[];
+          gated_off?: number[];
         };
     const reconcileMultiStep = requireLibExport<
       (receipts: unknown[]) => MultiStepResult
     >("reconcileMultiStep");
     try {
       const multi = reconcileMultiStep(typedReceipts);
+      // PH-ENG-02: capture the bundle-level rule-coverage partition so the
+      // multi report can expose which substantive rules ran across the bundle.
+      if (multi.rules_evaluated !== undefined) bundleRulesEvaluated = multi.rules_evaluated;
+      if (multi.gated_off !== undefined) bundleGatedOff = multi.gated_off;
       // Fold the aggregated skip signal into the same accumulators the
       // per-record loop populated (Set/array de-dupe handle the overlap).
       if (multi.math_gate_skipped === true) {
@@ -3445,6 +3830,10 @@ function runVerifyMulti(opts: {
     ...(mathGateSkipped
       ? { math_gate_skipped: true, skipped_rules: mathGateSkippedRules }
       : {}),
+    ...(bundleRulesEvaluated !== undefined
+      ? { rules_evaluated: bundleRulesEvaluated }
+      : {}),
+    ...(bundleGatedOff !== undefined ? { gated_off: bundleGatedOff } : {}),
   };
 }
 
@@ -3494,6 +3883,14 @@ function renderVerifyMultiReport(report: VerifyMultiReport): string {
         .join("\n");
       lines.push(evidence);
     }
+  }
+  // PH-ENG-02: bundle rule-coverage transparency (--verbose only, same as the
+  // single-receipt verify path). Lets the reader see which substantive rules
+  // ran across the bundle vs were gated off because their feature is absent.
+  const coverageLine = formatCoverageLine(report.rules_evaluated, report.gated_off);
+  if (verboseMode && coverageLine !== undefined) {
+    lines.push("");
+    lines.push(`  ${coverageLine}`);
   }
   lines.push("");
   return lines.join("\n");
@@ -3596,6 +3993,13 @@ function runReconcileReceipt(file: string): void {
   if (result.ok && !mathGateSkipped) {
     if (jsonMode) {
       process.stdout.write(`${JSON.stringify({ ok: true })}\n`);
+    } else if (verboseMode) {
+      // PH-ENG-02: in --verbose human mode, surface which of the 26 documented
+      // rules actually ran vs were gated off (feature absent). Goes to stderr so
+      // the stdout contract is untouched (and --json's `{"ok":true}` stays
+      // byte-exact — this branch is human-mode only).
+      const coverageLine = formatCoverageLine(result.rules_evaluated, result.gated_off);
+      if (coverageLine !== undefined) verboseLog(coverageLine);
     }
     process.exit(0);
   }
@@ -3688,6 +4092,15 @@ if (argv[0] === "reconcile") {
       "incomplete command 'reconcile'. Did you mean 'bp reconcile receipt <file>'? Run 'bp --help' for usage.",
     );
   }
+  // cli-stageb-001: verb-level --help/-h. `bp reconcile --help` (no subnoun)
+  // prints the receipt usage (reconcile's only subcommand) and exits 0 —
+  // mirroring the import/examples/validate/validate-input verbs that already
+  // honor --help at the verb level. Checked BEFORE the subnoun guard so
+  // `--help` is not mistaken for an unknown subcommand.
+  if (argv[1] === "--help" || argv[1] === "-h") {
+    process.stdout.write(receiptUsageText());
+    process.exit(0);
+  }
   if (argv[1] !== "receipt") {
     exitWithUsageError(
       `unknown subcommand 'reconcile ${argv[1]}'. Did you mean 'bp reconcile receipt <file>'? Run 'bp --help' for usage.`,
@@ -3737,6 +4150,14 @@ if (argv[0] === "verify") {
     exitWithUsageError(
       "incomplete command 'verify'. Did you mean 'bp verify mazur', 'bp verify general <file>', or 'bp verify multi <file.jsonl>'? Run 'bp --help' for usage.",
     );
+  }
+  // cli-stageb-001: verb-level --help/-h. `bp verify --help` (no subnoun)
+  // prints the top-level usage (which documents all three verify subnouns —
+  // mazur / general / multi) and exits 0. Each subnoun still honors its own
+  // --help below; this closes the verb-level gap so every verb responds.
+  if (argv[1] === "--help" || argv[1] === "-h") {
+    process.stdout.write(usageText());
+    process.exit(0);
   }
 
   // ---------------------------------------------------------------------------
@@ -3906,6 +4327,14 @@ if (argv[0] === "generate") {
       "incomplete command 'generate'. Did you mean 'bp generate mazur', 'bp generate xor', 'bp generate iris', or 'bp generate from-config <file>'? Run 'bp --help' for usage.",
     );
   }
+  // cli-stageb-001: verb-level --help/-h. `bp generate --help` (no subnoun)
+  // prints the top-level usage (which documents all generate subnouns —
+  // mazur / xor / iris / from-config) and exits 0. Subnouns still honor
+  // their own --help below.
+  if (argv[1] === "--help" || argv[1] === "-h") {
+    process.stdout.write(usageText());
+    process.exit(0);
+  }
   if (argv[1] === "mazur") {
     if (argv[2] === "--help" || argv[2] === "-h") {
       process.stdout.write(generateUsageText());
@@ -4006,6 +4435,13 @@ if (argv[0] === "scaffold") {
     exitWithUsageError(
       "incomplete command 'scaffold'. Did you mean 'bp scaffold topology --topology mazur|xor|iris'? Run 'bp --help' for usage.",
     );
+  }
+  // cli-stageb-001: verb-level --help/-h. `bp scaffold --help` (no subnoun)
+  // prints the topology scaffold usage (scaffold's only subcommand) and
+  // exits 0. The `topology` subnoun still honors its own --help below.
+  if (argv[1] === "--help" || argv[1] === "-h") {
+    process.stdout.write(scaffoldTopologyUsageText());
+    process.exit(0);
   }
   if (argv[1] === "topology") {
     if (argv[2] === "--help" || argv[2] === "-h") {
@@ -4304,9 +4740,16 @@ if (argv[0] === "examples") {
     }
     runExamplesPytorch(argv[2]);
   }
+  if (argv[1] === "jax") {
+    if (argv[2] === "--help" || argv[2] === "-h") {
+      process.stdout.write(examplesJaxUsageText());
+      process.exit(0);
+    }
+    runExamplesJax(argv[2]);
+  }
   const examplesSubnoun = argv[1];
   exitWithUsageError(
-    `unknown subcommand 'examples ${examplesSubnoun}'. v0.10 ships only 'examples pytorch'. ` +
+    `unknown subcommand 'examples ${examplesSubnoun}'. Ships 'examples pytorch' and 'examples jax'. ` +
       `Run 'bp examples --help' for usage.`,
   );
 }

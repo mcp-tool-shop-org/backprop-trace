@@ -37,15 +37,62 @@ import type {
 
 // String emitter — JSON.stringify produces a valid JSON string literal
 // (quotes + escapes) for any JS string input. The TypeScript signature
-// `(value: string)` is the load-bearing guard: callers pass typed fields
-// of MazurReceipt, none of which permit Symbol or undefined. If a future
-// field is added with a non-string type and a caller forgets to convert,
-// the compiler rejects the `S(...)` call before runtime. Note this helper
-// is type-defensive only — JSON.stringify of a Symbol returns undefined,
-// which would emit the literal "undefined" into the output and corrupt
-// the receipt. The TypeScript signature prevents that path.
-const S = (value: string): string => JSON.stringify(value);
+// `(value: string)` is the static guard: callers pass typed fields of
+// MazurReceipt, none of which permit Symbol or undefined. But the type
+// signature is NOT load-bearing at runtime — emit drives receipts parsed
+// from JSON (CLI / pipe / transcoded sources) where a schema-OPTIONAL field
+// may simply be ABSENT, arriving as `undefined` at a `string`-typed slot.
+// EMS-1: `JSON.stringify(undefined) === undefined` (the JS value), which an
+// interpolation renders as the bare token "undefined" — non-JSON bytes that
+// JSON.parse rejects but a naive digest would silently hash (poisoned
+// in-toto subject). `S` therefore runs a RUNTIME guard mirroring the I()/B()
+// pattern: any non-string argument throws EmitError(NON_STRING_FIELD) naming
+// the field path, converting silent corruption into a loud, typed failure.
+// For a genuine string the output is byte-identical to JSON.stringify(value),
+// so every shipped golden stays byte-equal.
+// `field` is typed `string | number` so the bare `.map(S)` call sites (where
+// Array.prototype.map passes the element index as the 2nd arg) keep
+// type-checking unchanged. A numeric label only appears for those array
+// element callers, which always carry real strings, so the guard never fires
+// there; named string callers pass a field-path label for an actionable throw.
+const S = (value: string, field?: string | number): string => {
+  if (typeof value !== "string") {
+    throw new EmitError(
+      "NON_STRING_FIELD",
+      `emit: field '${field ?? "<unknown>"}' must be a string (schema declares a string here), got ` +
+        `${value === undefined ? "undefined" : typeof value}. ` +
+        `Hint: a schema-OPTIONAL field that is absent arrives as undefined at a string slot; ` +
+        `JSON.stringify(undefined) interpolates the bare token "undefined" into the canonical bytes, ` +
+        `producing output that fails JSON.parse and would poison the receipt digest. This usually means ` +
+        `a thin/hand-authored/transcoded receipt is missing an optional field the emitter dereferences.`,
+    );
+  }
+  return JSON.stringify(value);
+};
 const N = formatNumberForEngine;
+
+/**
+ * EMS-2 — presence guard for schema-OPTIONAL NESTED OBJECTS that emit
+ * dereferences (e.g. metadata as a whole, numeric_policy.byte_output). When
+ * such an object is absent the emitter would otherwise read a property of
+ * `undefined` and throw a raw TypeError ("Cannot read properties of
+ * undefined (reading 'source')"), violating the EmitError contract. `requireObject`
+ * converts that into a typed EmitError naming the field path. For a present
+ * object it returns the value unchanged, so valid receipts are unaffected and
+ * every shipped golden stays byte-equal.
+ */
+function requireObject<T>(value: T | undefined | null, field: string): T {
+  if (value === undefined || value === null || typeof value !== "object") {
+    throw new EmitError(
+      "MISSING_OPTIONAL_OBJECT",
+      `emit: required nested object '${field}' is absent (got ${value === undefined ? "undefined" : value === null ? "null" : typeof value}). ` +
+        `Hint: this nested object is schema-optional at the type level but the emitter dereferences its ` +
+        `fields; a receipt that omits it cannot be canonically serialized. Check the receipt source ` +
+        `(engine output always populates this block; this indicates a thin/hand-authored/transcoded receipt).`,
+    );
+  }
+  return value;
+}
 
 /**
  * G-043 — typed error raised by emitMazurReceipt / emitGeneralReceipt when a
@@ -66,11 +113,36 @@ const N = formatNumberForEngine;
  *     producing bytes that neither parse as JSON nor validate. The guard
  *     converts the corruption into a loud throw (see helper `I`).
  *
+ *   - `NON_STRING_FIELD` (EMS-1) — a field the schema declares `type: string`
+ *     arrived as a non-string (almost always `undefined`, from a thin receipt
+ *     that omits a schema-OPTIONAL string field the emitter dereferences).
+ *     `JSON.stringify(undefined)` is the JS value `undefined`, which an
+ *     interpolation renders as the bare token "undefined" — non-JSON bytes
+ *     that JSON.parse rejects but a naive digest would silently hash (a
+ *     poisoned in-toto subject). The guard (helper `S`) throws instead.
+ *
+ *   - `MISSING_OPTIONAL_OBJECT` (EMS-2) — a schema-OPTIONAL nested object the
+ *     emitter dereferences (metadata as a whole, numeric_policy.byte_output)
+ *     is absent. Without the guard this surfaces as a raw TypeError ("Cannot
+ *     read properties of undefined"), violating the EmitError contract. The
+ *     guard (helper `requireObject`) throws a typed error naming the path.
+ *
+ *   - `NON_JSON_OUTPUT` (EMS-1 defense-in-depth) — the emitter's own output
+ *     failed a JSON.parse self-check before return, OR hashReceipt was handed
+ *     raw bytes that fail JSON.parse. Either is a last-line backstop: emit
+ *     must NEVER return a string that fails JSON.parse, and hashReceipt must
+ *     NEVER digest non-JSON bytes (that would poison the subject digest).
+ *
  * EmitError is part of the public API: callers that drive the emitter over
  * externally-sourced receipts (e.g. transcoded / hand-authored) get a single
  * typed failure class with a remediation hint instead of a raw library throw.
  */
-export type EmitErrorKind = "FORMAT_OUT_OF_SCOPE" | "NON_INTEGER_FIELD";
+export type EmitErrorKind =
+  | "FORMAT_OUT_OF_SCOPE"
+  | "NON_INTEGER_FIELD"
+  | "NON_STRING_FIELD"
+  | "MISSING_OPTIONAL_OBJECT"
+  | "NON_JSON_OUTPUT";
 
 export class EmitError extends Error {
   readonly kind: EmitErrorKind;
@@ -210,10 +282,36 @@ export function emitMazurReceipt(r: MazurReceipt): string {
       `"post_update_forward":${emitPostUpdateForward(r.post_update_forward)}`,
       `"post_update_loss":${emitPostUpdateLoss(r.post_update_loss)}`,
     ];
-    return `{${parts.join(",")}}\n`;
+    return assertParseable(`{${parts.join(",")}}\n`);
   } catch (err) {
     throw wrapFormatPolicyError(err);
   }
+}
+
+/**
+ * EMS-1 defense-in-depth — emit-output self-check. The emitter MUST NEVER
+ * return a string that fails JSON.parse. Even with the S()/I()/B()/requireObject
+ * guards in place, this is the last-line backstop against ANY future emit bug
+ * that interpolates a non-JSON token: a single JSON.parse over the produced
+ * bytes converts silent corruption (which hashReceipt would then digest,
+ * poisoning the in-toto subject) into a loud typed throw. For valid receipts
+ * the produced bytes always parse, so this leaves every golden byte-identical
+ * (the check is read-only — it returns `out` unchanged on success).
+ */
+function assertParseable(out: string): string {
+  try {
+    JSON.parse(out);
+  } catch (cause) {
+    throw new EmitError(
+      "NON_JSON_OUTPUT",
+      `emit: produced canonical bytes that fail JSON.parse — this is an internal emitter invariant ` +
+        `violation (a non-JSON token was interpolated into the output). Refusing to return non-JSON ` +
+        `bytes that a downstream digest would silently hash and poison. ` +
+        `Underlying parse error: ${cause instanceof Error ? cause.message : String(cause)}.`,
+      { cause },
+    );
+  }
+  return out;
 }
 
 /**
@@ -247,12 +345,16 @@ function emitFixtureStatus(s: MazurReceipt["fixture_status"]): string {
   ].join("");
 }
 
-function emitMetadata(m: MazurReceipt["metadata"]): string {
+function emitMetadata(maybe: MazurReceipt["metadata"]): string {
+  // EMS-2: metadata is schema-optional at the top level; a receipt may omit
+  // it entirely, in which case `maybe` is undefined and the field reads below
+  // would throw a raw TypeError. Route through requireObject first.
+  const m = requireObject(maybe, "metadata");
   return [
     "{",
-    `"source":${S(m.source)},`,
-    `"url_reference":${S(m.url_reference)},`,
-    `"gradient_convention":${S(m.gradient_convention)}`,
+    `"source":${S(m.source, "metadata.source")},`,
+    `"url_reference":${S(m.url_reference, "metadata.url_reference")},`,
+    `"gradient_convention":${S(m.gradient_convention, "metadata.gradient_convention")}`,
     "}",
   ].join("");
 }
@@ -262,21 +364,24 @@ function emitNumericPolicy(np: MazurReceipt["numeric_policy"]): string {
     "{",
     `"number_encoding":${S(np.number_encoding)},`,
     `"precision_significant_digits":${I(np.precision_significant_digits, "numeric_policy.precision_significant_digits")},`,
-    `"rounding":${S(np.rounding)},`,
+    `"rounding":${S(np.rounding, "numeric_policy.rounding")},`,
     `"tolerance":${N(np.tolerance)},`,
-    `"computation_order":${S(np.computation_order)},`,
+    `"computation_order":${S(np.computation_order, "numeric_policy.computation_order")},`,
     `"byte_output":${emitByteOutput(np.byte_output)}`,
     "}",
   ].join("");
 }
 
-function emitByteOutput(bo: MazurReceipt["numeric_policy"]["byte_output"]): string {
+function emitByteOutput(maybe: MazurReceipt["numeric_policy"]["byte_output"]): string {
+  // EMS-2: byte_output is a schema-optional nested object the emitter
+  // dereferences; an absent block must throw EmitError, not a raw TypeError.
+  const bo = requireObject(maybe, "numeric_policy.byte_output");
   return [
     "{",
-    `"format":${S(bo.format)},`,
-    `"json_key_order":${S(bo.json_key_order)},`,
-    `"trailing_zero_policy":${S(bo.trailing_zero_policy)},`,
-    `"indent":${S(bo.indent)}`,
+    `"format":${S(bo.format, "numeric_policy.byte_output.format")},`,
+    `"json_key_order":${S(bo.json_key_order, "numeric_policy.byte_output.json_key_order")},`,
+    `"trailing_zero_policy":${S(bo.trailing_zero_policy, "numeric_policy.byte_output.trailing_zero_policy")},`,
+    `"indent":${S(bo.indent, "numeric_policy.byte_output.indent")}`,
     "}",
   ].join("");
 }
@@ -284,10 +389,10 @@ function emitByteOutput(bo: MazurReceipt["numeric_policy"]["byte_output"]): stri
 function emitBiasPolicy(bp: MazurReceipt["bias_policy"]): string {
   return [
     "{",
-    `"mode":${S(bp.mode)},`,
-    `"reason":${S(bp.reason)},`,
+    `"mode":${S(bp.mode, "bias_policy.mode")},`,
+    `"reason":${S(bp.reason, "bias_policy.reason")},`,
     `"updated_in_step":${B(bp.updated_in_step, "bias_policy.updated_in_step")},`,
-    `"reconciliation":${S(bp.reconciliation)}`,
+    `"reconciliation":${S(bp.reconciliation, "bias_policy.reconciliation")}`,
     "}",
   ].join("");
 }
@@ -577,7 +682,7 @@ export function emitReceipts(
  */
 export function emitGeneralReceipt(r: GeneralReceipt): string {
   try {
-    return emitGeneralReceiptInner(r);
+    return assertParseable(emitGeneralReceiptInner(r));
   } catch (err) {
     throw wrapFormatPolicyError(err);
   }
@@ -648,16 +753,21 @@ function emitFixtureStatusV02(s: GeneralReceipt["fixture_status"]): string {
   ].join("");
 }
 
-function emitMetadataV02(m: GeneralReceipt["metadata"]): string {
+function emitMetadataV02(maybe: GeneralReceipt["metadata"]): string {
   // The schema declares metadata as a free-form object (`type: "object"`).
   // The engine sets source + gradient_convention always, plus optional
   // url_reference. Emit in canonical-named order with the optional field
   // honored.
-  const parts: string[] = [`"source":${S(m.source)}`];
+  // EMS-2: metadata is itself optional on GeneralReceipt; an absent block
+  // must throw EmitError, not read .source off undefined. EMS-1: source +
+  // gradient_convention are dereferenced via S(), so a thin {} metadata that
+  // omits them must throw NON_STRING_FIELD, not emit the bare "undefined".
+  const m = requireObject(maybe, "metadata");
+  const parts: string[] = [`"source":${S(m.source, "metadata.source")}`];
   if (m.url_reference !== undefined) {
-    parts.push(`"url_reference":${S(m.url_reference)}`);
+    parts.push(`"url_reference":${S(m.url_reference, "metadata.url_reference")}`);
   }
-  parts.push(`"gradient_convention":${S(m.gradient_convention)}`);
+  parts.push(`"gradient_convention":${S(m.gradient_convention, "metadata.gradient_convention")}`);
   return `{${parts.join(",")}}`;
 }
 
@@ -675,21 +785,23 @@ function emitNumericPolicyV02(np: GeneralReceipt["numeric_policy"]): string {
     "{",
     `"number_encoding":${S(np.number_encoding)},`,
     `"precision_significant_digits":${I(np.precision_significant_digits, "numeric_policy.precision_significant_digits")},`,
-    `"rounding":${S(np.rounding)},`,
+    `"rounding":${S(np.rounding, "numeric_policy.rounding")},`,
     `${tolerancePart},`,
-    `"computation_order":${S(np.computation_order)},`,
+    `"computation_order":${S(np.computation_order, "numeric_policy.computation_order")},`,
     `"byte_output":${emitByteOutputV02(np.byte_output)}`,
     "}",
   ].join("");
 }
 
-function emitByteOutputV02(bo: GeneralReceipt["numeric_policy"]["byte_output"]): string {
+function emitByteOutputV02(maybe: GeneralReceipt["numeric_policy"]["byte_output"]): string {
+  // EMS-2: byte_output absent must throw EmitError, not a raw TypeError.
+  const bo = requireObject(maybe, "numeric_policy.byte_output");
   return [
     "{",
-    `"format":${S(bo.format)},`,
-    `"json_key_order":${S(bo.json_key_order)},`,
-    `"trailing_zero_policy":${S(bo.trailing_zero_policy)},`,
-    `"indent":${S(bo.indent)}`,
+    `"format":${S(bo.format, "numeric_policy.byte_output.format")},`,
+    `"json_key_order":${S(bo.json_key_order, "numeric_policy.byte_output.json_key_order")},`,
+    `"trailing_zero_policy":${S(bo.trailing_zero_policy, "numeric_policy.byte_output.trailing_zero_policy")},`,
+    `"indent":${S(bo.indent, "numeric_policy.byte_output.indent")}`,
     "}",
   ].join("");
 }
@@ -698,11 +810,11 @@ function emitBiasPolicyV02(bp: GeneralReceipt["bias_policy"]): string {
   // v0.2.0 schema requires `mode` + `updated_in_step`; reason +
   // reconciliation are optional. The engine populates all four in practice
   // but we emit only the present fields.
-  const parts: string[] = [`"mode":${S(bp.mode)}`];
-  if (bp.reason !== undefined) parts.push(`"reason":${S(bp.reason)}`);
+  const parts: string[] = [`"mode":${S(bp.mode, "bias_policy.mode")}`];
+  if (bp.reason !== undefined) parts.push(`"reason":${S(bp.reason, "bias_policy.reason")}`);
   parts.push(`"updated_in_step":${B(bp.updated_in_step, "bias_policy.updated_in_step")}`);
   if (bp.reconciliation !== undefined) {
-    parts.push(`"reconciliation":${S(bp.reconciliation)}`);
+    parts.push(`"reconciliation":${S(bp.reconciliation, "bias_policy.reconciliation")}`);
   }
   return `{${parts.join(",")}}`;
 }

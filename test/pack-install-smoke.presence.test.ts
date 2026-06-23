@@ -50,6 +50,9 @@ test("scripts/pack-install-smoke.mjs has required tarball entry list", () => {
     "examples/pytorch/extract_step.py",
     "schemas/framework-trace.v0.7.0.json",
     "schemas/receipt.v0.7.0.json",
+    // v0.13 — SGD coupled-L2 weight-decay schemas (the documented Rule 7 third branch).
+    "schemas/framework-trace.v0.8.0.json",
+    "schemas/receipt.v0.8.0.json",
     "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
     "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
     "fixtures/mazur.golden.jsonl",

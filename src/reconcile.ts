@@ -262,11 +262,36 @@ export type ReconciliationFailure = {
  * All fields are absent (not `false` / not `[]`) on the normal fully-verified
  * path so existing consumers that ignore them are unaffected (additive,
  * backward-compatible — no index.ts change required).
+ *
+ * PH-ENG-02 (rule-coverage transparency): ~14 of the 26 documented rules are
+ * GATED — they fire only when their feature block is present (softmax outputs,
+ * a `dual_form`, a `batch`, an Adam optimizer, observer-import markers, a
+ * multi-step bundle, …). Before these fields, a user reading a green PASS could
+ * not tell which substantive rules actually RAN from those that silently no-op'd
+ * because their feature was absent. The two ADDITIVE arrays make coverage
+ * machine-readable WITHOUT changing any verdict or receipt bytes (this is
+ * diagnostics, computed from the receipt's feature blocks — it does not gate or
+ * alter any rule):
+ *
+ *   - `rules_evaluated` — the documented rule numbers (1..26) whose gate was
+ *     SATISFIED for this receipt, i.e. the rules that substantively ran. Sorted
+ *     ascending. (Rule 0 sentinels — structural/shape failures — are not counted
+ *     here; they are not "rules" in the operator's coverage mental model.)
+ *   - `gated_off` — the documented rules (1..26) that were APPLICABLE-but-skipped
+ *     because their feature block was absent (e.g. Rule 11 on a non-softmax
+ *     receipt, Rules 22-24 on an SGD receipt, Rules 17/25/26 on a single
+ *     receipt). Sorted ascending. `rules_evaluated ∪ gated_off == {1..26}` and
+ *     the two sets are disjoint.
+ *
+ * Both arrays are present on every result (the partition is total) but, like the
+ * skip fields above, consumers that ignore them are unaffected.
  */
 type ReconciliationDiagnostics = {
   math_gate_skipped?: boolean
   skipped_rules?: number[]
   math_gate_skipped_records?: number[]
+  rules_evaluated?: number[]
+  gated_off?: number[]
 }
 
 export type ReconciliationResult =
@@ -290,7 +315,7 @@ export type ReconciliationResult =
  * source.
  */
 export const RULE_DESCRIPTIONS: Record<number, string> = {
-  0: "Structural failure: receipt-internal contradiction (shape invalid, unsupported product_order, non-finite arithmetic, OR v0.4.1+ cross-consistency between bias_policy.mode / bias_sharing / Update.kind / topology declarations; v0.5 adds Rule 0.8 sub-check: softmax probability bounds).",
+  0: "Structural failure: receipt-internal contradiction (shape invalid, unsupported product_order, non-finite arithmetic, OR v0.4.1+ cross-consistency between bias_policy.mode / bias_sharing / Update.kind / topology declarations; v0.5 adds Rule 0.8 sub-check: softmax probability bounds; v0.12 adds Rule 0.9 sub-check: forward-map completeness — forward key set == unit_order.hidden ∪ output).",
   1: "Output error signal consistency: signal_value == product(factors), left-to-right.",
   2: "Downstream contribution and backpropagated sum: contribution.value == downstream_signal * weight_value AND backpropagated_sum == sum(contributions in summation_order).",
   3: "Hidden error signal consistency: signal_value == backpropagated_sum * activation_derivative, left-to-right.",
@@ -937,6 +962,201 @@ export function clampTolerancePolicy(
  *     process.exit(1);
  *   }
  */
+/**
+ * The documented reconciliation rules a coverage readout partitions over:
+ * 1..26. Rule 0 (and its 0.x sub-checks) is the structural-failure sentinel,
+ * NOT a "rule" in the operator's coverage mental model, so it is excluded.
+ */
+const COVERAGE_RULE_NUMBERS: readonly number[] = Array.from(
+  { length: 26 },
+  (_, i) => i + 1,
+)
+
+/**
+ * PH-ENG-02 — classify which documented rules (1..26) substantively RAN for a
+ * receipt vs were GATED OFF because their feature block is absent.
+ *
+ * This is a PURE, READ-ONLY inspection of the receipt's feature blocks that
+ * MIRRORS each rule's own gate predicate (the `if (… ) return` guards at the top
+ * of each checkRuleN helper). It does NOT run, alter, or gate any rule — it is a
+ * diagnostics-only second read used to populate ReconciliationDiagnostics. The
+ * partition is total over 1..26 and the two sets are disjoint.
+ *
+ * @param r          the receipt (already shape-guarded by the caller).
+ * @param multiStep  when true, the multi-step-only rules (9, 10, 17, 25, 26) are
+ *                    eligible to be EVALUATED (subject to their own gate); when
+ *                    false (single receipt) they are always gated off because a
+ *                    bundle is the feature they require. Per-record callers from
+ *                    reconcileMultiStep pass false here (each record is judged on
+ *                    its 1-8/11-24 surface) and the bundle-level union folds in
+ *                    9/10/17/25/26 separately.
+ */
+function classifyRuleCoverage(
+  r: Receipt,
+  multiStep: boolean,
+): { rules_evaluated: number[]; gated_off: number[] } {
+  const evaluated = new Set<number>()
+
+  const hasBackward =
+    r.backward !== undefined &&
+    r.backward !== null &&
+    typeof r.backward === "object"
+  const hasLoss = r.loss !== undefined && r.loss !== null
+  const batch = (r as { batch?: { reduction?: string; sample_order?: unknown } }).batch
+  const hasBatch = batch !== undefined && batch !== null
+  const topo = r.topology
+
+  // --- Core backward-signal rules (1-3): gated on a backward block. ---------
+  if (hasBackward) {
+    evaluated.add(1)
+    evaluated.add(2)
+    evaluated.add(3)
+  }
+  // --- Update / parameter rules (4-8): updates[] is guaranteed present by the
+  // top-level shape guard in reconcileReceipt, so these always run. Rule 8
+  // (provenance) resolves factor.from paths that live on updates' optimizer
+  // factors (and backward signals), so it runs whenever updates exist.
+  evaluated.add(4)
+  evaluated.add(5)
+  evaluated.add(6)
+  evaluated.add(7)
+  evaluated.add(8)
+
+  // --- Rule 11: gated on topology.activation_output === "softmax". ----------
+  if (topo?.activation_output === "softmax") evaluated.add(11)
+
+  // --- Rule 12: loss-formula consistency. Runs whenever loss is present and
+  // the receipt is NOT batched (batched loss is checked by Rule 18 + Rule 14).
+  if (hasLoss && !hasBatch) evaluated.add(12)
+
+  // --- Rule 13: gated on ANY output_error_signal carrying a dual_form. ------
+  const oes = r.backward?.output_error_signals
+  if (oes && typeof oes === "object") {
+    for (const k of Object.keys(oes)) {
+      const sig = oes[k]
+      if (sig && typeof sig === "object" && (sig as { dual_form?: unknown }).dual_form) {
+        evaluated.add(13)
+        break
+      }
+    }
+  }
+
+  // --- Rule 14: gated on observer-import markers (external_imported authoring
+  // state OR a surviving import-provenance / source_framework marker). Mirrors
+  // checkRule14EngineRecomputeDifferential's gate (incl. the laundering guard).
+  // A self-declared skip (verification_state === engine_recompute_skipped_with_
+  // basis) STILL counts as "evaluated" here — the gate was satisfied; the skip
+  // is surfaced separately via math_gate_skipped.
+  if (r.fixture_status?.authoring_state === "external_imported" || hasObserverMarkers(r)) {
+    evaluated.add(14)
+  }
+
+  // --- Rule 15: gated on verification_state === engine_recompute_skipped_with_basis.
+  if (r.fixture_status?.verification_state === "engine_recompute_skipped_with_basis") {
+    evaluated.add(15)
+  }
+
+  // --- Rule 16: gated on attestor.signed_subject_digest presence. -----------
+  const signedDigest = r.attestor?.signed_subject_digest
+  if (typeof signedDigest === "string" && signedDigest.length > 0) evaluated.add(16)
+
+  // --- Rule 18: gated on batch present AND reduction in {mean,sum}. ----------
+  if (hasBatch && (batch!.reduction === "mean" || batch!.reduction === "sum")) {
+    evaluated.add(18)
+  }
+  // --- Rule 19: gated on batch.sample_order presence. -----------------------
+  if (hasBatch && Array.isArray((batch as { sample_order?: unknown }).sample_order)) {
+    evaluated.add(19)
+  }
+
+  // --- Rules 20-24: gated on optimizer name. 20/21 fire for any stateful
+  // optimizer; 21 narrows to sgd_momentum; 22/23/24 to the Adam family. We
+  // classify from update.optimizer.name (the same field the rules gate on).
+  let anyAdam = false
+  let anyMomentum = false
+  for (const u of r.updates) {
+    if (isAdamFamilyUpdate(u)) anyAdam = true
+    else if (isSgdMomentumUpdate(u)) anyMomentum = true
+  }
+  if (anyAdam || anyMomentum) evaluated.add(20)
+  if (anyMomentum) evaluated.add(21)
+  if (anyAdam) {
+    evaluated.add(22)
+    evaluated.add(23)
+    evaluated.add(24)
+  }
+
+  // --- Multi-step-only rules (9, 10, 17, 25, 26): a bundle is the feature.
+  // For a single receipt they are always gated off. In a bundle the union
+  // helper (classifyBundleCoverage) folds them in based on bundle-wide gates.
+  if (multiStep) {
+    evaluated.add(9)
+    evaluated.add(10)
+    // 17/25/26 remain bundle-level (their gate spans receipts) — the bundle
+    // union adds them; per-record classification leaves them gated off.
+  }
+
+  const rules_evaluated = COVERAGE_RULE_NUMBERS.filter((n) => evaluated.has(n))
+  const gated_off = COVERAGE_RULE_NUMBERS.filter((n) => !evaluated.has(n))
+  return { rules_evaluated, gated_off }
+}
+
+/**
+ * PH-ENG-02 — bundle-level rule coverage for a multi-step reconcile.
+ *
+ * A rule counts as EVALUATED for the bundle if it was evaluated on ANY record
+ * (per-record rules 1-8, 11-24) OR if its bundle-spanning gate is satisfied
+ * (the multi-step-only rules 9, 10, 17, 25, 26). The union semantics match how
+ * the CLI reports a bundle: "across this bundle, these rules ran somewhere."
+ *
+ * Pure, read-only — same diagnostics-only contract as classifyRuleCoverage.
+ */
+function classifyBundleCoverage(
+  receipts: ReadonlyArray<unknown>,
+): { rules_evaluated: number[]; gated_off: number[] } {
+  const evaluated = new Set<number>()
+  const valid: Receipt[] = []
+  for (const raw of receipts) {
+    if (raw === null || typeof raw !== "object") continue
+    const r = raw as Receipt
+    if (!Array.isArray(r.updates)) continue
+    valid.push(r)
+    for (const n of classifyRuleCoverage(r, false).rules_evaluated) evaluated.add(n)
+  }
+
+  // Multi-step-only rules: their feature is a bundle of >= 2 records.
+  if (valid.length >= 2) {
+    // Rule 9 (adjacent parameter chain) + Rule 10 (trace identity / step_index
+    // sequencing) run unconditionally over any >=2-record bundle.
+    evaluated.add(9)
+    evaluated.add(10)
+    // Rule 17 — gated on ANY receipt declaring attestor.bundle_root_digest.
+    // (Field is read via cast to mirror checkRule17BundleBinding, which does the
+    // same — bundle_root_digest is not on the AttestorShape type.)
+    const anyBundleRoot = valid.some(
+      (r) =>
+        typeof (r as { attestor?: { bundle_root_digest?: unknown } }).attestor
+          ?.bundle_root_digest === "string",
+    )
+    if (anyBundleRoot) evaluated.add(17)
+    // Rules 25 / 26 — gated on a stateful optimizer (Adam family or
+    // sgd_momentum) declared across the bundle; 26 specifically on
+    // optimizer_config presence.
+    const anyStatefulOptimizer = valid.some((r) =>
+      r.updates.some((u) => isAdamFamilyUpdate(u) || isSgdMomentumUpdate(u)),
+    )
+    if (anyStatefulOptimizer) evaluated.add(25)
+    const anyOptimizerConfig = valid.some(
+      (r) => readOptimizerConfig(r) !== undefined,
+    )
+    if (anyOptimizerConfig) evaluated.add(26)
+  }
+
+  const rules_evaluated = COVERAGE_RULE_NUMBERS.filter((n) => evaluated.has(n))
+  const gated_off = COVERAGE_RULE_NUMBERS.filter((n) => !evaluated.has(n))
+  return { rules_evaluated, gated_off }
+}
+
 export function reconcileReceipt(receipt: unknown): ReconciliationResult {
   // Precondition: the receipt has passed schema validation against
   // schemas/receipt.v0.1.0.json or schemas/receipt.v0.2.0.json. This
@@ -1087,6 +1307,21 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
   // declares framework import-provenance MUST also declare
   // authoring_state === "external_imported".
   checkRule0ObserverProvenanceConsistency(r, failures)
+
+  // --- Rule 0 (Rule 0.9): forward-map completeness ---------------------
+  // When topology.unit_order.output is present, the forward map's key set MUST
+  // EQUAL unit_order.hidden ∪ unit_order.output (every declared forward unit
+  // present with numeric net AND out; no missing, no extra). Closes the
+  // gated-rule omission hole: Rules 0.8 (prob bounds), 11 (softmax norm), and
+  // 12 (loss formula) each silently SKIP a forward output unit they don't find,
+  // so an engine_generated softmax+CE receipt (Rule 14 off) that drops one
+  // output from `forward` — while keeping it in unit_order.output and keeping a
+  // legitimately-0 loss.per_output entry (G-018 satisfied) — would reconcile
+  // ok:true even though the surviving outputs no longer sum to 1.0. Mirrors
+  // G-018's loss-component coherence and Rule 14 ENG-2's forward completeness
+  // onto the normal per-receipt path so the omission fails closed. Schema
+  // does NOT catch it (ForwardMap is an open additionalProperties map).
+  checkRule0ForwardCompleteness(r, failures)
 
   if (failures.length > 0) {
     return { ok: false, failures }
@@ -1302,9 +1537,19 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
   // G-006: attach the machine-readable math-gate-skip signal to BOTH result
   // branches. When Rule 14 was skipped via the receipt's self-asserted
   // verification_state, a consumer MUST NOT read ok:true as full verification.
-  const diagnostics: ReconciliationDiagnostics = rule14.mathGateSkipped
-    ? { math_gate_skipped: true, skipped_rules: [14] }
-    : {}
+  //
+  // PH-ENG-02: ALSO attach the rule-coverage partition (rules_evaluated /
+  // gated_off) so a consumer reading a green PASS can tell which substantive
+  // rules ran vs were gated off because their feature block is absent. Both are
+  // ADDITIVE diagnostics computed from the receipt's feature blocks — they do
+  // not change any verdict or receipt bytes. Single-receipt path → multiStep
+  // false (rules 9/10/17/25/26 are gated off, a bundle being their feature).
+  const coverage = classifyRuleCoverage(r, false)
+  const diagnostics: ReconciliationDiagnostics = {
+    ...(rule14.mathGateSkipped ? { math_gate_skipped: true, skipped_rules: [14] } : {}),
+    rules_evaluated: coverage.rules_evaluated,
+    gated_off: coverage.gated_off,
+  }
 
   if (failures.length === 0) {
     return { ok: true, ...diagnostics }
@@ -1567,6 +1812,172 @@ function checkRule0ObserverProvenanceConsistency(
       `is genuinely engine-authored. Csmith/CompCert anti-circularity: a receipt's self-label may ` +
       `not suppress the check that judges it.`,
   })
+}
+
+/**
+ * Rule 0.9 (structural): forward-map completeness against the declared
+ * topology. A Rule 0 sub-check (failure record uses `rule: 0` with "Rule 0.9"
+ * in the message), gated identically to G-018's loss-component coherence and
+ * mirroring Rule 14's ENG-2 forward-completeness discipline onto the NORMAL
+ * per-receipt path (Rule 14 only runs for external_imported receipts).
+ *
+ * THE HOLE THIS CLOSES: the gated forward-side rules each iterate over the
+ * forward keys they FIND and silently skip a unit they DON'T:
+ *   - Rule 11 (softmax normalization): `anyMissing` → bare `return`.
+ *   - Rule 0.8 (probability bounds): `if (!f || typeof f.out !== "number") continue`.
+ *   - Rule 12 (cross_entropy_softmax): missing `.out` → `totalReconstructable = false`
+ *     and `continue`, so neither the per-output nor the total loss is checked for it.
+ * So an `engine_generated` softmax+CE receipt (Rule 14 off by design) that
+ * DROPS one output unit from `forward` while keeping it declared in
+ * `topology.unit_order.output` — and keeping its `loss.per_output` entry (G-018
+ * stays satisfied; legitimately 0 when that unit's target is 0) — reconciles
+ * ok:true even though the SURVIVING forward outputs do NOT sum to 1.0. Schema
+ * validation does not catch it either: `ForwardMap` is an open
+ * additionalProperties map with no per-output-unit requirement. A dropped
+ * forward unit must FAIL CLOSED here, before Rules 0.8/11/12 get a chance to
+ * skip it.
+ *
+ * The contract: when `topology.unit_order.output` is present, the forward map's
+ * key set MUST EQUAL `unit_order.hidden ∪ unit_order.output` (the units that
+ * carry forward activations — inputs are not in `forward`). Every such declared
+ * unit must be present with BOTH a numeric `net` and a numeric `out` (mirrors
+ * the schema's `ForwardUnit.required = [net, out]` and Rule 14 ENG-2's "must
+ * carry BOTH"); no unit missing, no undeclared/extra unit. Hidden units get the
+ * same treatment as outputs: a dropped hidden forward unit would dangle the
+ * `from: "forward.h*.out"` upstream-activation provenance references that
+ * Rules 4/8 resolve, so the completeness floor covers them too.
+ *
+ * Division of labor with Rule 14 (so the two completeness checks don't collide
+ * or leave a gap): Rule 14's ENG-2 already enforces forward completeness for
+ * observer-mode receipts (authoring_state === "external_imported" OR observer
+ * markers present) via the engine-recompute differential. Rule 0.9 owns the
+ * COMPLEMENT — engine-side / no-marker receipts, where Rule 14 no-ops "by
+ * design" and the hole actually lived. The gate is the exact negation of Rule
+ * 14's trigger, so an observer receipt is left for Rule 14 (its ENG-2 attributes
+ * the omission to the engine recompute) rather than being short-circuited here.
+ *
+ * Gated identically to the rest of the unit-order-dependent behavior:
+ *   - No-ops for observer-mode receipts (Rule 14 owns those — see above).
+ *   - No-ops when `topology.unit_order.output` is absent or empty (v0.1 Mazur
+ *     receipts declare no unit_order; byte-identical behavior for them).
+ *   - A wholly-absent `forward` map under a non-empty declared output set is
+ *     itself a completeness failure (every declared unit reads as missing) —
+ *     the drop-the-entire-forward variant of the same omission class.
+ *
+ * Deterministic emission: missing-unit failures are emitted in declared order
+ * (hidden then output, each in `unit_order` order); extra-key failures in
+ * forward-map insertion order (`Object.keys`). Pure set/shape difference over
+ * stable orders — no wall-clock, randomness, or locale formatting.
+ */
+function checkRule0ForwardCompleteness(
+  r: Receipt,
+  failures: ReconciliationFailure[],
+): void {
+  // DIVISION OF LABOR with Rule 14: forward-map completeness for observer-mode
+  // receipts is already owned by Rule 14's ENG-2 check (engine-recompute
+  // differential — "the receipt's forward key set must EQUAL the engine's
+  // recomputed key set; every unit must carry BOTH net and out"). Rule 14 runs
+  // whenever authoring_state === "external_imported" OR observer markers are
+  // present (see the gate in checkRule14EngineRecomputeDifferential). Rule 0.9
+  // owns the COMPLEMENT — the engine-side / no-marker receipts where Rule 14
+  // no-ops "by design", which is EXACTLY where the hole lived (Rules 0.8/11/12
+  // silently skip a dropped forward unit and nothing else re-derives the forward
+  // pass). Gating on the complement keeps Rule 0.9 from short-circuiting an
+  // observer receipt before Rule 14's ENG-2 differential can attribute the
+  // omission to the engine recompute, while still failing the engine-side hole
+  // closed.
+  const authoringState = r.fixture_status?.authoring_state
+  if (authoringState === "external_imported" || hasObserverMarkers(r)) return
+
+  const unitOrder = r.topology?.unit_order
+  if (!unitOrder) return
+  const declaredOutput = unitOrder.output
+  if (!Array.isArray(declaredOutput) || declaredOutput.length === 0) return
+  const declaredHidden = Array.isArray(unitOrder.hidden) ? unitOrder.hidden : []
+
+  // Units that carry forward activations: hidden ∪ output (inputs are not in
+  // `forward`). Iterate hidden first, then output, for deterministic emission.
+  const declaredForwardUnits = [...declaredHidden, ...declaredOutput]
+  const declaredSet = new Set<string>(declaredForwardUnits)
+
+  const forward = r.forward ?? {}
+
+  // MISSING / INCOMPLETE: every declared forward unit must be present with BOTH
+  // a numeric net and a numeric out. A unit absent from `forward`, or present
+  // but carrying a non-numeric/absent scalar, lets Rules 0.8/11/12 skip it —
+  // raise rather than skip so the omission fails closed.
+  for (const unitId of declaredForwardUnits) {
+    const f = forward[unitId]
+    if (!f || typeof f !== "object") {
+      failures.push({
+        rule: 0,
+        parameter_id: unitId,
+        field_path: `forward.${unitId}`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 0.9 (forward completeness): topology.unit_order declares forward unit ${JSON.stringify(unitId)} ` +
+          `but the forward map has NO entry for it. A dropped forward unit is a SELECTIVE-OMISSION laundering ` +
+          `attempt — Rules 0.8/11/12 iterate only the forward keys present and silently skip a missing one, so a ` +
+          `softmax+CE receipt whose surviving outputs do not sum to 1.0 would reconcile ok:true. forward's key ` +
+          `set must EQUAL unit_order.hidden ∪ unit_order.output (G-018 / Rule-14 ENG-2 key-set-EQUAL discipline).`,
+      })
+      continue
+    }
+    if (typeof f.net !== "number") {
+      failures.push({
+        rule: 0,
+        parameter_id: unitId,
+        field_path: `forward.${unitId}.net`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 0.9 (forward completeness): forward unit ${JSON.stringify(unitId)} is missing its numeric ` +
+          `net value. A forward unit must carry BOTH net and out (schema ForwardUnit.required) so neither ` +
+          `escapes reconciliation by omission.`,
+      })
+    }
+    if (typeof f.out !== "number") {
+      failures.push({
+        rule: 0,
+        parameter_id: unitId,
+        field_path: `forward.${unitId}.out`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 0.9 (forward completeness): forward unit ${JSON.stringify(unitId)} is missing its numeric ` +
+          `out value. Rules 0.8 (probability bounds), 11 (softmax normalization), and 12 (loss formula) all ` +
+          `consume forward.${unitId}.out and silently skip a non-numeric one — it must be present and numeric.`,
+      })
+    }
+  }
+
+  // EXTRA: a forward key that is not a declared hidden/output unit. forward
+  // never carries input units, so an undeclared key is an undeclared unit
+  // smuggled past the per-unit rules. Emit in insertion order for determinism.
+  for (const unitId of Object.keys(forward)) {
+    if (!declaredSet.has(unitId)) {
+      failures.push({
+        rule: 0,
+        parameter_id: unitId,
+        field_path: `forward.${unitId}`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 0.9 (forward completeness): the forward map declares unit ${JSON.stringify(unitId)} that is ` +
+          `not in topology.unit_order.hidden ∪ output. forward's key set must EQUAL the declared hidden+output ` +
+          `unit set (no extra/undeclared forward units).`,
+      })
+    }
+  }
 }
 
 /**
@@ -2254,6 +2665,11 @@ function checkRule5(
   recordFailure: (rule: number, parameter_id: string | undefined) => void,
   priorFailureRule: (parameter_id: string | undefined, candidates: readonly number[]) => number | undefined,
 ): void {
+  // v0.13 — SGD coupled-L2 weight decay (Rule 7 third branch). For plain SGD
+  // (name === "sgd") with optimizer_config.weight_decay > 0, the update folds
+  // the decay into the effective descent gradient: grad_eff = gradient - wd*param.
+  // wd === 0 (or absent / non-sgd) → no change, byte-equal to the no-decay path.
+  const coupledWd = sgdFamilyCoupledL2WeightDecay(r)
   for (let i = 0; i < r.updates.length; i++) {
     const update = r.updates[i]!
     // v0.9.1 — Rule 5 GATED OFF for non-SGD optimizers (Adam/AdamW). The
@@ -2264,7 +2680,8 @@ function checkRule5(
     // dispatch would either dilute its single-equation trust narrative
     // or produce false-positive failures. Per user lock: "Rule 5: gate
     // it off for non-SGD. Do not force Adam through the SGD update
-    // equation."
+    // equation." sgd_momentum is handled by Rule 21 (incl. its own
+    // coupled-L2 fold), so it is also skipped here.
     const optimizerName = (update as { optimizer?: { name?: unknown } }).optimizer?.name
     if (optimizerName !== undefined && optimizerName !== "sgd") {
       continue
@@ -2275,7 +2692,12 @@ function checkRule5(
     // root cause via cascade_of_rule.
     const lr = update.optimizer.learning_rate
     const grad = update.gradient
-    const recomputed = lr * grad
+    // v0.13 — coupled L2: grad_eff = gradient - wd*weight_before. The stored
+    // `gradient` field is the BASE loss gradient (Rule 4 checks it against the
+    // factors); the decay enters only the update derivation here. grad_eff ===
+    // grad when coupledWd === 0 (byte-equal to the no-decay path).
+    const gradEff = grad - coupledWd * update.weight_before
+    const recomputed = lr * gradEff
     const stored = update.update
     const fieldPath = `updates[${i}].update`
     const check = applyToleranceCheck(recomputed, stored, tolerance)
@@ -2938,14 +3360,23 @@ export function reconcileMultiStep(
   // the union of skipped rule numbers, and the record indices that skipped — so a
   // consumer MUST NOT read the bundle ok:true as full verification. Absent when
   // no record skipped (backward-compatible with consumers that ignore them).
-  const diagnostics: ReconciliationDiagnostics =
-    skippedRecordIndices.length > 0
+  //
+  // PH-ENG-02: ALSO attach the bundle-level rule-coverage partition (the union
+  // over records plus the multi-step-only rules 9/10/17/25/26 when their
+  // bundle-spanning gate is satisfied). Additive diagnostics — no verdict / byte
+  // change.
+  const bundleCoverage = classifyBundleCoverage(receipts)
+  const diagnostics: ReconciliationDiagnostics = {
+    ...(skippedRecordIndices.length > 0
       ? {
           math_gate_skipped: true,
           skipped_rules: [...skippedRuleSet].sort((a, b) => a - b),
           math_gate_skipped_records: skippedRecordIndices,
         }
-      : {}
+      : {}),
+    rules_evaluated: bundleCoverage.rules_evaluated,
+    gated_off: bundleCoverage.gated_off,
+  }
 
   return failures.length === 0
     ? { ok: true, ...diagnostics }
@@ -3646,6 +4077,24 @@ function checkRule14EngineRecomputeDifferential(
   // (or stripping it) while a source_framework / import_provenance marker
   // survives. Engine-authored receipts carry NEITHER marker, so they still
   // no-op here (their ground-truth gate is byte-equality in the CLI verify path).
+  //
+  // ING-1 (KNOWN BOUNDARY — anti-circularity envelope): when an unknown-
+  // provenance receipt arrives with BOTH observer markers stripped (no
+  // attestor.import_provenance AND no source_framework) AND authoring_state
+  // relabeled to an engine value, this gate no-ops and Rule 14 does NOT run.
+  // No per-receipt rule (1-13) re-derives the forward pass from
+  // parameters_before, so a receipt with a tampered forward.<u>.net that is
+  // otherwise internally consistent reconciles ok:true. THIS IS BY DESIGN:
+  // reconcileReceipt is an INTERNAL-CONSISTENCY checker, NOT a standalone trust
+  // gate for receipts of unknown provenance. The anti-circularity envelope for
+  // such receipts is closed by the byte-equality / engine-reproduce backstop in
+  // the CLI verify path (`bp verify general`, which independently re-runs the
+  // engine and compares emitted bytes) — NOT by reconcileReceipt alone. Callers
+  // that ingest receipts from untrusted sources MUST run the engine-reproduce
+  // path, not rely on reconcileReceipt as the sole gate. This residual is pinned
+  // by a regression test in test/reconcile.bad-external.test.ts so any future
+  // weakening (e.g. a per-receipt rule that starts re-deriving forward and would
+  // change this boundary) is visible.
   if (authoringState !== "external_imported" && !hasObserverMarkers(r)) {
     return { mathGateSkipped: false }
   }
@@ -3825,6 +4274,8 @@ function checkRule14EngineRecomputeDifferential(
         // v0.9.3 — forward nesterov + dampening through Rule 14's engine
         // recompute so the differential check sees the same configuration
         // the receipt's update was computed under.
+        // v0.13 — forward weight_decay (coupled L2) too, so the engine recompute
+        // folds the same decay into the buffer/update the receipt claims.
         const momentumInput: GeneralInput = {
           ...baseInput,
           optimizer_config: {
@@ -3835,10 +4286,32 @@ function checkRule14EngineRecomputeDifferential(
             ...(typeof oc.dampening === "number" && oc.dampening !== 0
               ? { dampening: oc.dampening }
               : {}),
+            ...(typeof oc.weight_decay === "number" && oc.weight_decay !== 0
+              ? { weight_decay: oc.weight_decay }
+              : {}),
           },
           optimizer_state_before: stateBefore,
         }
         engineReceipt = runGeneralStep(momentumInput)
+      } else if (
+        oc &&
+        oc.name === "sgd" &&
+        typeof oc.weight_decay === "number" &&
+        oc.weight_decay !== 0
+      ) {
+        // v0.13 — plain SGD coupled L2: forward weight_decay through the engine
+        // recompute so the differential check folds the same decay into the
+        // update the receipt claims. weight_decay === 0 falls through to the
+        // plain baseInput path (byte-equal to the no-decay recompute).
+        const sgdCoupledInput: GeneralInput = {
+          ...baseInput,
+          optimizer_config: {
+            name: "sgd",
+            learning_rate: oc.learning_rate ?? r.learning_rate,
+            weight_decay: oc.weight_decay,
+          },
+        }
+        engineReceipt = runGeneralStep(sgdCoupledInput)
       } else {
         engineReceipt = runGeneralStep(baseInput)
       }
@@ -3901,13 +4374,102 @@ function checkRule14EngineRecomputeDifferential(
   }
 
   // forward[*].{net, out}
-  for (const uId of Object.keys(engineReceipt.forward)) {
-    const eUnit = engineReceipt.forward[uId]
+  //
+  // ENG-2 (COMPLETENESS): the pre-fix loop iterated the ENGINE's forward keys
+  // with `if (!eUnit || !rUnit) continue` — so a forward unit ABSENT from the
+  // receipt (drop forward.o1 entirely) was SILENTLY skipped, and a unit that
+  // carried only `out` (drop forward.o1.net) had its missing field early-return
+  // out of compareScalar. Either way a fabricated/omitted forward field escaped
+  // the differential (false PASS). Apply the same key-set-EQUAL discipline used
+  // for updates/parameters_after below (FIX-2): the receipt's forward key set
+  // must EQUAL the engine's recomputed key set, and every ForwardUnit must carry
+  // BOTH net and out. Comparison still happens through compareScalar; the
+  // completeness check raises a Rule 14 failure for any missing/extra unit or
+  // missing scalar so omission cannot launder a clean PASS.
+  const engineForwardKeys = Object.keys(engineReceipt.forward)
+  const engineForwardSet = new Set<string>(engineForwardKeys)
+  const receiptForward = r.forward ?? {}
+  const receiptForwardKeys = Object.keys(receiptForward)
+  const receiptForwardSet = new Set<string>(receiptForwardKeys)
+  for (const uId of engineForwardKeys) {
+    const eUnit = engineReceipt.forward[uId]!
     const rUnit = r.forward?.[uId]
-    if (!eUnit || !rUnit) continue
-    compareScalar(`forward.${uId}.net`, eUnit.net, rUnit.net)
-    compareScalar(`forward.${uId}.out`, eUnit.out, rUnit.out)
+    // COMPLETENESS — unit absent from the receipt: the engine recomputed a
+    // forward unit the receipt never reported. A dropped forward unit escapes
+    // the differential by omission; raise rather than skip.
+    if (!rUnit) {
+      failures.push({
+        rule: 14,
+        field_path: `forward.${uId}`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 14 (engine-recompute COMPLETENESS): the engine recomputed forward unit ${JSON.stringify(uId)} ` +
+          `(net=${eUnit.net}, out=${eUnit.out}) but the receipt's forward map has NO entry for it. A dropped ` +
+          `forward unit is a SELECTIVE-OMISSION laundering attempt — the receipt's forward key set must EQUAL ` +
+          `the engine's recomputed key set so no forward field escapes the differential by omission ` +
+          `(G-018 / Rule-19 key-set-EQUAL discipline, forward dimension).`,
+      })
+      continue
+    }
+    // COMPLETENESS — a present unit must carry BOTH net and out. compareScalar
+    // early-returns on a non-number value (schema's domain), so a unit that
+    // drops just .net (keeping .out) would otherwise skip the net comparison
+    // entirely. Raise on either missing scalar.
+    if (typeof rUnit.net !== "number") {
+      failures.push({
+        rule: 14,
+        field_path: `forward.${uId}.net`,
+        stored: 0,
+        recomputed: eUnit.net,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 14 (engine-recompute COMPLETENESS): receipt forward unit ${JSON.stringify(uId)} is missing its ` +
+          `net value but the engine recomputed net=${eUnit.net}. A forward unit must carry BOTH net and out so ` +
+          `neither escapes the differential by omission.`,
+      })
+    } else {
+      compareScalar(`forward.${uId}.net`, eUnit.net, rUnit.net)
+    }
+    if (typeof rUnit.out !== "number") {
+      failures.push({
+        rule: 14,
+        field_path: `forward.${uId}.out`,
+        stored: 0,
+        recomputed: eUnit.out,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 14 (engine-recompute COMPLETENESS): receipt forward unit ${JSON.stringify(uId)} is missing its ` +
+          `out value but the engine recomputed out=${eUnit.out}. A forward unit must carry BOTH net and out so ` +
+          `neither escapes the differential by omission.`,
+      })
+    } else {
+      compareScalar(`forward.${uId}.out`, eUnit.out, rUnit.out)
+    }
   }
+  // COMPLETENESS — extra forward unit in the receipt not produced by the engine.
+  // Emit in observed insertion order for determinism.
+  for (const uId of receiptForwardKeys) {
+    if (!engineForwardSet.has(uId)) {
+      failures.push({
+        rule: 14,
+        field_path: `forward.${uId}`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 14 (engine-recompute COMPLETENESS): the receipt's forward map declares unit ${JSON.stringify(uId)} ` +
+          `that the engine did NOT recompute. forward's key set must EQUAL the engine's recomputed key set ` +
+          `(no extra/undeclared forward units).`,
+      })
+    }
+  }
+  void receiptForwardSet
 
   // loss.per_output[*] and loss.total
   for (const uId of Object.keys(engineReceipt.loss.per_output)) {
@@ -3918,6 +4480,193 @@ function checkRule14EngineRecomputeDifferential(
     )
   }
   compareScalar("loss.total", engineReceipt.loss.total, r.loss?.total)
+
+  // ENG-1: post_update_forward.units + post_update_loss differential.
+  //
+  // The engine recomputes the FULL training step including the post-update
+  // re-forward (post_update_forward) and post-update loss (post_update_loss).
+  // Pre-fix the differential compared forward/loss/backward/updates/
+  // parameters_after but NEVER the engine's recomputed post_update_* — so an
+  // external_imported receipt could fabricate post_update_loss.total or any
+  // post_update_forward.units[u].{net,out} and still reconcile ok:true (a false
+  // PASS, mirroring the original forward/loss hole).
+  //
+  // Wire-shape note (see emitPostUpdateForwardGeneral in emit.ts): the engine's
+  // RUNTIME post_update_forward nests units under `.units`, but a JSON-parsed
+  // receipt carries each unit as a FLAT sibling key alongside `status`. Read the
+  // engine side from `.units` and the receipt side from the flat top-level keys.
+  //
+  // Gating: only compare when the engine ACTUALLY emits post_update_* AND the
+  // receipt DECLARES them (a receipt that omits the whole block is a schema-
+  // shape concern, not Rule 14's domain — matching the forward/loss
+  // continue-on-absent-section convention). But a receipt that DECLARES
+  // post_update_forward and DROPS a unit must FAIL completeness (mirrors the
+  // FIX-2 key-set-EQUAL discipline for updates/parameters_after), so omission
+  // cannot launder a clean PASS. The same verifier-clamped `diffTol` used by
+  // every comparison above flows through compareScalar — no looser window.
+  const enginePostFwd = engineReceipt.post_update_forward
+  const enginePostLoss = engineReceipt.post_update_loss
+  const receiptPostFwd = (
+    r as { post_update_forward?: Record<string, unknown> }
+  ).post_update_forward
+  const receiptPostLoss = (
+    r as { post_update_loss?: { per_output?: Record<string, number>; total?: number } }
+  ).post_update_loss
+
+  if (enginePostFwd?.units && receiptPostFwd) {
+    // The receipt's post_update_forward units appear in ONE OF TWO shapes:
+    //  - in-memory / imported shape nests them under `.units`
+    //    (importPytorchSidecar + runGeneralStep build
+    //    `{ status, units: { h1: {net,out}, ... } }`);
+    //  - canonical-emitted shape carries them as FLAT sibling keys alongside
+    //    `status` (engine goldens: `{ status, h1: {...}, ... }`).
+    // emitPostUpdateForwardGeneral reads BOTH ("looked in p.units and as flat
+    // key"); mirror that here so neither shape misfires the completeness check.
+    const rpfObj = receiptPostFwd as Record<string, unknown>
+    const nestedUnits = rpfObj["units"]
+    const receiptUnits: Record<string, unknown> =
+      nestedUnits !== null && typeof nestedUnits === "object"
+        ? (nestedUnits as Record<string, unknown>)
+        : rpfObj
+    const engineUnits = enginePostFwd.units
+    const engineUnitKeys = Object.keys(engineUnits)
+    const engineUnitSet = new Set<string>(engineUnitKeys)
+    for (const uId of engineUnitKeys) {
+      const eUnit = engineUnits[uId]!
+      const rUnitRaw = receiptUnits[uId]
+      const rUnit =
+        rUnitRaw !== null && typeof rUnitRaw === "object"
+          ? (rUnitRaw as { net?: number; out?: number })
+          : undefined
+      // COMPLETENESS — unit absent from the declared post_update_forward.
+      if (!rUnit) {
+        failures.push({
+          rule: 14,
+          field_path: `post_update_forward.${uId}`,
+          stored: 0,
+          recomputed: 0,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `Rule 14 (engine-recompute COMPLETENESS): the engine recomputed post_update_forward unit ` +
+            `${JSON.stringify(uId)} (net=${eUnit.net}, out=${eUnit.out}) but the receipt's post_update_forward ` +
+            `has NO entry for it. A dropped post-update unit is a SELECTIVE-OMISSION laundering attempt — the ` +
+            `receipt's post_update_forward key set must EQUAL the engine's recomputed key set so no post-update ` +
+            `forward field escapes the differential by omission (G-018 / Rule-19 key-set-EQUAL discipline).`,
+        })
+        continue
+      }
+      if (typeof rUnit.net !== "number") {
+        failures.push({
+          rule: 14,
+          field_path: `post_update_forward.${uId}.net`,
+          stored: 0,
+          recomputed: eUnit.net,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `Rule 14 (engine-recompute COMPLETENESS): receipt post_update_forward unit ${JSON.stringify(uId)} is ` +
+            `missing its net value but the engine recomputed net=${eUnit.net}. A post-update forward unit must ` +
+            `carry BOTH net and out so neither escapes the differential by omission.`,
+        })
+      } else {
+        compareScalar(`post_update_forward.${uId}.net`, eUnit.net, rUnit.net)
+      }
+      if (typeof rUnit.out !== "number") {
+        failures.push({
+          rule: 14,
+          field_path: `post_update_forward.${uId}.out`,
+          stored: 0,
+          recomputed: eUnit.out,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `Rule 14 (engine-recompute COMPLETENESS): receipt post_update_forward unit ${JSON.stringify(uId)} is ` +
+            `missing its out value but the engine recomputed out=${eUnit.out}. A post-update forward unit must ` +
+            `carry BOTH net and out so neither escapes the differential by omission.`,
+        })
+      } else {
+        compareScalar(`post_update_forward.${uId}.out`, eUnit.out, rUnit.out)
+      }
+    }
+    // COMPLETENESS — extra post-update unit in the receipt not produced by the
+    // engine. Skip the reserved `status` key (it is not a unit). Emit in
+    // observed insertion order for determinism.
+    for (const key of Object.keys(receiptUnits)) {
+      if (key === "status" || key === "units") continue
+      if (!engineUnitSet.has(key)) {
+        failures.push({
+          rule: 14,
+          field_path: `post_update_forward.${key}`,
+          stored: 0,
+          recomputed: 0,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `Rule 14 (engine-recompute COMPLETENESS): the receipt's post_update_forward declares unit ` +
+            `${JSON.stringify(key)} that the engine did NOT recompute. post_update_forward's key set must EQUAL ` +
+            `the engine's recomputed key set (no extra/undeclared post-update forward units).`,
+        })
+      }
+    }
+  }
+
+  if (enginePostLoss && receiptPostLoss) {
+    // post_update_loss.per_output[*]
+    const enginePostPerOutput = enginePostLoss.per_output
+    const enginePostOutputKeys = Object.keys(enginePostPerOutput)
+    const enginePostOutputSet = new Set<string>(enginePostOutputKeys)
+    const receiptPostPerOutput = receiptPostLoss.per_output ?? {}
+    for (const uId of enginePostOutputKeys) {
+      const rVal = receiptPostPerOutput[uId]
+      if (typeof rVal !== "number") {
+        // COMPLETENESS — output declared by the engine's post-update loss but
+        // absent from the receipt's post_update_loss.per_output.
+        failures.push({
+          rule: 14,
+          field_path: `post_update_loss.per_output.${uId}`,
+          stored: 0,
+          recomputed: enginePostPerOutput[uId]!,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `Rule 14 (engine-recompute COMPLETENESS): the engine recomputed post_update_loss.per_output ` +
+            `${JSON.stringify(uId)} (=${enginePostPerOutput[uId]}) but the receipt's post_update_loss.per_output ` +
+            `has NO entry for it. A dropped post-update per-output loss escapes the differential by omission — the ` +
+            `key set must EQUAL the engine's recomputed key set.`,
+        })
+      } else {
+        compareScalar(
+          `post_update_loss.per_output.${uId}`,
+          enginePostPerOutput[uId]!,
+          rVal,
+        )
+      }
+    }
+    // COMPLETENESS — extra per-output key not produced by the engine.
+    for (const uId of Object.keys(receiptPostPerOutput)) {
+      if (!enginePostOutputSet.has(uId)) {
+        failures.push({
+          rule: 14,
+          field_path: `post_update_loss.per_output.${uId}`,
+          stored: 0,
+          recomputed: 0,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `Rule 14 (engine-recompute COMPLETENESS): the receipt's post_update_loss.per_output declares output ` +
+            `${JSON.stringify(uId)} that the engine did NOT recompute. The key set must EQUAL the engine's ` +
+            `recomputed key set (no extra/undeclared post-update per-output losses).`,
+        })
+      }
+    }
+    // post_update_loss.total
+    compareScalar(
+      "post_update_loss.total",
+      enginePostLoss.total,
+      receiptPostLoss.total,
+    )
+  }
 
   // G-S1: per-sample forward + per-sample loss differential (batched receipts).
   //
@@ -3949,29 +4698,173 @@ function checkRule14EngineRecomputeDifferential(
     for (const sid of Object.keys(enginePerSample)) {
       const eSample = enginePerSample[sid]
       const rSample = receiptPerSample[sid]
-      if (!eSample || !rSample) continue // schema-level; not Rule 14's domain
-      // per_sample[sid].forward[*].{net, out}
-      for (const uId of Object.keys(eSample.forward)) {
-        const eUnit = eSample.forward[uId]
-        const rUnit = rSample.forward?.[uId]
-        if (!eUnit || !rUnit) continue
-        compareScalar(`per_sample.${sid}.forward.${uId}.net`, eUnit.net, rUnit.net)
-        compareScalar(`per_sample.${sid}.forward.${uId}.out`, eUnit.out, rUnit.out)
+      // A whole per-sample entry absent from the receipt is Rule 19's domain
+      // (it asserts per_sample's KEY SET equals batch.sample_order). Don't
+      // double-report here; the per-sample sub-field completeness below owns
+      // the NESTED dimension (forward unit / loss component / loss.total).
+      if (!eSample || !rSample) continue
+      // R14-PERSAMPLE-OMISSION (COMPLETENESS), per-sample forward dimension.
+      // Pre-fix this loop iterated the ENGINE's per-sample forward keys with
+      // `if (!eUnit || !rUnit) continue`, and fed rUnit.net/out into
+      // compareScalar (which early-returns on a non-number). So a batched
+      // observer receipt could DROP a nested per_sample[sid].forward.<u>.net
+      // (or .out, or the whole unit) and the omitted forward value escaped — a
+      // residual false-PASS. Rule 19 only checks the per_sample KEY SET (catches
+      // a dropped WHOLE sample), NOT a dropped NESTED forward field; this
+      // per-sample differential is the SOLE check on per-sample forward values.
+      // Mirror the top-level forward fix (ENG-2): the receipt's per-sample
+      // forward key set must EQUAL the engine's recomputed per-sample forward
+      // key set, and each present unit must carry BOTH net and out (raise rather
+      // than skip/early-return).
+      const rForward = rSample.forward ?? {}
+      const eForwardKeys = Object.keys(eSample.forward)
+      const eForwardSet = new Set<string>(eForwardKeys)
+      for (const uId of eForwardKeys) {
+        const eUnit = eSample.forward[uId]!
+        const rUnit = rForward[uId]
+        // COMPLETENESS — per-sample forward unit absent from the receipt.
+        if (!rUnit) {
+          failures.push({
+            rule: 14,
+            field_path: `per_sample.${sid}.forward.${uId}`,
+            stored: 0,
+            recomputed: 0,
+            delta: 0,
+            tolerance: 0,
+            message:
+              `Rule 14 (engine-recompute COMPLETENESS): the engine recomputed per-sample forward unit ` +
+              `${JSON.stringify(uId)} for sample ${JSON.stringify(sid)} (net=${eUnit.net}, out=${eUnit.out}) but ` +
+              `the receipt's per_sample.${sid}.forward map has NO entry for it. A dropped per-sample forward ` +
+              `unit is a SELECTIVE-OMISSION laundering attempt — per_sample[sid].forward's key set must EQUAL ` +
+              `the engine's recomputed per-sample forward key set (G-018 / Rule-19 key-set-EQUAL discipline, ` +
+              `per-sample forward dimension).`,
+          })
+          continue
+        }
+        // COMPLETENESS — a present per-sample forward unit must carry BOTH net
+        // and out. compareScalar early-returns on a non-number, so a unit that
+        // drops just .net (keeping .out) would otherwise skip the comparison.
+        if (typeof rUnit.net !== "number") {
+          failures.push({
+            rule: 14,
+            field_path: `per_sample.${sid}.forward.${uId}.net`,
+            stored: 0,
+            recomputed: eUnit.net,
+            delta: 0,
+            tolerance: 0,
+            message:
+              `Rule 14 (engine-recompute COMPLETENESS): receipt per-sample forward unit ${JSON.stringify(uId)} ` +
+              `(sample ${JSON.stringify(sid)}) is missing its net value but the engine recomputed net=${eUnit.net}. ` +
+              `A per-sample forward unit must carry BOTH net and out so neither escapes the differential by omission.`,
+          })
+        } else {
+          compareScalar(`per_sample.${sid}.forward.${uId}.net`, eUnit.net, rUnit.net)
+        }
+        if (typeof rUnit.out !== "number") {
+          failures.push({
+            rule: 14,
+            field_path: `per_sample.${sid}.forward.${uId}.out`,
+            stored: 0,
+            recomputed: eUnit.out,
+            delta: 0,
+            tolerance: 0,
+            message:
+              `Rule 14 (engine-recompute COMPLETENESS): receipt per-sample forward unit ${JSON.stringify(uId)} ` +
+              `(sample ${JSON.stringify(sid)}) is missing its out value but the engine recomputed out=${eUnit.out}. ` +
+              `A per-sample forward unit must carry BOTH net and out so neither escapes the differential by omission.`,
+          })
+        } else {
+          compareScalar(`per_sample.${sid}.forward.${uId}.out`, eUnit.out, rUnit.out)
+        }
       }
-      // per_sample[sid].loss.per_output[*]
-      for (const uId of Object.keys(eSample.loss.per_output)) {
+      // COMPLETENESS — extra per-sample forward unit in the receipt not produced
+      // by the engine. Emit in receipt insertion order for determinism.
+      for (const uId of Object.keys(rForward)) {
+        if (!eForwardSet.has(uId)) {
+          failures.push({
+            rule: 14,
+            field_path: `per_sample.${sid}.forward.${uId}`,
+            stored: 0,
+            recomputed: 0,
+            delta: 0,
+            tolerance: 0,
+            message:
+              `Rule 14 (engine-recompute COMPLETENESS): the receipt's per_sample.${sid}.forward map declares unit ` +
+              `${JSON.stringify(uId)} that the engine did NOT recompute. per_sample[sid].forward's key set must ` +
+              `EQUAL the engine's recomputed per-sample forward key set (no extra/undeclared forward units).`,
+          })
+        }
+      }
+      // COMPLETENESS — per-sample loss.per_output dimension. The receipt's
+      // per-sample loss.per_output key set must EQUAL the engine's recomputed
+      // per-sample loss.per_output key set (a dropped per-sample loss component
+      // escapes the differential exactly as a dropped top-level component does).
+      const rLossPerOutput = rSample.loss?.per_output ?? {}
+      const eLossPerOutputKeys = Object.keys(eSample.loss.per_output)
+      const eLossPerOutputSet = new Set<string>(eLossPerOutputKeys)
+      for (const uId of eLossPerOutputKeys) {
+        const rVal = rLossPerOutput[uId]
+        if (typeof rVal !== "number") {
+          failures.push({
+            rule: 14,
+            field_path: `per_sample.${sid}.loss.per_output.${uId}`,
+            stored: 0,
+            recomputed: eSample.loss.per_output[uId]!,
+            delta: 0,
+            tolerance: 0,
+            message:
+              `Rule 14 (engine-recompute COMPLETENESS): the engine recomputed per-sample loss.per_output ` +
+              `${JSON.stringify(uId)} (sample ${JSON.stringify(sid)}) = ${eSample.loss.per_output[uId]} but the ` +
+              `receipt is missing it. per_sample[sid].loss.per_output's key set must EQUAL the engine's recomputed ` +
+              `key set so no per-sample loss component escapes the differential by omission.`,
+          })
+        } else {
+          compareScalar(
+            `per_sample.${sid}.loss.per_output.${uId}`,
+            eSample.loss.per_output[uId]!,
+            rVal,
+          )
+        }
+      }
+      for (const uId of Object.keys(rLossPerOutput)) {
+        if (!eLossPerOutputSet.has(uId)) {
+          failures.push({
+            rule: 14,
+            field_path: `per_sample.${sid}.loss.per_output.${uId}`,
+            stored: 0,
+            recomputed: 0,
+            delta: 0,
+            tolerance: 0,
+            message:
+              `Rule 14 (engine-recompute COMPLETENESS): the receipt's per_sample.${sid}.loss.per_output declares ` +
+              `output ${JSON.stringify(uId)} that the engine did NOT recompute. The key set must EQUAL the engine's ` +
+              `recomputed key set (no extra/undeclared per-sample per-output losses).`,
+          })
+        }
+      }
+      // COMPLETENESS — per_sample[sid].loss.total must be present and numeric.
+      // compareScalar early-returns on a non-number, so a DROPPED per-sample
+      // loss.total would otherwise skip the comparison entirely (false PASS).
+      if (typeof rSample.loss?.total !== "number") {
+        failures.push({
+          rule: 14,
+          field_path: `per_sample.${sid}.loss.total`,
+          stored: 0,
+          recomputed: eSample.loss.total,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `Rule 14 (engine-recompute COMPLETENESS): receipt per-sample ${JSON.stringify(sid)} is missing its ` +
+            `loss.total but the engine recomputed loss.total=${eSample.loss.total}. A dropped per-sample loss.total ` +
+            `escapes the differential by omission; it must be present and numeric.`,
+        })
+      } else {
         compareScalar(
-          `per_sample.${sid}.loss.per_output.${uId}`,
-          eSample.loss.per_output[uId]!,
-          rSample.loss?.per_output?.[uId],
+          `per_sample.${sid}.loss.total`,
+          eSample.loss.total,
+          rSample.loss.total,
         )
       }
-      // per_sample[sid].loss.total
-      compareScalar(
-        `per_sample.${sid}.loss.total`,
-        eSample.loss.total,
-        rSample.loss?.total,
-      )
     }
   }
 
@@ -4738,6 +5631,39 @@ function isAdamFamilyUpdate(u: Receipt["updates"][number]): boolean {
 }
 
 /**
+ * v0.13 — SGD coupled-L2 weight-decay coefficient (the documented Rule 7 third
+ * branch). Returns the top-level optimizer_config.weight_decay ONLY when the
+ * optimizer is the SGD family ("sgd" or "sgd_momentum") and weight_decay is a
+ * non-negative finite number; otherwise 0 (no coupled L2).
+ *
+ * Coupled L2 (PyTorch torch.optim.SGD(weight_decay=lambda)) folds the decay
+ * into the GRADIENT before the buffer/update. The receipt's stored `gradient`
+ * is the BASE loss gradient (Rule 4 checks gradient == product(factors), so
+ * the decay is NOT in the factors). The reconciler re-derives the effective
+ * descent gradient `grad_eff = gradient - wd*param` here and feeds it into
+ * Rules 5 (plain sgd) and 21a/21b/21c (sgd_momentum). The sign is MINUS
+ * because the engine stores the loss gradient in DESCENT direction, the
+ * negation of PyTorch's ascent `d_p += wd*param`.
+ *
+ * This is DISTINCT from AdamW's DECOUPLED weight decay (Rule 6/7 AdamW branch),
+ * which applies (1 - lr*wd) to the parameter at the update step and NEVER
+ * enters the gradient/buffer. Adam/AdamW carry weight_decay too but with the
+ * decoupled meaning — this helper returns 0 for them, so the coupled-L2
+ * gradient fold never fires on the Adam family.
+ *
+ * Returns 0 (and never re-derives) when weight_decay is absent or 0, so
+ * existing no-decay SGD-family receipts reconcile byte-equivalently.
+ */
+function sgdFamilyCoupledL2WeightDecay(r: Receipt): number {
+  const oc = readOptimizerConfig(r)
+  if (!oc) return 0
+  if (oc.name !== "sgd" && oc.name !== "sgd_momentum") return 0
+  const wd = oc.weight_decay
+  if (typeof wd !== "number" || !Number.isFinite(wd) || wd < 0) return 0
+  return wd
+}
+
+/**
  * v0.9.2 — true iff the update's optimizer.name is "sgd_momentum"
  * (classical PyTorch-style SGD momentum; Nesterov reserved for v0.9.3).
  */
@@ -4953,18 +5879,27 @@ function checkRule20OptimizerStateShape(
           `Sutskever et al. 2013 ICML §2 Nesterov lookahead derivation assumes an undamped buffer.`,
       })
     }
-    // SGD coupled L2 weight decay deferred to v0.10.
+    // v0.13 — SGD coupled L2 weight decay (the documented Rule 7 third branch).
+    // weight_decay is OPTIONAL for sgd_momentum; when present it must be a
+    // non-negative finite number (PyTorch torch.optim.SGD(weight_decay=lambda),
+    // lambda >= 0). Coupled L2 folds the decay into the gradient before the
+    // momentum buffer — DISTINCT from AdamW's DECOUPLED weight decay. The actual
+    // recurrence + update check (with grad_eff = gradient - wd*param) is Rule 21;
+    // Rule 20 only validates the hyperparameter shape here.
     if (oc.weight_decay !== undefined) {
-      failures.push({
-        rule: 20,
-        field_path: "optimizer_config.weight_decay",
-        stored: typeof oc.weight_decay === "number" ? oc.weight_decay : 0,
-        recomputed: 0, delta: 0, tolerance: 0,
-        message:
-          `Rule 20: optimizer_config.weight_decay is NOT supported with name === 'sgd_momentum' in v0.9.2 ` +
-          `(got ${String(oc.weight_decay)}). PyTorch's torch.optim.SGD(weight_decay=lambda) applies COUPLED ` +
-          `L2 — distinct from AdamW's DECOUPLED weight decay. v0.9.2 defers SGD coupled L2 to v0.10.`,
-      })
+      if (typeof oc.weight_decay !== "number" || !Number.isFinite(oc.weight_decay) || oc.weight_decay < 0) {
+        failures.push({
+          rule: 20,
+          field_path: "optimizer_config.weight_decay",
+          stored: typeof oc.weight_decay === "number" ? oc.weight_decay : 0,
+          recomputed: 0, delta: 0, tolerance: 0,
+          message:
+            `Rule 20: optimizer_config.weight_decay must be a non-negative finite number for ` +
+            `name === 'sgd_momentum' (got ${String(oc.weight_decay)}). PyTorch torch.optim.SGD(weight_decay=lambda) ` +
+            `with lambda >= 0 applies COUPLED L2 (folded into the gradient before the momentum buffer) — ` +
+            `DISTINCT from AdamW's DECOUPLED weight decay. weight_decay === 0 collapses to the no-decay path.`,
+        })
+      }
     }
   }
   // (c) per-update state_before + state_after presence + finiteness — dispatch on optimizer family.
@@ -5106,6 +6041,13 @@ function checkRule21SgdMomentumRecurrence(
   // exactly when dampening=0 + nesterov=false (preserves byte-equality).
   const tau = typeof oc.dampening === "number" ? oc.dampening : 0
   const useNesterov = oc.nesterov === true
+  // v0.13 — SGD coupled-L2 weight decay (Rule 7 third branch). When
+  // optimizer_config.weight_decay > 0, the decay folds into the effective
+  // descent gradient BEFORE the buffer recurrence (PyTorch d_p = grad + wd*param
+  // THEN buf = mu*buf + (1-dampening)*d_p). grad_eff = gradient - wd*param
+  // (minus because the engine stores the loss gradient in descent direction).
+  // coupledWd === 0 (or absent) → grad_eff === gradient, byte-equal to no-decay.
+  const coupledWd = sgdFamilyCoupledL2WeightDecay(r)
   for (let i = 0; i < r.updates.length; i += 1) {
     const u = r.updates[i]!
     if (!isSgdMomentumUpdate(u)) continue
@@ -5121,13 +6063,17 @@ function checkRule21SgdMomentumRecurrence(
     if (typeof opt.state_after.buffer !== "number") continue // Rule 20 fired
     const lr = opt.learning_rate
     const grad = u.gradient
+    // v0.13 — effective descent gradient with coupled L2 folded in. Used by
+    // 21a (buffer), 21b (effective), 21c (update). grad_eff === grad when
+    // coupledWd === 0 (byte-equal to the no-decay path).
+    const gradEff = grad - coupledWd * u.weight_before
     const bufBefore = opt.state_before.buffer
     const bufAfter = opt.state_after.buffer
     //
-    // 21a — buffer recurrence (widened for dampening):
-    //   buffer_after == momentum * buffer_before + (1 - dampening) * gradient
+    // 21a — buffer recurrence (widened for dampening; coupled L2 in grad_eff):
+    //   buffer_after == momentum * buffer_before + (1 - dampening) * grad_eff
     //
-    const expectedBufAfter = mu * bufBefore + (1 - tau) * grad
+    const expectedBufAfter = mu * bufBefore + (1 - tau) * gradEff
     const check21a = applyToleranceCheck(expectedBufAfter, bufAfter, tolerance)
     if (!check21a.ok) {
       failures.push({
@@ -5152,16 +6098,17 @@ function checkRule21SgdMomentumRecurrence(
       continue // 21a broken — skip 21b/21c on this update
     }
     //
-    // 21b — effective gradient direction:
-    //   effective == (gradient + momentum * buffer_after)  if nesterov === true
+    // 21b — effective gradient direction (coupled L2 in grad_eff for Nesterov):
+    //   effective == (grad_eff + momentum * buffer_after)  if nesterov === true
     //   effective == buffer_after                          otherwise
     //
     // `effective` is DERIVED (never stored on receipt). We back-compute it
     // from the stored update via `effective = update / lr` and compare to
     // the formula-expected value. Diagnostically clean: a classical-vs-
-    // Nesterov confusion bug surfaces precisely at 21b.
+    // Nesterov confusion bug surfaces precisely at 21b. grad_eff === grad when
+    // coupledWd === 0 (byte-equal to the no-decay path).
     //
-    const expectedEffective = useNesterov ? grad + mu * bufAfter : bufAfter
+    const expectedEffective = useNesterov ? gradEff + mu * bufAfter : bufAfter
     const storedEffective = u.update / lr
     const check21b = applyToleranceCheck(expectedEffective, storedEffective, tolerance)
     if (!check21b.ok) {
@@ -5169,8 +6116,8 @@ function checkRule21SgdMomentumRecurrence(
         ? "Nesterov (lookahead) — effective == gradient + momentum * buffer_after"
         : "classical — effective == buffer_after"
       const otherVariantHint = useNesterov
-        ? `${grad + mu * bufAfter} (Nesterov, declared) vs ${bufAfter} (classical, not declared)`
-        : `${bufAfter} (classical, declared) vs ${grad + mu * bufAfter} (Nesterov, not declared)`
+        ? `${gradEff + mu * bufAfter} (Nesterov, declared) vs ${bufAfter} (classical, not declared)`
+        : `${bufAfter} (classical, declared) vs ${gradEff + mu * bufAfter} (Nesterov, not declared)`
       failures.push({
         rule: 21,
         parameter_id: u.parameter_id,
@@ -5675,11 +6622,16 @@ function checkRule26OptimizerConfigConstancy(
   // v0.9.2 — per-optimizer constancy key list (dispatch on first.name).
   // learning_rate EXCLUDED (LR schedules legitimate); t EXCLUDED (Rule 25
   // handles t monotonicity for Adam; momentum has no t).
+  // v0.13 — weight_decay is a hyperparameter (coupled L2 for the SGD family;
+  // decoupled for Adam/AdamW): it MUST stay constant across a multi-step bundle,
+  // so it is added to sgd_momentum's and sgd's constancy key list. learning_rate
+  // stays EXCLUDED (LR schedules legitimate); a weight-decay schedule is not a
+  // recognized pattern, so a drifting weight_decay is a Rule 26 failure.
   const CONSTANCY_KEYS_BY_NAME: Record<string, readonly string[]> = {
     adam: ["beta1", "beta2", "epsilon", "weight_decay"],
     adamw: ["beta1", "beta2", "epsilon", "weight_decay"],
-    sgd_momentum: ["momentum", "nesterov", "dampening"],
-    sgd: [],
+    sgd_momentum: ["momentum", "nesterov", "dampening", "weight_decay"],
+    sgd: ["weight_decay"],
   }
   const constancyKeys = CONSTANCY_KEYS_BY_NAME[first.name] ?? []
   for (let i = 1; i < ocs.length; i += 1) {

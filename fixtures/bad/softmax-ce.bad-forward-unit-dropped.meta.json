@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "softmax-ce.bad-forward-unit-dropped.meta",
+  "describes": "fixtures/bad/softmax-ce.bad-forward-unit-dropped.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/softmax-ce.golden.jsonl. Differs in the 3 fixture_status fields and the targeted forward/loss field(s) described below.",
+  "mutation": {
+    "field_path": "forward.o3 (deleted), forward.{o1,o2,o3}.out, loss.per_output, loss.total",
+    "original": "forward.{o1:0.417135813, o2:0.256049895, o3:0.326814292} (sum=1.0); loss.per_output={o1:0.874343420,o2:0,o3:0}; loss.total=0.874343420",
+    "mutated": "forward.{o1:0.5, o2:0.3, o3:0.1} (sum=0.9); then DELETE forward.o3 (leaving o1+o2=0.8); loss.per_output={o1:-ln(0.5),o2:0,o3:0}; loss.total=-ln(0.5)",
+    "kind": "gated_rule_omission_forward_unit_dropped",
+    "description": "Drops output unit o3 from the forward map while leaving it declared in topology.unit_order.output AND keeping its loss.per_output entry (o3's target is 0, so its CE component is legitimately 0 and G-018 loss-component coherence stays satisfied). The surviving forward outputs (o1=0.5, o2=0.3) do NOT sum to 1.0 — the receipt claims activation_output='softmax' but is not normalized. PRE-FIX (v0.12.0 Stage A and earlier) this reconciled ok:true: Rule 11 (softmax normalization) hit its anyMissing branch and silently returned; Rule 0.8 (probability bounds) continue-skipped the missing unit; Rule 12 (cross_entropy_softmax) set totalReconstructable=false and skipped o3. Schema validation does NOT catch it either — ForwardMap is an open additionalProperties map with no per-output-unit requirement. The new Rule 0.9 (forward-map completeness, a Rule 0 sub-check) fails it closed: the forward key set must EQUAL unit_order.hidden ∪ output. Rule 0 short-circuits, so it fires before the numeric rules can skip o3."
+  },
+  "reconciliation_check_targeted_first": "Rule 0 (Rule 0.9 sub-check: forward-map completeness): when topology.unit_order.output is present, the forward map's key set MUST EQUAL unit_order.hidden ∪ output — every declared forward unit present with numeric net and out, no missing/extra. Closes the gated-rule omission hole where Rules 0.8/11/12 silently skip a dropped forward output unit.",
+  "purpose": "Anti-circularity (Csmith/CompCert lineage; research-grounding.md Finding 4: bad receipts precede good receipts) for the v0.12 Rule 0.9 forward-completeness gate. Mirrors G-018's loss-component coherence and Rule 14 ENG-2's forward completeness onto the NORMAL per-receipt reconcile path (Rule 14 only runs for external_imported receipts; this receipt is engine-side, so Rule 14 is off by design).",
+  "v0_12_note": "v0.12 closes the gated-rule omission class for the forward map. The companion G-018 (loss.per_output key-set EQUAL) and Rule 14 ENG-2 (engine-recompute forward completeness) already enforced the same discipline on the loss side and the observer-mode path respectively; Rule 0.9 extends it to the per-receipt forward map."
+}

@@ -210,6 +210,10 @@ const RECEIPT_VERSION_GOLDEN: Record<string, string> = {
   "0.5.0": "fixtures/external/pytorch.adam.golden.jsonl",
   "0.6.0": "fixtures/external/pytorch.sgd-momentum.golden.jsonl",
   "0.7.0": "fixtures/external/pytorch.sgd-momentum.nesterov.golden.jsonl",
+  // v0.13 — SGD coupled-L2 weight-decay receipt (the documented Rule 7 third
+  // branch). Engine-emitted golden; positively verifies the v0.8.0 schema's
+  // numeric_policy.tolerance ceiling block.
+  "0.8.0": "fixtures/sgd-momentum-coupled-l2.golden.jsonl",
 };
 
 const SCOPED_VERSIONS: SchemaVersion[] = SCHEMA_VERSIONS.filter(
@@ -314,6 +318,12 @@ const ATTESTOR_VERSION_GOLDEN: Record<string, string> = {
   "0.5.0": "fixtures/external/pytorch.adam.golden.jsonl",
   "0.6.0": "fixtures/external/pytorch.sgd-momentum.golden.jsonl",
   "0.7.0": "fixtures/external/pytorch.sgd-momentum.nesterov.golden.jsonl",
+  // v0.13 — observer-mode receipt imported from the REAL coupled-L2 sidecar
+  // (weight_decay > 0) via importPytorchSidecar. Natively carries
+  // attestor.differential_tolerance, so the v0.8.0 Rule 14 ceiling has a field
+  // to widen. Provenance: scripts/generate-pytorch-coupled-l2-helper-goldens.py
+  // (live torch) -> scripts/emit-coupled-l2-observer-golden.mjs (TS import).
+  "0.8.0": "fixtures/external/pytorch.sgd-coupled-l2.golden.jsonl",
 };
 
 const ATTESTOR_VERSIONS: SchemaVersion[] = SCHEMA_VERSIONS.filter(
@@ -376,6 +386,12 @@ const FT_VERSION_SIDECAR: Record<string, string> = {
   "0.5.0": "fixtures/external/pytorch.sgd-momentum.multi-step.sidecar.jsonl",
   "0.6.0": "fixtures/external/pytorch.sgd-momentum.dampening.sidecar.jsonl",
   "0.7.0": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+  // v0.13 — REAL SGD coupled-L2 (weight_decay > 0) sidecar from the live
+  // helper; declares format framework-trace.v0.8.0 (the SGD-family
+  // weight_decay relaxation) and carries numeric_policy.tolerance for the
+  // ceiling widen-and-reject. Provenance:
+  // scripts/generate-pytorch-coupled-l2-helper-goldens.py (live torch).
+  "0.8.0": "fixtures/external/pytorch.helper-emitted.sgd-coupled-l2.sidecar.jsonl",
 };
 
 for (const version of FRAMEWORK_TRACE_SCHEMA_VERSIONS) {

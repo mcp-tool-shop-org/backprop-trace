@@ -1,7 +1,7 @@
 {
   "name": "@mcptoolshop/backprop-trace",
-  "version": "0.12.0",
-  "description": "Deterministic 26-rule verifier for neural-network training steps. Re-derives gradients + optimizer state from named factors; emits canonical JSONL. PyTorch helper + sidecar import. Mid-v0; CPU-only.",
+  "version": "1.0.0",
+  "description": "Deterministic 26-rule verifier for neural-network training steps. Re-derives gradients + optimizer state from named factors; emits canonical JSONL. SGD/Adam/AdamW/SGD-momentum (+coupled-L2 weight decay); live PyTorch + JAX helpers; CPU-only.",
   "type": "module",
   "license": "MIT",
   "author": "mcp-tool-shop <64996768+mcp-tool-shop@users.noreply.github.com>",
@@ -140,6 +140,7 @@
     "./schema/receipt-0.5.0": "./schemas/receipt.v0.5.0.json",
     "./schema/receipt-0.6.0": "./schemas/receipt.v0.6.0.json",
     "./schema/receipt-0.7.0": "./schemas/receipt.v0.7.0.json",
+    "./schema/receipt-0.8.0": "./schemas/receipt.v0.8.0.json",
     "./schema/0.4.0": "./schemas/topology-input.v0.4.0.json",
     "./schema/framework-trace-0.1.0": "./schemas/framework-trace.v0.1.0.json",
     "./schema/framework-trace-0.2.0": "./schemas/framework-trace.v0.2.0.json",
@@ -148,6 +149,7 @@
     "./schema/framework-trace-0.5.0": "./schemas/framework-trace.v0.5.0.json",
     "./schema/framework-trace-0.6.0": "./schemas/framework-trace.v0.6.0.json",
     "./schema/framework-trace-0.7.0": "./schemas/framework-trace.v0.7.0.json",
+    "./schema/framework-trace-0.8.0": "./schemas/framework-trace.v0.8.0.json",
     "./package.json": "./package.json"
   },
   "bin": {

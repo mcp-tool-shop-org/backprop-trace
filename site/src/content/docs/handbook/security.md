@@ -31,7 +31,7 @@ v0.12.0 codified **12 trust invariants** — the properties a verifier must hold
 - **The verifier never throws on adversarial input.** `reconcileReceipt` always returns a structured result; malformed input becomes a failure record, not an exception. Oversized input becomes a structured `INPUT_TOO_LARGE` error, not a raw stack trace.
 - **Oversized inputs fail cleanly, not via OOM/hang.** Verifier-owned caps (`MAX_BATCH_SAMPLES`, `TOPOLOGY_SIZE_CEILING`) reject before the engine spins up an unbounded recompute.
 
-The full set (plus the anti-circularity, byte-equality, and per-framework-discipline invariants documented elsewhere in this handbook) is enforced by the 792-test suite.
+The full set (plus the anti-circularity, byte-equality, and per-framework-discipline invariants documented elsewhere in this handbook) is enforced by the 940-test suite (v1.0.0). v1.0.0 closed two further false-PASS classes on top of the v0.12.0 floor: **Rule 0.9 (forward-map completeness)** — a softmax receipt could reconcile `ok:true` while its probabilities did not sum to 1.0 (Rules 0.8/11/12 silently skipped a dropped forward unit); and a deeper **Rule 14 completeness** check across `post_update_forward` / `post_update_loss` and the batched per-sample maps, closing selective-omission laundering.
 
 ## The residual tolerance windows (what "within tolerance" admits)
 
@@ -89,6 +89,8 @@ When a sidecar comes from the live PyTorch helper, it carries a `helper` block w
 
 The helper computes its own `source_hash` (it hashes the file it's running from). This is acceptable BECAUSE the hash is forensic. If it were credential, helper-self-hashing would be the Fang-class trap. Documented in the helper file's docstring + `docs/live-helpers.md`.
 
+The **live JAX helper** (v1.0.0) adds one more forensic field to the block: a `jax.make_jaxpr(jax.grad(loss))` digest — the gradient computation graph PyTorch eager has no first-class equivalent for. It is forensic on exactly the same terms as `source_hash`: a spoofed or missing jaxpr does NOT bypass Rule 14; it enriches attribution when the differential disagrees. The JAX helper additionally refuses to run without `jax_enable_x64` + CPU, so a float32 or GPU sidecar fails loudly at the boundary rather than producing a receipt that would later trip the differential.
+
 ## Distribution integrity (v0.10.2+)
 
 The tarball that ships to npm must actually carry what the repo claims exists. `scripts/pack-install-smoke.mjs` enforces this on every CI push across ubuntu + macos + windows:
@@ -107,7 +109,18 @@ See [SECURITY.md](https://github.com/mcp-tool-shop-org/backprop-trace/blob/main/
 
 If you find a way to construct a receipt that backprop-trace ACCEPTS but should reject — schema bypass, NaN/Infinity poisoning, canonical-emission divergence, anti-circularity violation (reconciler consulting fixture_status before completing rule checks), engine-recompute disagreement that Rule 14 missed, a tolerance window exploited to pass a meaningful error, an import that dodges Rule 14, a self-declared skip treated as a pass, or an incomplete update set that passes — that's the in-scope vulnerability class. The five false-PASS holes v0.12.0 closed are exactly this class; an adversarial audit found them, and the bounty for more is open. Open an issue or email per SECURITY.md.
 
+## Compliance, honestly scoped (v1.0.0)
+
+v1.0.0 ships a worked [compliance audit bundle](https://github.com/mcp-tool-shop-org/backprop-trace/blob/main/docs/compliance.md) showing how a receipt functions as one evidence artifact inside an ML compliance bundle — and, just as important, what it does **not** attest. The honest mapping:
+
+- **EU AI Act Annex IV §2(g)** (test logs, dated/signed) — *primary fit.* A receipt **is** a machine-checkable test log of one training step's math; `bp verify` is the re-run; canonical bytes are signable/datable.
+- **Annex IV §2(b)** (general algorithmic logic) and **Article 15** (accuracy & robustness, resilience to error/tamper) — *strong fit.* The 26 rules document the exact optimizer recurrence; the adversarial verifier rejects tampered receipts before reading status metadata.
+- **Article 10** (data & data governance) — **out of scope.** A receipt attests *math*, not data quality or provenance. Do not claim Article 10 coverage.
+
+A receipt is the numerical-consistency leaf of a compliance tree; it composes *below* model-signing (SLSA-for-ML / Sigstore), it does not replace it. The bundle uses the hero classifier fixture as its worked example and pins the canonical bytes into an in-toto v1 statement.
+
 ## Next steps
 
 - **Architecture in depth** → [Architecture](../architecture/)
-- **Live PyTorch helper trust statement (verbatim with full citations)** → [`docs/live-helpers.md`](https://github.com/mcp-tool-shop-org/backprop-trace/blob/main/docs/live-helpers.md)
+- **Live PyTorch + JAX helper trust statements (verbatim with full citations)** → [`docs/live-helpers.md`](https://github.com/mcp-tool-shop-org/backprop-trace/blob/main/docs/live-helpers.md)
+- **The worked compliance bundle** → [`docs/compliance.md`](https://github.com/mcp-tool-shop-org/backprop-trace/blob/main/docs/compliance.md)

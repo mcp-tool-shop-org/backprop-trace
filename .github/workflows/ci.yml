@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # ci-future-B-009: manual fallback so the heavy e2e jobs (torch / jax) can be
+  # forced on demand even when the import/emission helper path did not change.
+  workflow_dispatch:
 
 # ci-future-B-008: cancel superseded runs on the same ref so rapid PR pushes
 # don't stack the full multi-OS test + canary + torch matrix.
@@ -13,6 +16,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ci-future-B-009: detect whether the LIVE-helper import/emission path changed,
+  # so the two heavy e2e jobs (each installs a large ML wheel — torch / jaxlib)
+  # run ONLY when relevant, instead of on EVERY push/PR. This gates the e2e jobs
+  # WITHOUT touching the core gates: test / byte-equal / audit have no `needs:` on
+  # this job and so continue to run unconditionally on all source changes.
+  # Always green (it just reports booleans), so it never blocks anything; on
+  # workflow_dispatch the e2e jobs run regardless of the filter (see their `if:`).
+  changes:
+    name: detect changed paths (gate heavy e2e)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5  # ci-future-B-007: bound a hung filter/checkout
+    outputs:
+      helpers: ${{ steps.filter.outputs.helpers }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: filter
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        with:
+          filters: |
+            helpers:
+              - 'scripts/extract/**'
+              - 'src/import-*.ts'
+              - 'src/general-engine.ts'
+              - 'src/reconcile.ts'
+              - 'test/import-*helper*'
+              - '.github/workflows/ci.yml'
+
   test:
     name: test (node ${{ matrix.node }} / ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -153,6 +183,10 @@ jobs:
     # ubuntu-latest, single OS (CPU torch only). Runs on the normal triggers.
     name: torch end-to-end (live helper)
     runs-on: ubuntu-latest
+    # ci-future-B-009: skip the costly CPU-torch wheel install unless the
+    # import/emission helper path changed, or on a manual workflow_dispatch.
+    needs: changes
+    if: ${{ needs.changes.outputs.helpers == 'true' || github.event_name == 'workflow_dispatch' }}
     timeout-minutes: 25  # ci-future-B-007: torch wheel install dominates; bound it
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -179,5 +213,51 @@ jobs:
         run: node --import tsx --test test/import-pytorch-helper.torch-e2e.test.ts
         env:
           BP_TORCH_PYTHON: python
+          NO_COLOR: '1'
+          FORCE_COLOR: '0'
+
+  jax-e2e:
+    # Validate the LIVE JAX helper's REAL emission path against real JAX. The
+    # rest of CI runs JAX-less, so the jax-gated test
+    # (test/import-jax-helper.jax-e2e.test.ts) SKIPS there; this job installs CPU
+    # jax+jaxlib so it actually runs. Catches latent helper bugs that
+    # hand-authored fixtures can't (jax.grad descent gradients, jax.make_jaxpr
+    # forensic digest, the pytree->per-neuron-bias scalar mapping, the
+    # output-signal descent sign, optax-style Adam m/v with the documented
+    # NON-flip) plus the boundary rejections (x64-disabled / adamw / bad-topology).
+    # ubuntu-latest, single OS (CPU jax only). Runs on the normal triggers.
+    name: jax end-to-end (live helper)
+    runs-on: ubuntu-latest
+    # ci-future-B-009: skip the costly CPU-jax+jaxlib wheel install unless the
+    # import/emission helper path changed, or on a manual workflow_dispatch.
+    needs: changes
+    if: ${{ needs.changes.outputs.helpers == 'true' || github.event_name == 'workflow_dispatch' }}
+    timeout-minutes: 25  # ci-future-B-007: jaxlib wheel install dominates; bound it
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+      # CPU-only jax+jaxlib — no CUDA/TPU, deterministic on CPU. The helper
+      # REQUIRES jax_enable_x64 + CPU (the determinism contract; enforced at the
+      # extraction boundary). Versions are PINNED in
+      # scripts/extract/requirements-jax-cpu.txt so the live-helper validation is
+      # reproducible (PIN_PER_STEP). An unpinned `pip install jax` lets an
+      # upstream point-release change XLA CPU codegen / jax.grad tracing under us.
+      - name: install CPU jax (pinned)
+        run: python -m pip install --upgrade pip && python -m pip install -r scripts/extract/requirements-jax-cpu.txt
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # Run ONLY the jax-gated suite. BP_JAX_PYTHON points the test at the
+      # interpreter that has jax installed; the test would otherwise skip.
+      - name: jax-gated live-helper end-to-end test
+        run: node --import tsx --test test/import-jax-helper.jax-e2e.test.ts
+        env:
+          BP_JAX_PYTHON: python
           NO_COLOR: '1'
           FORCE_COLOR: '0'

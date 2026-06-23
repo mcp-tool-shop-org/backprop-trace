@@ -7,11 +7,11 @@ sidebar:
 
 Once you have backprop-trace installed and the Mazur fixture verifies (see [Getting Started](../getting-started/)), the next move is verifying **your own training trace**.
 
-There are two paths: the **live PyTorch helper** (v0.10+, recommended) and the **hand-authored sidecar** path (works for any framework).
+There are three paths: the **live PyTorch helper** (recommended for PyTorch), the **live JAX helper** (v1.0.0, stronger trust boundary for JAX), and the **hand-authored sidecar** path (works for any framework).
 
 ## Path A — Live PyTorch helper (recommended)
 
-backprop-trace v0.10+ ships a single auditable Python file that extracts a `framework-trace.v0.7.0` sidecar from a real PyTorch training step. No pip package by design — copy the file into your repo, read it, run it.
+backprop-trace ships a single auditable Python file that extracts a `framework-trace` sidecar from a real PyTorch training step. No pip package by design — copy the file into your repo, read it, run it.
 
 ### Step 1: Copy the helper
 
@@ -77,33 +77,68 @@ python my_train.py | npx bp import pytorch - | npx bp verify multi -
 
 ### Helper scope
 
-| Feature | v0.12.0 status |
+| Feature | v1.0.0 status |
 |---|---|
 | PyTorch SGD | ✅ |
 | PyTorch SGD with momentum (classical + Nesterov + dampening, with sign-flip) | ✅ |
 | PyTorch Adam | ✅ |
 | PyTorch AdamW (decoupled weight decay) | ✅ |
-| Per-neuron biases (torch-validated end-to-end) | ✅ (v0.12.0) |
+| PyTorch SGD with weight_decay > 0 (coupled L2) | ✅ (v1.0.0 — Rule 7 third branch; decay folds into the gradient + momentum buffer) |
+| Per-neuron biases (torch-validated end-to-end) | ✅ |
 | Single-step + multi-step | ✅ |
 | CPU device | ✅ |
-| 2-layer Mazur-shaped topologies | ✅ |
+| 2-layer Mazur-shaped topologies + the 9-pixel→16-ReLU→4-class hero classifier | ✅ |
 | half_squared_error + cross_entropy_softmax loss | ✅ |
-| SGD with weight_decay > 0 (coupled L2) | ❌ rejected (roadmap: v0.13) |
-| NAdam / RAdam | ❌ rejected (roadmap: v0.14) |
+| NAdam / RAdam | ❌ rejected (roadmap: next) |
 | AMSGrad / Lion / LBFGS / per-group LRs / gradient clipping | ❌ rejected (later, each gated on a receipt/reconciler extension) |
-| LR schedules | ❌ rejected (roadmap: v0.14, composes with all optimizers) |
+| LR schedules | ❌ rejected (roadmap: next, composes with all optimizers) |
 | AMP / `torch.cuda.amp.autocast` | ❌ rejected (PyTorch issue #75224) |
 | CUDA / MPS / XLA | ❌ rejected — GPU/fused-kernel bit-determinism is permanently out of scope (FP non-associativity, [arXiv:2408.05148](https://arxiv.org/abs/2408.05148)) |
-| Multi-hidden-layer / CNN / transformer topologies | ❌ rejected (a tiny conv→ReLU→dense hero fixture is the v1.0 gate) |
+| Multi-hidden-layer / CNN / transformer topologies | ❌ rejected (the dense ReLU→softmax hero classifier is the shipped v1.0 fixture; conv stays out of the deterministic corner) |
 | Batched live extraction | ❌ helper extracts single samples (hand-authored batched sidecars work) |
-| JAX live helper | ⏸ roadmap: v1.0 (`jax.make_jaxpr(grad)` gives a stronger trust boundary than PyTorch eager) |
+| JAX live helper (SGD + Adam) | ✅ (v1.0.0 — `scripts/extract/jax.py`; see Path A-JAX below) |
 | TensorFlow live helper | ⏸ deferred (later) |
 
 When a feature is rejected at the boundary, the helper raises `HelperUnsupportedError` with a clear message pointing at the deferral. The hand-authored sidecar path (Path B below) handles many of these cases.
 
+## Path A-JAX — Live JAX helper (v1.0.0)
+
+For JAX, v1.0.0 ships a parallel single auditable file at `scripts/extract/jax.py` with a **stronger trust boundary** than PyTorch eager. Copy it into your repo, read it, run it:
+
+```bash
+cp node_modules/@mcptoolshop/backprop-trace/scripts/extract/jax.py jax_trace_helper.py
+```
+
+The JAX-specific contribution: the helper folds a `jax.make_jaxpr(jax.grad(loss))` digest into the forensic `helper` block — the gradient computation graph (the jaxpr) as an inspectable, auditable artifact that PyTorch eager has no first-class equivalent for. Like the `source_hash`, the jaxpr is **forensic, not a credential** — it does not bypass Rule 14; it makes post-hoc attribution richer.
+
+Two determinism requirements are enforced at the boundary (the helper refuses to run otherwise):
+
+- **CPU only.** GPU/TPU FP reductions are non-associative across kernels ([arXiv:2408.05148](https://arxiv.org/abs/2408.05148)) and would diverge from the engine's pinned scalar recompute.
+- **`jax.config.update("jax_enable_x64", True)`.** JAX defaults to float32; the engine runs binary64. Without x64 the extracted scalars are float32 and Rule 14 would surface tolerance disagreements — so the helper fails loudly at the boundary rather than silently emitting a float32 sidecar.
+
+```python
+from jax_trace_helper import TraceDumper
+
+dumper = TraceDumper(
+    params, optimizer="sgd", learning_rate=0.5,
+    topology_loss="half_squared_error", out="trace.jsonl",
+)
+for x, y in loader:
+    with dumper.step(inputs=x, targets=y) as ctx:
+        params = ctx.run(params)   # runs forward+grad+update internally
+```
+
+Verify the same way as PyTorch — the importer + Rule 14 are framework-agnostic:
+
+```bash
+npx bp import jax trace.jsonl | npx bp verify multi -
+```
+
+The JAX helper covers SGD and Adam. It is observer-only; Rule 14 is the authority on every helper-emitted sidecar, exactly as with PyTorch. A dedicated CI `jax-e2e` job validates it against real JAX on every relevant push.
+
 ## Path B — Hand-authored sidecar (any framework)
 
-For JAX, TensorFlow, sgd_momentum with coupled-L2, batched extraction, or anything outside the live helper's scope, author a sidecar by hand. The schema is [`schemas/framework-trace.v0.7.0.json`](https://github.com/mcp-tool-shop-org/backprop-trace/blob/main/schemas/framework-trace.v0.7.0.json) (or v0.6.0 for sidecars without a `helper` block).
+For TensorFlow, batched extraction, or anything outside the live helpers' scope, author a sidecar by hand. The schema is [`schemas/framework-trace.v0.8.0.json`](https://github.com/mcp-tool-shop-org/backprop-trace/blob/main/schemas/framework-trace.v0.8.0.json) (v0.8.0 adds the SGD coupled-L2 weight-decay surface; earlier versions back to v0.6.0 remain valid for sidecars that don't use it, or that omit the `helper` block).
 
 1. Extract per-tensor numerics from your training step (frameworks expose these via `autograd`, `grad`/`value_and_grad`, `tf.GradientTape`)
 2. Emit canonical JSONL (decimal strings, schema-defined key order — see [canonical-emission.md](https://github.com/mcp-tool-shop-org/backprop-trace/blob/main/docs/canonical-emission.md))
@@ -114,7 +149,7 @@ This is friction-heavy compared to Path A but it works for any framework + optim
 
 ### Observer-mode verify behavior (what `bp verify` does with an imported receipt)
 
-When you run `bp verify` (or `bp verify multi`) on a receipt that came from `bp import`, the verifier treats it as an **observer-mode** receipt and re-runs Rule 14 independently — the import-time differential is not trusted as the verdict (Reproducible Builds discipline: the producer's claim is not the verifier's truth). Three v0.12.0 behaviors matter here:
+When you run `bp verify` (or `bp verify multi`) on a receipt that came from `bp import`, the verifier treats it as an **observer-mode** receipt and re-runs Rule 14 independently — the import-time differential is not trusted as the verdict (Reproducible Builds discipline: the producer's claim is not the verifier's truth). Four behaviors matter here:
 
 - **Rule 14 fires on observer markers, not labels.** The verifier decides to re-derive based on the presence of `source_framework` / `attestor.import_provenance`, so an imported receipt cannot turn off the math gate by editing its `authoring_state` field.
 - **The differential tolerance is verifier-owned.** The receipt's `attestor.differential_tolerance` is clamped to `{atol: 1e-5, rtol: 1e-3}` before the comparison — an imported receipt cannot request a pass band wide enough to hide its own divergence. (This looser-than-engine band is what lets honest float32 sidecars pass; v0.12.0 stopped false-FAILing them.)

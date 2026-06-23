@@ -286,6 +286,44 @@ gives a stronger trust boundary than PyTorch eager; CPU + `jax_enable_x64`
 Accelerate integration follow, each gated on a receipt/reconciler
 extension — out of v0.12 scope.
 
+## The JAX live helper (v1.0)
+
+`scripts/extract/jax.py` is the JAX counterpart of the PyTorch helper, with a
+**stronger trust boundary**. Copy it the same way:
+
+```bash
+bp examples jax            # prints scripts/extract/jax.py
+bp examples jax --print > jax_trace_helper.py
+```
+
+**Stronger boundary — the jaxpr digest.** PyTorch eager has no inspectable
+gradient graph; JAX does. The helper captures
+`jax.make_jaxpr(jax.grad(loss))` and folds its SHA-256 into the forensic
+`helper` block (`source_uri` carries `#jaxpr_sha256=…`). This records *which
+gradient computation* produced the trace — a reviewer can re-trace the jaxpr.
+It is still **forensic, not a credential**: Rule 14 (engine-recompute
+differential) remains the authority on every imported sidecar, exactly as for
+PyTorch. A spoofed or wrong jaxpr digest does **not** bypass Rule 14.
+
+**Determinism contract (enforced at the boundary).** JAX defaults to float32
+and may JIT for the platform. The helper **refuses to run** unless
+`jax.config.update('jax_enable_x64', True)` is set and the device is **CPU**
+(GPU/TPU rejected — fused-kernel FP non-associativity defeats bit-determinism).
+Pin `jaxlib` to freeze XLA CPU codegen (`scripts/extract/requirements-jax-cpu.txt`).
+
+**Scope.** Supports `sgd` and `adam` (CPU, single + multi-step). Gradients come
+from `jax.grad` negated into the engine's descent convention; per-neuron biases
+and the named-factor decomposition mirror the PyTorch helper. Rejected at the
+boundary: x64-disabled, non-CPU, AdamW/momentum variants not yet wired, and
+multi-hidden-layer topologies.
+
+**Validation.** A dedicated CI job (`jax-e2e` in `ci.yml`) installs pinned CPU
+`jax`/`jaxlib` and runs the helper against **real JAX** end to end — live step →
+sidecar → `bp import jax` → Rule 14 differential passes → reconcile. The shipped
+golden `fixtures/external/jax.sgd-live.sidecar.jsonl` is a real-JAX capture; a
+non-gated test imports it so Node verifies a real-JAX sidecar without needing
+Python.
+
 ## Sources
 
 - **Csmith** — Yang, Chen, Eide, Regehr (PLDI 2011). https://doi.org/10.1145/1993498.1993532

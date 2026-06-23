@@ -91,8 +91,11 @@ const REQUIRED_TARBALL_ENTRIES = [
   // Schemas (latest receipt + helper-block framework-trace + back-compat)
   "package/schemas/receipt.v0.4.0.json",
   "package/schemas/receipt.v0.7.0.json",
+  // v0.13 — SGD coupled-L2 weight-decay schemas (the documented Rule 7 third branch).
+  "package/schemas/receipt.v0.8.0.json",
   "package/schemas/framework-trace.v0.6.0.json",
   "package/schemas/framework-trace.v0.7.0.json",
+  "package/schemas/framework-trace.v0.8.0.json",
   // v0.10.1 helper-emitted golden fixtures (3 — SGD, AdamW, sgd_momentum)
   "package/fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
   "package/fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",

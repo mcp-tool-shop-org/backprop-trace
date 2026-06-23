@@ -371,8 +371,10 @@ The file argument is optional: the default is `fixtures/mazur.golden.jsonl`.
 | `--warn-as-fail` | WARN findings (e.g. soft drift) escalate to FAIL. |
 | `--strict` | Any non-PASS finding (WARN, SKIP) escalates to FAIL. |
 
-These match the 4-bucket convention from the study-swarm verifier-composition
-finding: 0 pass, 1 fail, 2 warn-only-when-gated, 3 input/config error.
+These affect the exit code per the contract in [Exit codes](#exit-codes): a
+default or `--warn-as-fail`/`--strict`-escalated verification failure exits `1`
+(the receipt is bad, not the tool), distinct from a usage/I-O error (`2`) or an
+invalid CLI argument (`3`).
 
 ### Output
 
@@ -778,15 +780,16 @@ in-memory literal or a `--topology` flag).
 
 ## Exit-code conventions
 
-All subcommands follow a 4-bucket convention loosely modeled on
-shellcheck:
+All subcommands follow the same 5-bucket convention (the authoritative
+contract, matching `bp --help` and the README):
 
 | Code | Meaning |
 |---|---|
 | 0 | Success / pass |
 | 1 | Verification or reconciliation failure (the receipt is bad, not the tool) |
-| 2 | I/O error, malformed JSON, or unexpected file shape |
+| 2 | Usage error, I/O error, malformed JSON, or unexpected file shape |
 | 3 | Invalid CLI argument or unsupported flag combination |
+| 4 | Framework adapter declared but not implemented |
 
 Distinguishing these matters for CI: `set -e` shells stop on any nonzero,
 but a pipeline that retries on transient I/O errors (`2`) should not retry
@@ -794,14 +797,16 @@ on a deliberate verification failure (`1`).
 
 ## Exit codes
 
-Every subcommand follows the same 4-bucket convention:
+Every subcommand follows the same 5-bucket convention (identical to
+[Exit-code conventions](#exit-code-conventions) above — kept in sync):
 
 | Code | Meaning |
 |---|---|
 | 0 | Success / pass |
 | 1 | Verification or reconciliation failure (the receipt is bad, not the tool) |
-| 2 | I/O error, malformed JSON, unexpected file shape, or missing required argument |
+| 2 | Usage error, I/O error, malformed JSON, unexpected file shape, or missing required argument |
 | 3 | Invalid CLI argument or unsupported flag combination |
+| 4 | Framework adapter declared but not implemented |
 
 `bp verify multi <file.jsonl>` additionally returns exit 2 when the
 input contains fewer than 2 records (use `bp verify general` for single-

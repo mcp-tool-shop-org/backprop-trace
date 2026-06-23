@@ -1,0 +1,17 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "batch.bad-per-sample-loss-total-dropped.meta",
+  "describes": "fixtures/bad/batch.bad-per-sample-loss-total-dropped.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.softmax-ce.batched.golden.jsonl (external_imported batched observer golden, baseline reconcile ok:true). R14-PERSAMPLE-OMISSION residual-false-PASS fixture, per-sample loss dimension.",
+  "mutation": {
+    "kind": "drop_nested_per_sample_loss_total",
+    "field_path": "per_sample.s0.loss.total",
+    "note": "The nested per-sample loss.total (per_sample.s0.loss.total) is deleted. Pre-fix the per_sample differential fed rSample.loss.total into compareScalar, which early-returns on a non-number — so a DROPPED per-sample loss.total silently skipped the comparison and reconcileReceipt returned ok:true. Rule 18 checks only the FLAT loss.per_sample scalar, NOT the nested per_sample[sid].loss.total. The fix raises a Rule 14 COMPLETENESS failure when per_sample[sid].loss.total is absent/non-numeric rather than letting compareScalar early-return."
+  },
+  "reconciliation_check_targeted_first": "Rule 14 (engine-recompute COMPLETENESS): receipt per-sample \"s0\" is missing its loss.total but the engine recomputed loss.total.",
+  "expected_rules_fired": [14],
+  "expected_field_path": "per_sample.s0.loss.total",
+  "non_vacuity": "Reverting the per-sample COMPLETENESS additions makes reconcileReceipt return ok:true on this fixture (RED). compareScalar's non-number early-return is the laundering surface; no other rule visits the dropped nested per-sample loss.total.",
+  "schema_note": "validateReceiptSchema ALSO rejects this fixture via Loss.required=[total] (welcome defense-in-depth). The targeted gate is reconcileReceipt, which must fail closed on its own without schema validation.",
+  "purpose": "R14-PERSAMPLE-OMISSION anti-circularity fixture, per-sample loss dimension. Proves Rule 14's per-sample differential requires per_sample[*].loss.total to be present and numeric rather than skipping a dropped one."
+}

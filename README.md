@@ -15,9 +15,7 @@
 
 A deterministic 26-rule verifier for neural-network training steps. You hand it a receipt naming every factor that contributed to one gradient update; the reconciler re-derives every claim and rejects on disagreement. In the Csmith/CompCert lineage of *"the oracle must not consult the artifact it judges."*
 
-> **Status: mid-v0 (v0.12.0) — soundness-hardening release.** CPU-only. Verifier covers SGD + Adam + AdamW + PyTorch-style SGD momentum (classical + Nesterov + dampening).
-> Live PyTorch helper (`scripts/extract/pytorch.py`) covers the same optimizer matrix. Observer-only — [Rule 14](./docs/reconciliation.md) is the authority.
-> v0.11 was the first npm-published release; v0.12.0 hardens soundness after a full adversarial audit — verifier-owned tolerance ceilings (a receipt can no longer widen its own pass band), marker-gated Rule 14, multi-step self-skip closed, and resource caps. 792 tests, 12 trust invariants. v1.0 still gated on [a real-world fixture + adopter validation](#whats-not-in-this-version-yet). See [`docs/live-helpers.md`](./docs/live-helpers.md) before production use.
+> **v1.0.0 — CPU-only, deterministic.** The verifier covers SGD · Adam · AdamW · SGD-momentum (classical / Nesterov / dampening) · **SGD coupled-L2 weight decay**, across 26 reconciler rules. Live **PyTorch and JAX** helpers extract a real training step into a verifiable receipt — observer-only, [Rule 14](./docs/reconciliation.md) is the authority on every imported sidecar. 940 deterministic tests; verifier-owned tolerance ceilings; anti-circularity ratchet. See [`docs/live-helpers.md`](./docs/live-helpers.md) before production use and the [CHANGELOG](./CHANGELOG.md) for the version history.
 
 ## 30-second quickstart
 
@@ -70,8 +68,8 @@ npx bp import pytorch trace.jsonl | npx bp verify multi -
 
 The helper emits a `framework-trace.v0.7.0` sidecar with a forensic `helper` block (name, version, source_hash, framework version, runtime, extraction timestamp). The block is **not a credential** — Rule 14 (engine-recompute differential) is the authority on every helper-emitted sidecar regardless of what the helper claims. A spoofed/wrong/missing `source_hash` does NOT bypass Rule 14. See [`docs/live-helpers.md`](./docs/live-helpers.md) for the trust-boundary statement, the forbidden list, the 9-fixture adversarial catalog, and the no-pip-distribution flip-signal contract.
 
-**Supported (v0.10.x)**: PyTorch SGD + Adam + AdamW + sgd_momentum (classical/Nesterov/dampening, with the `momentum_buffer` ascent→descent sign-flip per [PyTorch issue #1099](https://github.com/pytorch/pytorch/issues/1099)). CPU-first. Single + multi-step.
-**Rejected at boundary**: AMP/autocast, CUDA/MPS/XLA, SGD coupled-L2 weight decay, AMSGrad/NAdam/RAdam/Lion/LBFGS, multi-hidden-layer topologies. Hand-authored sidecars for those frameworks/optimizers continue to work via the standard `bp import` path.
+**Supported**: PyTorch SGD + Adam + AdamW + sgd_momentum (classical/Nesterov/dampening) + **SGD coupled-L2 weight decay**, with the `momentum_buffer` ascent→descent sign-flip per [PyTorch issue #1099](https://github.com/pytorch/pytorch/issues/1099). CPU-first. Single + multi-step. A parallel **live JAX helper** (`scripts/extract/jax.py`) covers SGD + Adam with a stronger trust boundary — it folds a `jax.make_jaxpr(jax.grad(loss))` digest into the forensic block (the inspectable gradient graph PyTorch eager lacks), and refuses to run without `jax_enable_x64` + CPU. See [`docs/live-helpers.md`](./docs/live-helpers.md).
+**Rejected at boundary**: AMP/autocast, CUDA/MPS/XLA, AMSGrad/NAdam/RAdam/Lion/LBFGS, multi-hidden-layer topologies. Hand-authored sidecars for those frameworks/optimizers continue to work via the standard `bp import` path.
 
 ## What this isn't
 
@@ -107,7 +105,7 @@ Full reference: [`docs/cli.md`](./docs/cli.md).
 | `bp validate-input <file>` | Schema-validate a topology+input config |
 | `bp validate <file>` | Schema-validate a receipt (auto-detects v0.1-v0.7) |
 | `bp import {pytorch,jax,tensorflow} [multi] <sidecar>` | Ingest external framework trace |
-| `bp examples pytorch [--print]` | Print path of (or cat) the bundled PyTorch helper |
+| `bp examples {pytorch,jax} [--print]` | Print path of (or cat) the bundled live PyTorch / JAX helper |
 
 Common flags: `--out <file>`, `--json`, `--verbose`/`-V`, `--color=auto\|never\|always`, file arg `-` = stdin. Exit codes: `0` pass · `1` verification failure · `2` usage/I-O · `3` invalid CLI arg · `4` framework not implemented.
 
@@ -122,13 +120,25 @@ import {
 
 const receipt = runMazurStep(MAZUR_INPUT);
 const validated = validateReceiptSchema(receipt);    // schema gate
-const result = reconcileReceipt(receipt);             // 26-rule gate
+const result = reconcileReceipt(receipt);             // 26-rule internal-consistency gate
 const sha = hashReceipt(receipt);                     // in-toto seam
-const repro = verifyEngineReproduces(receipt);        // bit-equal recompute
+const repro = verifyEngineReproduces(receipt);        // engine-reproduce: re-derives from inputs
 
 const { receipt: imported, differentialPassed } =
   importPytorchSidecar(sidecarBytes);                 // observer-mode + Rule 14
 ```
+
+> **Which gate proves what.** `reconcileReceipt` proves the receipt's math is
+> *internally consistent* (the 26 rules re-derive each claim from the receipt's
+> own factors). For a receipt of **unknown provenance**, pair it with the
+> engine-reproduce gate — `verifyEngineReproduces` (or `bp verify general`),
+> which re-runs the deterministic engine from the receipt's inputs and compares
+> field-by-field. That second gate is what closes the anti-circularity envelope:
+> internal consistency alone cannot catch a foreign receipt that has been
+> relabeled as engine-authored, because no per-receipt rule re-derives the
+> forward pass for an engine-authored receipt. Observer-mode imports
+> (`importPytorchSidecar`) run the engine-reproduce differential (Rule 14)
+> automatically; `bp verify` always runs both gates.
 
 Subpath imports: `./reconcile`, `./engine`, `./general-engine`, `./mazur`, `./topology`, `./activations`, `./emit`, `./validate`, `./parse`, `./parse-input`, `./hash`, `./schema-loader`, `./verify-engine`, `./extract`, `./import-pytorch`, `./import-jax`, `./import-tensorflow`, `./import-observer`, plus the schema family `./schema/...`.
 
@@ -161,14 +171,11 @@ NOT contractual: cross-engine (Bun, Deno, browsers); cross-Node-major (24.x+); a
 
 ## What's not in this version (yet)
 
-backprop-trace v0.12.0 hardens soundness but is **still mid-v0**. The engine, reconciler, canonical-emission contract, external ingestion path, and PyTorch live helper are real and stable. The roadmap below is ordered by usage × verification-feasibility — each line is gated on a closed-form CPU recompute the reconciler can actually own:
+v1.0.0 covers the deterministic-CPU corner end to end: the engine, reconciler, canonical-emission contract, external ingestion path, live PyTorch **and** JAX helpers, SGD-family optimizers including coupled-L2 weight decay, a recognizable hero fixture, and a worked [compliance bundle](./docs/compliance.md). The roadmap below is what is **deliberately not yet covered** — ordered by usage × verification-feasibility, each gated on a closed-form CPU recompute the reconciler can actually own:
 
-- **SGD coupled-L2 weight decay** — the documented Rule 7 third branch (`grad += lambda*theta` before the momentum buffer). Highest-demand gap; closed-form CPU recompute. *v0.13.*
-- **NAdam (+ optionally RAdam)** — cheap Adam variants. Then **LR-schedule verification**, which composes with every optimizer. *v0.14.*
-- **Real-world hero fixture** — Mazur 2-2-2 + softmax+CE + sgd_momentum-Mazur are today's heroes; a tiny conv→ReLU→dense net, byte-reproducible on CPU, is the v1.0 gate. *v1.0.*
-- **Adopter validation** — no external researcher case study, no course adoption, no compliance bundle in the wild yet. *v1.0 gate.*
-- **JAX live helper** — hand-authored JAX/TF sidecars already import via Rule 14; a live helper using `jax.make_jaxpr(grad)` gives a stronger trust boundary than PyTorch eager (CPU + `jax_enable_x64` + pinned XLA). *v1.0.*
+- **NAdam (+ optionally RAdam)** — cheap Adam variants. Then **LR-schedule verification**, which composes with every optimizer. *Next.*
 - **AMSGrad / global-norm gradient clipping / per-group LRs / Lion** — each gated on a receipt/reconciler extension. *Later.*
+- **Conv / multi-hidden-layer topologies** — the engine is single-hidden-layer dense; the hero fixture is a recognizable dense ReLU→softmax classifier. Conv brings fused-kernel FP-ordering that fights bit-determinism (see GPU below). *Likely out of the CPU-deterministic corner.*
 - **Heterogeneous multi-framework traces** — single-framework bundles only; mixed-framework streams not supported. *May stay out of scope.*
 - **Heterogeneous batch sizes across steps** — fixed batch_size per stream. *May stay out of scope.*
 - **Per-sample gradients in batched receipts** — reduced gradients only today; per-sample decomposition is useful for influence audits but not yet exposed. *Later.*
@@ -194,7 +201,7 @@ See [`docs/authoring.md`](./docs/authoring.md) — input vs receipt schemas, can
 - **Reproducibility-first paper authors** (NeurIPS/ICML/CoLLAs; [REFORMS](https://www.science.org/doi/10.1126/sciadv.adk3452)-aware) — re-derivable per-step evidence the reviewer runs in 30 seconds.
 - **ML pedagogy** (Karpathy zero-to-hero, university DL courses, interview prep) — a single named training step with every factor visible and a reconciler that *rejects* deliberately-broken fixtures.
 - **ML framework / compiler engineers** (PyTorch / JAX / MLIR / XLA contributors) — known-good per-op trace for differential testing.
-- **ML compliance / audit engineers** ([EU AI Act Article 10](https://artificialintelligenceact.eu/annex/4/); SLSA-for-ML) — per-step receipt below model-signing, attached to a model card or audit bundle.
+- **ML compliance / audit engineers** ([EU AI Act Annex IV §2(g) validation/testing logs + Article 15 robustness](https://artificialintelligenceact.eu/annex/4/); SLSA-for-ML) — a per-step receipt as a verifiable, dated, signable test-log record below model-signing. See the worked [compliance bundle](./docs/compliance.md) (and the honest scope: receipts attest *math*, not data governance).
 
 ## The law stack
 
