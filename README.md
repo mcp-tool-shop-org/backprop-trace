@@ -122,13 +122,25 @@ import {
 
 const receipt = runMazurStep(MAZUR_INPUT);
 const validated = validateReceiptSchema(receipt);    // schema gate
-const result = reconcileReceipt(receipt);             // 26-rule gate
+const result = reconcileReceipt(receipt);             // 26-rule internal-consistency gate
 const sha = hashReceipt(receipt);                     // in-toto seam
-const repro = verifyEngineReproduces(receipt);        // bit-equal recompute
+const repro = verifyEngineReproduces(receipt);        // engine-reproduce: re-derives from inputs
 
 const { receipt: imported, differentialPassed } =
   importPytorchSidecar(sidecarBytes);                 // observer-mode + Rule 14
 ```
+
+> **Which gate proves what.** `reconcileReceipt` proves the receipt's math is
+> *internally consistent* (the 26 rules re-derive each claim from the receipt's
+> own factors). For a receipt of **unknown provenance**, pair it with the
+> engine-reproduce gate — `verifyEngineReproduces` (or `bp verify general`),
+> which re-runs the deterministic engine from the receipt's inputs and compares
+> field-by-field. That second gate is what closes the anti-circularity envelope:
+> internal consistency alone cannot catch a foreign receipt that has been
+> relabeled as engine-authored, because no per-receipt rule re-derives the
+> forward pass for an engine-authored receipt. Observer-mode imports
+> (`importPytorchSidecar`) run the engine-reproduce differential (Rule 14)
+> automatically; `bp verify` always runs both gates.
 
 Subpath imports: `./reconcile`, `./engine`, `./general-engine`, `./mazur`, `./topology`, `./activations`, `./emit`, `./validate`, `./parse`, `./parse-input`, `./hash`, `./schema-loader`, `./verify-engine`, `./extract`, `./import-pytorch`, `./import-jax`, `./import-tensorflow`, `./import-observer`, plus the schema family `./schema/...`.
 

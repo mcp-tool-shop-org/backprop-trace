@@ -235,6 +235,7 @@
     "updates": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 4096,
       "items": { "$ref": "#/$defs/Update" }
     },
     "parameters_after": { "$ref": "#/$defs/ParameterMap" },
@@ -322,9 +323,9 @@
         "bias_sharing": { "enum": ["per_layer", "per_neuron"] }
       }
     },
-    "UnitNumberMap": { "type": "object", "additionalProperties": { "type": "number" } },
-    "ParameterMap":  { "type": "object", "additionalProperties": { "type": "number" } },
-    "ForwardMap":    { "type": "object", "additionalProperties": { "$ref": "#/$defs/ForwardUnit" } },
+    "UnitNumberMap": { "type": "object", "maxProperties": 4096, "additionalProperties": { "type": "number" } },
+    "ParameterMap":  { "type": "object", "maxProperties": 4096, "additionalProperties": { "type": "number" } },
+    "ForwardMap":    { "type": "object", "maxProperties": 4096, "additionalProperties": { "$ref": "#/$defs/ForwardUnit" } },
     "ForwardUnit": {
       "type": "object", "additionalProperties": false, "required": ["net", "out"],
       "properties": { "net": { "type": "number" }, "out": { "type": "number" } }
@@ -335,8 +336,8 @@
       "required": ["per_output", "total"],
       "x-order": ["per_output", "per_sample", "reduction", "total"],
       "properties": {
-        "per_output": { "type": "object", "additionalProperties": { "type": "number" } },
-        "per_sample": { "type": "object", "additionalProperties": { "type": "number" } },
+        "per_output": { "type": "object", "maxProperties": 4096, "additionalProperties": { "type": "number" } },
+        "per_sample": { "type": "object", "maxProperties": 4096, "additionalProperties": { "type": "number" } },
         "reduction": { "enum": ["mean", "sum", "none"] },
         "total": { "type": "number" }
       }
@@ -351,7 +352,7 @@
     "OutputErrorSignal": {
       "type": "object", "additionalProperties": false, "required": ["factors", "product_order", "signal_value"],
       "properties": {
-        "factors": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/NamedFactor" } },
+        "factors": { "type": "array", "minItems": 1, "maxItems": 4096, "items": { "$ref": "#/$defs/NamedFactor" } },
         "product_order": { "const": "left_to_right" },
         "signal_value": { "type": "number" },
         "dual_form": { "$ref": "#/$defs/DualForm" }
@@ -363,7 +364,7 @@
       "properties": {
         "jacobian_terms": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/JacobianTerm" } },
         "product_order": { "const": "left_to_right" },
-        "summation_order": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "summation_order": { "type": "array", "minItems": 1, "maxItems": 4096, "items": { "type": "string" } },
         "summed_value": { "type": "number" }
       }
     },
@@ -371,7 +372,7 @@
       "type": "object", "additionalProperties": false, "required": ["target_unit", "factors", "term_value"],
       "properties": {
         "target_unit": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
-        "factors": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/NamedFactor" } },
+        "factors": { "type": "array", "minItems": 1, "maxItems": 4096, "items": { "$ref": "#/$defs/NamedFactor" } },
         "term_value": { "type": "number" }
       }
     },
@@ -380,7 +381,7 @@
       "required": ["downstream_contributions", "summation_order", "backpropagated_sum", "activation_derivative", "product_order", "signal_value"],
       "properties": {
         "downstream_contributions": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/DownstreamContribution" } },
-        "summation_order": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "summation_order": { "type": "array", "minItems": 1, "maxItems": 4096, "items": { "type": "string" } },
         "backpropagated_sum": { "type": "number" },
         "activation_derivative": { "type": "number" },
         "product_order": { "const": "left_to_right" },
@@ -433,7 +434,7 @@
           "properties": {
             "name": { "enum": ["sgd", "adam", "adamw", "sgd_momentum"] },
             "learning_rate": { "type": "number", "exclusiveMinimum": 0 },
-            "factors": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/NamedFactor" } },
+            "factors": { "type": "array", "minItems": 1, "maxItems": 4096, "items": { "$ref": "#/$defs/NamedFactor" } },
             "product_order": { "const": "left_to_right" },
             "state_before": { "$ref": "#/$defs/OptimizerState" },
             "state_after": { "$ref": "#/$defs/OptimizerState" }
@@ -503,7 +504,7 @@
       "type": "object", "additionalProperties": false, "required": ["status"],
       "properties": {
         "status": { "enum": ["pending_engine_first_run", "filled"] },
-        "per_output": { "type": "object", "additionalProperties": { "type": "number" } },
+        "per_output": { "type": "object", "maxProperties": 4096, "additionalProperties": { "type": "number" } },
         "total": { "type": "number" }
       }
     }

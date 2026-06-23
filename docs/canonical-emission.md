@@ -54,9 +54,15 @@ rather than concatenating `emitMazurReceipt` outputs manually; the helper exists
 so the trailing-LF contract has a single owner.
 
 ### Unknown keys
-- Emission errors. Schema is closed; the receipt cannot contain undeclared
-  fields. Verification likewise rejects receipts with unknown keys before
-  reaching reconciliation.
+- For the strongly-typed receipt body the schema is closed
+  (`additionalProperties: false` on the structural fields), so verification
+  rejects undeclared fields before reaching reconciliation.
+- **Exception — `metadata`.** The `metadata` block is a free-form object; the
+  schema does **not** close it. Canonical emission is *lossy* for metadata:
+  only the recognized fields (`source`, `url_reference`,
+  `gradient_convention`) are emitted, and unrecognized metadata keys are
+  silently **dropped** at emit — they do not cause an emission error. A
+  second-language reimplementation must mirror this drop, not error.
 
 ## Declared order for dynamic keys
 
@@ -112,14 +118,17 @@ magnitude falls outside `plain_decimal_range`
 (see `fixtures/formatter.policy.golden.json`) cause emission to error
 rather than silently switching to scientific notation.
 
-The range floor (currently `[1e-9, 1e7)`) is sized to admit every value
-that v0.1 receipts can store — including `numeric_policy.tolerance`
-(`1e-9` in v0.1), which sits at the floor itself. Receipt-resident data
+The range floor is the v0.3 shipped floor `[1e-13, 1e7)`
+(`PLAIN_DECIMAL_MIN_EXPONENT = -13` in `src/format.ts`), widened from the
+v0.1/v0.2 floor of `1e-9`. It is sized so the hybrid-tolerance atol default
+(`1e-12` — the `min_magnitude` user-intent floor in
+`fixtures/formatter.policy.golden.json`) is emittable in plain decimal:
+IEEE-754 binary64 represents `1e-12` with its leading non-zero digit at
+position 13, so the exponent threshold is `-13`. Receipt-resident data
 (gradients, weights, signals, losses, inputs) sits well above the floor in
 practice; the floor exists to keep configuration constants emittable, not
-to clip data. If a future tolerance ever needs to be tighter than `1e-9`,
-the floor expands first; the engine never invents scientific-notation
-fallbacks.
+to clip data. If a future tolerance ever needs to be tighter, the floor
+expands first; the engine never invents scientific-notation fallbacks.
 
 Error messages and diagnostics are a separate code path
 (`src/error-format.ts`) and **may** use scientific notation when reporting

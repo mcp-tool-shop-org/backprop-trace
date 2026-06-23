@@ -295,6 +295,15 @@ export function buildObserverReceiptFromSidecar(
   // 1. Hash raw bytes BEFORE parsing.
   const sourceHash = `sha256:${createHash("sha256").update(sidecarBytes, "utf8").digest("hex")}`
 
+  // ING-2 — verifier-owned ingest cap (raw-byte layer). Reject an oversized
+  // sidecar with a diagnosable structured error BEFORE parse / validate /
+  // iterate / emit, so an unbounded body becomes a clear "exceeds ingest cap"
+  // message instead of a multi-second hold or a raw `Invalid string length`.
+  // Hashing first preserves source_hash binding on the (small) accepted path;
+  // the cap rejection short-circuits before any further work. Mirrors the
+  // MAX_BATCH_SAMPLES discipline — the verifier owns the limit.
+  assertSidecarWithinIngestCap(sidecarBytes, callerLabel)
+
   // 2. Parse + validate against framework-trace.v0.1.0.
   let parsed: unknown
   try {
@@ -409,6 +418,15 @@ export function buildObserverReceiptFromSidecar(
       )
     }
   }
+
+  // ING-2 — verifier-owned ingest cap (structural layer). Post-validation
+  // mirror of the raw-byte cap: reject a sidecar whose updates[] / number-maps
+  // carry more than MAX_SIDECAR_COLLECTION_ENTRIES entries, BEFORE the
+  // per-field differential iteration + emit. The schemas' maxItems /
+  // maxProperties already enforce this at validation; this guarantees the check
+  // holds even for a sidecar that validated against a bound-less schema, and
+  // keeps a diagnosable cap message ahead of any downstream throw.
+  assertSidecarCollectionsWithinCap(sidecar, callerLabel)
 
   // 4. Resolve defaults.
   // imports-B-003 (observability note): `differentialTolerance` is passed
@@ -823,6 +841,125 @@ const SINGLE_STEP_SUPPORTED_FORMATS: readonly string[] = [
 
 /** imports-B-001 — the multi-step (JSONL stream) sidecar baseline format. */
 const MULTI_STEP_BASELINE_FORMAT = "framework-trace.v0.2.0"
+
+/**
+ * ING-2 — verifier-owned ingest byte cap for a SINGLE sidecar record.
+ *
+ * The framework-trace schemas now bound every collection
+ * (updates[]/factors[]/summation_order[] maxItems, UnitNumberMap /
+ * ParameterMap / ForwardMap / loss.per_output maxProperties — see
+ * schemas/framework-trace.v0.1.0..v0.7.0). This raw-byte cap is the SECOND
+ * layer of the defense-in-depth: it converts the unbounded ingest path into a
+ * diagnosable rejection BEFORE the importer parses, validates, iterates, and
+ * emits — so even a schema that somehow lacks a bound, or the raw
+ * `Invalid string length` thrown by JSON.stringify at emit when the body is
+ * enormous, becomes a clear "sidecar exceeds verifier ingest cap" message
+ * instead of a multi-second hang or an undiagnosable runtime throw.
+ *
+ * Mirrors the MAX_BATCH_SAMPLES discipline (general-engine.ts): the verifier
+ * owns the limit; the bound is an INCLUSIVE maximum far above any legitimate
+ * single-step sidecar (the engine only ever consumes topology.unit_order /
+ * topology.parameter_order keys — at most 64 units / a few hundred parameters —
+ * so a legitimate sidecar is a few KB to low tens of KB; the largest shipped
+ * golden line is ~14 KB). 8 MiB sits ~600x above that yet ~64x BELOW V8's
+ * ~512 MB max-string-length (where the raw `Invalid string length` lives), so a
+ * 2,000,000-entry updates[] or a 3,000,000-unit forward map — both many MB — is
+ * rejected here long before it can be parsed or emitted. NOT a soundness change:
+ * Rule 14 remains the authority on every accepted receipt; this only bounds the
+ * DoS surface.
+ *
+ * Exported so tests can pin the value — a silent raise re-opens the hang/OOM
+ * surface; a silent lower could reject a legitimate sidecar. Both are
+ * regressions that must surface in CI.
+ */
+export const MAX_SIDECAR_INGEST_BYTES = 8 * 1024 * 1024 // 8 MiB
+
+/**
+ * ING-2 — verifier-owned structural cap on the count of entries in any single
+ * ingested collection (updates[], forward / parameters maps, loss.per_output,
+ * etc.). Kept in lockstep with the schemas' maxItems / maxProperties bound
+ * (4096) so the importer's own check and the schema agree. This is the
+ * post-validation structural mirror of MAX_SIDECAR_INGEST_BYTES: it fires for a
+ * collection that is individually under the byte cap but still pathologically
+ * large, and guarantees the check holds even for a hypothetical sidecar that
+ * validated against a schema version lacking the bound. INCLUSIVE maximum.
+ *
+ * Exported for test pinning (same rationale as MAX_SIDECAR_INGEST_BYTES).
+ */
+export const MAX_SIDECAR_COLLECTION_ENTRIES = 4096
+
+/**
+ * ING-2 — reject a sidecar whose raw bytes exceed MAX_SIDECAR_INGEST_BYTES
+ * BEFORE any parse / validate / iterate / emit. Mirrors the MAX_BATCH_SAMPLES
+ * guard's message shape: name the cap, the observed size, and a remediation
+ * hint. Throws a structured Error (the importer's Tier-1 envelope is a thrown
+ * Error with a diagnosable message — same pattern as every other guard in this
+ * file). Byte length is measured as UTF-8 (Buffer.byteLength), matching the
+ * bytes the operator actually ingested.
+ */
+function assertSidecarWithinIngestCap(
+  sidecarBytes: string,
+  callerLabel: string,
+): void {
+  const byteLength = Buffer.byteLength(sidecarBytes, "utf8")
+  if (byteLength > MAX_SIDECAR_INGEST_BYTES) {
+    throw new Error(
+      `${callerLabel}: sidecar exceeds verifier ingest cap ` +
+        `(${byteLength} bytes > MAX_SIDECAR_INGEST_BYTES=${MAX_SIDECAR_INGEST_BYTES}). ` +
+        `Hint: the importer parses, validates, and re-emits the whole sidecar; an unbounded ` +
+        `sidecar (e.g. a multi-million-entry updates[] or forward map) would be held in memory ` +
+        `and walked at emit (a multi-second hang, or an undiagnosable runtime string-length ` +
+        `failure once it crosses V8's ~512MB string limit) rather than fail cleanly. The cap is an ` +
+        `inclusive maximum far above any legitimate single-step sidecar (the engine consumes at ` +
+        `most 64 units / a few hundred parameters; the largest shipped golden line is ~14KB). If ` +
+        `this is a genuine large trace, it is malformed for single-step ingestion — split it or ` +
+        `correct the producer.`,
+    )
+  }
+}
+
+/**
+ * ING-2 — post-validation structural cap. Asserts that no single ingested
+ * collection (updates[], the forward / parameters / loss number-maps) carries
+ * more than MAX_SIDECAR_COLLECTION_ENTRIES entries. The schemas' maxItems /
+ * maxProperties already enforce this at validation time; this is the
+ * verifier-owned mirror so the check holds even for a sidecar that somehow
+ * validated against a schema lacking the bound, and so a diagnosable cap message
+ * wins over any downstream `Invalid string length`. Runs BEFORE the per-field
+ * differential iteration + emit. Throws the same structured Error shape.
+ */
+function assertSidecarCollectionsWithinCap(
+  sidecar: FrameworkTraceSidecar,
+  callerLabel: string,
+): void {
+  const reject = (what: string, count: number): never => {
+    throw new Error(
+      `${callerLabel}: sidecar exceeds verifier ingest cap — ${what} has ${count} entries ` +
+        `(> MAX_SIDECAR_COLLECTION_ENTRIES=${MAX_SIDECAR_COLLECTION_ENTRIES}). ` +
+        `Hint: the importer iterates and re-emits every entry; an unbounded collection is a DoS ` +
+        `surface. The cap is an inclusive maximum far above any legitimate single-step sidecar ` +
+        `(the engine consumes at most 64 units / a few hundred parameters). This sidecar is ` +
+        `malformed for single-step ingestion — split it or correct the producer.`,
+    )
+  }
+  if (Array.isArray(sidecar.updates) && sidecar.updates.length > MAX_SIDECAR_COLLECTION_ENTRIES) {
+    reject("updates[]", sidecar.updates.length)
+  }
+  const mapEntryCount = (m: unknown): number =>
+    typeof m === "object" && m !== null ? Object.keys(m as object).length : 0
+  const maps: Array<[string, unknown]> = [
+    ["inputs", sidecar.inputs],
+    ["targets", sidecar.targets],
+    ["parameters_before", sidecar.parameters_before],
+    ["parameters_after", sidecar.parameters_after],
+    ["forward", sidecar.forward],
+    ["loss.per_output", sidecar.loss?.per_output],
+  ]
+  for (const [name, m] of maps) {
+    const n = mapEntryCount(m)
+    if (n > MAX_SIDECAR_COLLECTION_ENTRIES) reject(name, n)
+  }
+}
 
 const DEFAULT_NUMERIC_POLICY_FOR_OBSERVER: GeneralInput["numeric_policy"] = {
   number_encoding: "decimal",
@@ -1263,6 +1400,19 @@ export function buildObserverReceiptStreamFromSidecar(
           `Use the single-step subcommand for v0.1.0 sidecars.`,
       )
     }
+    // ING-2 — verifier-owned ingest cap (per-record structural layer). Each
+    // record of the stream is a single step bounded by the same per-step
+    // schema maxItems / maxProperties; assert it here so an unbounded
+    // collection in any one record fails with a diagnosable cap message
+    // (naming the line) before the per-record engine recompute + emit. The
+    // whole-stream byte size is intentionally NOT capped here — a legitimate
+    // multi-step training trace can be a very large JSONL (see cli-B-001 in
+    // src/bin/bp.ts) — the DoS surface is per-record collection size, which
+    // this bounds.
+    assertSidecarCollectionsWithinCap(
+      validation.sidecar as FrameworkTraceSidecar,
+      `${callerLabel}: sidecar line ${i + 1}`,
+    )
     sidecars.push(validation.sidecar as FrameworkTraceSidecarV2)
   }
 

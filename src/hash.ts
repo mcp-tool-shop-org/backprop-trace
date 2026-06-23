@@ -22,7 +22,7 @@
 
 import { createHash } from "node:crypto";
 import type { MazurReceipt } from "./engine.js";
-import { emitMazurReceipt } from "./emit.js";
+import { emitMazurReceipt, EmitError } from "./emit.js";
 
 /**
  * Supported digest algorithms. sha256 is the in-toto / sigstore baseline
@@ -61,9 +61,71 @@ export function hashReceipt(
   input: MazurReceipt | string | Buffer,
   algorithm: HashAlgorithm = "sha256",
 ): string {
-  const bytes =
-    typeof input === "string" || Buffer.isBuffer(input)
-      ? input
-      : emitMazurReceipt(input);
+  let bytes: string | Buffer;
+  if (typeof input === "string" || Buffer.isBuffer(input)) {
+    // EMS-1 defense-in-depth: the raw-bytes overload trusts the caller to
+    // supply canonical-emission-equivalent bytes. A digest is only meaningful
+    // over valid canonical bytes — non-JSON bytes (e.g. a poisoned emit output
+    // that interpolated the bare token "undefined") must NEVER be digested, or
+    // the in-toto subject digest is silently corrupted. Assert parseability
+    // here so the raw-bytes path fails LOUDLY rather than returning a
+    // meaningless digest. The object overload below routes through
+    // emitMazurReceipt, which runs its own parseability self-check (see
+    // assertParseable in src/emit.ts).
+    //
+    // JSONL-aware: this overload is legitimately handed BOTH a single
+    // canonical record AND a multi-record bundle (`{...}\n{...}\n...`, as Rule
+    // 16/17 build via emitGeneralReceipt + join in src/reconcile.ts). A
+    // multi-record bundle is NOT a single JSON document, so we validate each
+    // non-empty newline-delimited line parses as JSON rather than the whole
+    // blob. A poisoned line (bare "undefined" token) still fails per-line, so
+    // the defense holds; a valid bundle passes.
+    assertCanonicalBytes(
+      typeof input === "string" ? input : input.toString("utf-8"),
+    );
+    bytes = input;
+  } else {
+    bytes = emitMazurReceipt(input);
+  }
   return createHash(algorithm).update(bytes).digest("hex");
+}
+
+/**
+ * EMS-1 defense-in-depth — assert that `text` is a valid canonical JSONL
+ * blob: every non-empty newline-delimited line parses as JSON. Throws a typed
+ * EmitError(NON_JSON_OUTPUT) on the first line that fails, so hashReceipt
+ * never digests non-JSON bytes (which would poison the subject digest). An
+ * empty string is rejected too — an empty digest input is never a meaningful
+ * receipt/bundle.
+ */
+function assertCanonicalBytes(text: string): void {
+  // Split on LF; the canonical framing terminates every record with LF, so
+  // the final element after the trailing LF is an empty string we skip.
+  const lines = text.split("\n");
+  let sawRecord = false;
+  for (const line of lines) {
+    if (line.length === 0) continue; // trailing-LF artifact / blank line
+    sawRecord = true;
+    try {
+      JSON.parse(line);
+    } catch (cause) {
+      throw new EmitError(
+        "NON_JSON_OUTPUT",
+        `hashReceipt: refusing to digest non-JSON bytes — a JSONL line does not parse as JSON. ` +
+          `A receipt/bundle digest is only meaningful over canonical-emission bytes; hashing malformed ` +
+          `bytes (e.g. a poisoned emit output that interpolated the bare token "undefined") would silently ` +
+          `poison the in-toto subject digest. Use the MazurReceipt overload (which canonicalizes via ` +
+          `emitMazurReceipt) unless you have already produced canonical bytes. ` +
+          `Underlying parse error: ${cause instanceof Error ? cause.message : String(cause)}.`,
+        { cause },
+      );
+    }
+  }
+  if (!sawRecord) {
+    throw new EmitError(
+      "NON_JSON_OUTPUT",
+      `hashReceipt: refusing to digest empty/blank bytes — an empty digest input is never a meaningful ` +
+        `receipt or bundle. Pass canonical-emission bytes (a single record or a multi-record JSONL bundle).`,
+    );
+  }
 }

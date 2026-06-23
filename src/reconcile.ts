@@ -3646,6 +3646,24 @@ function checkRule14EngineRecomputeDifferential(
   // (or stripping it) while a source_framework / import_provenance marker
   // survives. Engine-authored receipts carry NEITHER marker, so they still
   // no-op here (their ground-truth gate is byte-equality in the CLI verify path).
+  //
+  // ING-1 (KNOWN BOUNDARY — anti-circularity envelope): when an unknown-
+  // provenance receipt arrives with BOTH observer markers stripped (no
+  // attestor.import_provenance AND no source_framework) AND authoring_state
+  // relabeled to an engine value, this gate no-ops and Rule 14 does NOT run.
+  // No per-receipt rule (1-13) re-derives the forward pass from
+  // parameters_before, so a receipt with a tampered forward.<u>.net that is
+  // otherwise internally consistent reconciles ok:true. THIS IS BY DESIGN:
+  // reconcileReceipt is an INTERNAL-CONSISTENCY checker, NOT a standalone trust
+  // gate for receipts of unknown provenance. The anti-circularity envelope for
+  // such receipts is closed by the byte-equality / engine-reproduce backstop in
+  // the CLI verify path (`bp verify general`, which independently re-runs the
+  // engine and compares emitted bytes) — NOT by reconcileReceipt alone. Callers
+  // that ingest receipts from untrusted sources MUST run the engine-reproduce
+  // path, not rely on reconcileReceipt as the sole gate. This residual is pinned
+  // by a regression test in test/reconcile.bad-external.test.ts so any future
+  // weakening (e.g. a per-receipt rule that starts re-deriving forward and would
+  // change this boundary) is visible.
   if (authoringState !== "external_imported" && !hasObserverMarkers(r)) {
     return { mathGateSkipped: false }
   }
@@ -3901,13 +3919,102 @@ function checkRule14EngineRecomputeDifferential(
   }
 
   // forward[*].{net, out}
-  for (const uId of Object.keys(engineReceipt.forward)) {
-    const eUnit = engineReceipt.forward[uId]
+  //
+  // ENG-2 (COMPLETENESS): the pre-fix loop iterated the ENGINE's forward keys
+  // with `if (!eUnit || !rUnit) continue` — so a forward unit ABSENT from the
+  // receipt (drop forward.o1 entirely) was SILENTLY skipped, and a unit that
+  // carried only `out` (drop forward.o1.net) had its missing field early-return
+  // out of compareScalar. Either way a fabricated/omitted forward field escaped
+  // the differential (false PASS). Apply the same key-set-EQUAL discipline used
+  // for updates/parameters_after below (FIX-2): the receipt's forward key set
+  // must EQUAL the engine's recomputed key set, and every ForwardUnit must carry
+  // BOTH net and out. Comparison still happens through compareScalar; the
+  // completeness check raises a Rule 14 failure for any missing/extra unit or
+  // missing scalar so omission cannot launder a clean PASS.
+  const engineForwardKeys = Object.keys(engineReceipt.forward)
+  const engineForwardSet = new Set<string>(engineForwardKeys)
+  const receiptForward = r.forward ?? {}
+  const receiptForwardKeys = Object.keys(receiptForward)
+  const receiptForwardSet = new Set<string>(receiptForwardKeys)
+  for (const uId of engineForwardKeys) {
+    const eUnit = engineReceipt.forward[uId]!
     const rUnit = r.forward?.[uId]
-    if (!eUnit || !rUnit) continue
-    compareScalar(`forward.${uId}.net`, eUnit.net, rUnit.net)
-    compareScalar(`forward.${uId}.out`, eUnit.out, rUnit.out)
+    // COMPLETENESS — unit absent from the receipt: the engine recomputed a
+    // forward unit the receipt never reported. A dropped forward unit escapes
+    // the differential by omission; raise rather than skip.
+    if (!rUnit) {
+      failures.push({
+        rule: 14,
+        field_path: `forward.${uId}`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 14 (engine-recompute COMPLETENESS): the engine recomputed forward unit ${JSON.stringify(uId)} ` +
+          `(net=${eUnit.net}, out=${eUnit.out}) but the receipt's forward map has NO entry for it. A dropped ` +
+          `forward unit is a SELECTIVE-OMISSION laundering attempt — the receipt's forward key set must EQUAL ` +
+          `the engine's recomputed key set so no forward field escapes the differential by omission ` +
+          `(G-018 / Rule-19 key-set-EQUAL discipline, forward dimension).`,
+      })
+      continue
+    }
+    // COMPLETENESS — a present unit must carry BOTH net and out. compareScalar
+    // early-returns on a non-number value (schema's domain), so a unit that
+    // drops just .net (keeping .out) would otherwise skip the net comparison
+    // entirely. Raise on either missing scalar.
+    if (typeof rUnit.net !== "number") {
+      failures.push({
+        rule: 14,
+        field_path: `forward.${uId}.net`,
+        stored: 0,
+        recomputed: eUnit.net,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 14 (engine-recompute COMPLETENESS): receipt forward unit ${JSON.stringify(uId)} is missing its ` +
+          `net value but the engine recomputed net=${eUnit.net}. A forward unit must carry BOTH net and out so ` +
+          `neither escapes the differential by omission.`,
+      })
+    } else {
+      compareScalar(`forward.${uId}.net`, eUnit.net, rUnit.net)
+    }
+    if (typeof rUnit.out !== "number") {
+      failures.push({
+        rule: 14,
+        field_path: `forward.${uId}.out`,
+        stored: 0,
+        recomputed: eUnit.out,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 14 (engine-recompute COMPLETENESS): receipt forward unit ${JSON.stringify(uId)} is missing its ` +
+          `out value but the engine recomputed out=${eUnit.out}. A forward unit must carry BOTH net and out so ` +
+          `neither escapes the differential by omission.`,
+      })
+    } else {
+      compareScalar(`forward.${uId}.out`, eUnit.out, rUnit.out)
+    }
   }
+  // COMPLETENESS — extra forward unit in the receipt not produced by the engine.
+  // Emit in observed insertion order for determinism.
+  for (const uId of receiptForwardKeys) {
+    if (!engineForwardSet.has(uId)) {
+      failures.push({
+        rule: 14,
+        field_path: `forward.${uId}`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 14 (engine-recompute COMPLETENESS): the receipt's forward map declares unit ${JSON.stringify(uId)} ` +
+          `that the engine did NOT recompute. forward's key set must EQUAL the engine's recomputed key set ` +
+          `(no extra/undeclared forward units).`,
+      })
+    }
+  }
+  void receiptForwardSet
 
   // loss.per_output[*] and loss.total
   for (const uId of Object.keys(engineReceipt.loss.per_output)) {
@@ -3918,6 +4025,193 @@ function checkRule14EngineRecomputeDifferential(
     )
   }
   compareScalar("loss.total", engineReceipt.loss.total, r.loss?.total)
+
+  // ENG-1: post_update_forward.units + post_update_loss differential.
+  //
+  // The engine recomputes the FULL training step including the post-update
+  // re-forward (post_update_forward) and post-update loss (post_update_loss).
+  // Pre-fix the differential compared forward/loss/backward/updates/
+  // parameters_after but NEVER the engine's recomputed post_update_* — so an
+  // external_imported receipt could fabricate post_update_loss.total or any
+  // post_update_forward.units[u].{net,out} and still reconcile ok:true (a false
+  // PASS, mirroring the original forward/loss hole).
+  //
+  // Wire-shape note (see emitPostUpdateForwardGeneral in emit.ts): the engine's
+  // RUNTIME post_update_forward nests units under `.units`, but a JSON-parsed
+  // receipt carries each unit as a FLAT sibling key alongside `status`. Read the
+  // engine side from `.units` and the receipt side from the flat top-level keys.
+  //
+  // Gating: only compare when the engine ACTUALLY emits post_update_* AND the
+  // receipt DECLARES them (a receipt that omits the whole block is a schema-
+  // shape concern, not Rule 14's domain — matching the forward/loss
+  // continue-on-absent-section convention). But a receipt that DECLARES
+  // post_update_forward and DROPS a unit must FAIL completeness (mirrors the
+  // FIX-2 key-set-EQUAL discipline for updates/parameters_after), so omission
+  // cannot launder a clean PASS. The same verifier-clamped `diffTol` used by
+  // every comparison above flows through compareScalar — no looser window.
+  const enginePostFwd = engineReceipt.post_update_forward
+  const enginePostLoss = engineReceipt.post_update_loss
+  const receiptPostFwd = (
+    r as { post_update_forward?: Record<string, unknown> }
+  ).post_update_forward
+  const receiptPostLoss = (
+    r as { post_update_loss?: { per_output?: Record<string, number>; total?: number } }
+  ).post_update_loss
+
+  if (enginePostFwd?.units && receiptPostFwd) {
+    // The receipt's post_update_forward units appear in ONE OF TWO shapes:
+    //  - in-memory / imported shape nests them under `.units`
+    //    (importPytorchSidecar + runGeneralStep build
+    //    `{ status, units: { h1: {net,out}, ... } }`);
+    //  - canonical-emitted shape carries them as FLAT sibling keys alongside
+    //    `status` (engine goldens: `{ status, h1: {...}, ... }`).
+    // emitPostUpdateForwardGeneral reads BOTH ("looked in p.units and as flat
+    // key"); mirror that here so neither shape misfires the completeness check.
+    const rpfObj = receiptPostFwd as Record<string, unknown>
+    const nestedUnits = rpfObj["units"]
+    const receiptUnits: Record<string, unknown> =
+      nestedUnits !== null && typeof nestedUnits === "object"
+        ? (nestedUnits as Record<string, unknown>)
+        : rpfObj
+    const engineUnits = enginePostFwd.units
+    const engineUnitKeys = Object.keys(engineUnits)
+    const engineUnitSet = new Set<string>(engineUnitKeys)
+    for (const uId of engineUnitKeys) {
+      const eUnit = engineUnits[uId]!
+      const rUnitRaw = receiptUnits[uId]
+      const rUnit =
+        rUnitRaw !== null && typeof rUnitRaw === "object"
+          ? (rUnitRaw as { net?: number; out?: number })
+          : undefined
+      // COMPLETENESS — unit absent from the declared post_update_forward.
+      if (!rUnit) {
+        failures.push({
+          rule: 14,
+          field_path: `post_update_forward.${uId}`,
+          stored: 0,
+          recomputed: 0,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `Rule 14 (engine-recompute COMPLETENESS): the engine recomputed post_update_forward unit ` +
+            `${JSON.stringify(uId)} (net=${eUnit.net}, out=${eUnit.out}) but the receipt's post_update_forward ` +
+            `has NO entry for it. A dropped post-update unit is a SELECTIVE-OMISSION laundering attempt — the ` +
+            `receipt's post_update_forward key set must EQUAL the engine's recomputed key set so no post-update ` +
+            `forward field escapes the differential by omission (G-018 / Rule-19 key-set-EQUAL discipline).`,
+        })
+        continue
+      }
+      if (typeof rUnit.net !== "number") {
+        failures.push({
+          rule: 14,
+          field_path: `post_update_forward.${uId}.net`,
+          stored: 0,
+          recomputed: eUnit.net,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `Rule 14 (engine-recompute COMPLETENESS): receipt post_update_forward unit ${JSON.stringify(uId)} is ` +
+            `missing its net value but the engine recomputed net=${eUnit.net}. A post-update forward unit must ` +
+            `carry BOTH net and out so neither escapes the differential by omission.`,
+        })
+      } else {
+        compareScalar(`post_update_forward.${uId}.net`, eUnit.net, rUnit.net)
+      }
+      if (typeof rUnit.out !== "number") {
+        failures.push({
+          rule: 14,
+          field_path: `post_update_forward.${uId}.out`,
+          stored: 0,
+          recomputed: eUnit.out,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `Rule 14 (engine-recompute COMPLETENESS): receipt post_update_forward unit ${JSON.stringify(uId)} is ` +
+            `missing its out value but the engine recomputed out=${eUnit.out}. A post-update forward unit must ` +
+            `carry BOTH net and out so neither escapes the differential by omission.`,
+        })
+      } else {
+        compareScalar(`post_update_forward.${uId}.out`, eUnit.out, rUnit.out)
+      }
+    }
+    // COMPLETENESS — extra post-update unit in the receipt not produced by the
+    // engine. Skip the reserved `status` key (it is not a unit). Emit in
+    // observed insertion order for determinism.
+    for (const key of Object.keys(receiptUnits)) {
+      if (key === "status" || key === "units") continue
+      if (!engineUnitSet.has(key)) {
+        failures.push({
+          rule: 14,
+          field_path: `post_update_forward.${key}`,
+          stored: 0,
+          recomputed: 0,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `Rule 14 (engine-recompute COMPLETENESS): the receipt's post_update_forward declares unit ` +
+            `${JSON.stringify(key)} that the engine did NOT recompute. post_update_forward's key set must EQUAL ` +
+            `the engine's recomputed key set (no extra/undeclared post-update forward units).`,
+        })
+      }
+    }
+  }
+
+  if (enginePostLoss && receiptPostLoss) {
+    // post_update_loss.per_output[*]
+    const enginePostPerOutput = enginePostLoss.per_output
+    const enginePostOutputKeys = Object.keys(enginePostPerOutput)
+    const enginePostOutputSet = new Set<string>(enginePostOutputKeys)
+    const receiptPostPerOutput = receiptPostLoss.per_output ?? {}
+    for (const uId of enginePostOutputKeys) {
+      const rVal = receiptPostPerOutput[uId]
+      if (typeof rVal !== "number") {
+        // COMPLETENESS — output declared by the engine's post-update loss but
+        // absent from the receipt's post_update_loss.per_output.
+        failures.push({
+          rule: 14,
+          field_path: `post_update_loss.per_output.${uId}`,
+          stored: 0,
+          recomputed: enginePostPerOutput[uId]!,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `Rule 14 (engine-recompute COMPLETENESS): the engine recomputed post_update_loss.per_output ` +
+            `${JSON.stringify(uId)} (=${enginePostPerOutput[uId]}) but the receipt's post_update_loss.per_output ` +
+            `has NO entry for it. A dropped post-update per-output loss escapes the differential by omission — the ` +
+            `key set must EQUAL the engine's recomputed key set.`,
+        })
+      } else {
+        compareScalar(
+          `post_update_loss.per_output.${uId}`,
+          enginePostPerOutput[uId]!,
+          rVal,
+        )
+      }
+    }
+    // COMPLETENESS — extra per-output key not produced by the engine.
+    for (const uId of Object.keys(receiptPostPerOutput)) {
+      if (!enginePostOutputSet.has(uId)) {
+        failures.push({
+          rule: 14,
+          field_path: `post_update_loss.per_output.${uId}`,
+          stored: 0,
+          recomputed: 0,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `Rule 14 (engine-recompute COMPLETENESS): the receipt's post_update_loss.per_output declares output ` +
+            `${JSON.stringify(uId)} that the engine did NOT recompute. The key set must EQUAL the engine's ` +
+            `recomputed key set (no extra/undeclared post-update per-output losses).`,
+        })
+      }
+    }
+    // post_update_loss.total
+    compareScalar(
+      "post_update_loss.total",
+      enginePostLoss.total,
+      receiptPostLoss.total,
+    )
+  }
 
   // G-S1: per-sample forward + per-sample loss differential (batched receipts).
   //

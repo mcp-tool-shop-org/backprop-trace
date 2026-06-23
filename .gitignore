@@ -30,3 +30,6 @@ site/.astro/
 site/dist/
 site/node_modules/
 mcptoolshop-backprop-trace-*.tgz
+
+# Dogfood swarm coordinator bookkeeping (local only; not shipped)
+swarms/

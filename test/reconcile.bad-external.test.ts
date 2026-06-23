@@ -25,9 +25,16 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(__dirname, "..")
 
-function loadBadFixture(name: string): unknown | null {
+// TST-1 / TST-3 (test vacuity): a fixture loader that returns `null` on a
+// missing file, paired with a caller `if (r === null) return`, is a SILENT
+// vacuous pass — if a golden is renamed/deleted, the CRITICAL-class regression
+// it guards stops running while the suite still reports green. Assert existence
+// LOUDLY instead (mirroring loadRequiredGoldenClone in
+// test/reconcile.nan-poisoning.test.ts): a missing required fixture must FAIL
+// the test, never skip it.
+function loadBadFixture(name: string): unknown {
   const fpath = resolve(repoRoot, `fixtures/bad/${name}`)
-  if (!existsSync(fpath)) return null
+  assert.ok(existsSync(fpath), `required bad-external fixture missing: ${fpath}`)
   return JSON.parse(readFileSync(fpath, "utf-8").trim())
 }
 
@@ -41,7 +48,6 @@ function rulesFired(failures: ReconciliationFailure[]): number[] {
 
 test("external.bad-collapsed-laundered fires Rule 14 (engine-recompute catches mutated signal_value)", () => {
   const r = loadBadFixture("external.bad-collapsed-laundered.jsonl")
-  if (r === null) return
   const result = reconcileReceipt(r)
   assert.strictEqual(result.ok, false, "must fail reconcile")
   if (result.ok) return
@@ -63,7 +69,6 @@ test("external.bad-collapsed-laundered fires Rule 14 (engine-recompute catches m
 
 test("external.bad-engine-reproduce-disagrees fires Rule 14 (drift outside differential_tolerance)", () => {
   const r = loadBadFixture("external.bad-engine-reproduce-disagrees.jsonl")
-  if (r === null) return
   const result = reconcileReceipt(r)
   assert.strictEqual(result.ok, false)
   if (result.ok) return
@@ -88,21 +93,19 @@ test("external.bad-engine-reproduce-disagrees fires Rule 14 (drift outside diffe
 
 const RULE14_ONLY = "fixtures/external/external.rule14-only-bias-divergence.jsonl"
 
-function loadExternalFixture(rel: string): unknown | null {
+// TST-1 / TST-3: same loud-existence discipline as loadBadFixture. The FIX-2
+// selective-omission suite anchors on fixtures/external/pytorch.softmax-ce.
+// golden.jsonl — if that golden is renamed/absent this MUST fail loudly, not
+// vacuously skip the completeness regressions.
+function loadExternalFixture(rel: string): unknown {
   const fpath = resolve(repoRoot, rel)
-  if (!existsSync(fpath)) return null
+  assert.ok(existsSync(fpath), `required external fixture missing: ${fpath}`)
   return JSON.parse(readFileSync(fpath, "utf-8").trim())
 }
 
 test("G-013: rule14-only fixture fires EXACTLY Rule 14 (no per-receipt rule cross-fires)", () => {
+  // loadExternalFixture asserts the fixture exists (loud, not vacuous).
   const r = loadExternalFixture(RULE14_ONLY)
-  if (r === null) {
-    assert.fail(
-      `G-013 isolation fixture missing: ${RULE14_ONLY}. The reconciler agent owns ` +
-        `fixtures/external/ and must ship this fixture this wave.`,
-    )
-    return
-  }
   const result = reconcileReceipt(r)
   assert.strictEqual(
     result.ok,
@@ -123,10 +126,6 @@ test("G-013: rule14-only fixture fires EXACTLY Rule 14 (no per-receipt rule cros
 
 test("G-013 anti-circularity: flipping authoring_state away from 'external_imported' does NOT launder the bad math", () => {
   const r = loadExternalFixture(RULE14_ONLY)
-  if (r === null) {
-    assert.fail(`G-013 isolation fixture missing: ${RULE14_ONLY}`)
-    return
-  }
   // The laundering attempt: a foreign receipt with bad math relabels its
   // authoring_state so the observer math gate (Rule 14) no-ops. Because the
   // receipt is internally consistent, NO per-receipt rule would object — so
@@ -178,10 +177,6 @@ test("G-013 anti-circularity: flipping authoring_state away from 'external_impor
 
 test("G-S2 (a): delete attestor.import_provenance + flip authoring_state to engine_generated — STILL rejected (source_framework is an independent import marker)", () => {
   const r = loadExternalFixture(RULE14_ONLY)
-  if (r === null) {
-    assert.fail(`G-S2 fixture missing: ${RULE14_ONLY}`)
-    return
-  }
   const clone = JSON.parse(JSON.stringify(r)) as {
     fixture_status: { authoring_state?: string }
     source_framework?: unknown
@@ -218,10 +213,6 @@ test("G-S2 (a): delete attestor.import_provenance + flip authoring_state to engi
 
 test("G-S2 (b): delete the WHOLE attestor + flip authoring_state — STILL rejected (source_framework alone is sufficient)", () => {
   const r = loadExternalFixture(RULE14_ONLY)
-  if (r === null) {
-    assert.fail(`G-S2 fixture missing: ${RULE14_ONLY}`)
-    return
-  }
   const clone = JSON.parse(JSON.stringify(r)) as {
     fixture_status: { authoring_state?: string }
     source_framework?: unknown
@@ -276,6 +267,95 @@ test("G-S2 anti-vacuity: an engine-authored golden (no source_framework) does NO
 })
 
 // =============================================================================
+// ING-1 (KNOWN BOUNDARY — anti-circularity envelope, library contract).
+//
+// A foreign receipt with BOTH observer markers stripped (no
+// attestor.import_provenance, no source_framework) AND authoring_state relabeled
+// to an engine value AND a tampered forward.<u>.net passes reconcileReceipt with
+// ok:true. This is BY DESIGN, not a shipped-tool break:
+//
+//   - reconcileReceipt is an INTERNAL-CONSISTENCY checker. With both markers
+//     gone, hasObserverMarkers() is false, so the Rule 0 observer-provenance
+//     guard and Rule 14 (the engine-recompute math gate) both no-op. No
+//     per-receipt rule (1-13) re-derives the forward pass from
+//     parameters_before, so an otherwise-internally-consistent receipt with a
+//     tampered forward.<u>.net is NOT caught by reconcileReceipt ALONE.
+//   - The shipped CLI `bp verify general` DOES catch this via its byte-equality
+//     engine-reproduce backstop (it re-runs the engine and compares emitted
+//     bytes). The anti-circularity envelope for UNKNOWN-PROVENANCE receipts is
+//     closed THERE, not in reconcileReceipt.
+//
+// The panel WARNED against fixing this by running engine-reproduce INSIDE
+// reconcileReceipt (it would regress the self-authored fast path). So instead we
+// PIN the residual: this test documents that reconcileReceipt alone returns
+// ok:true on the both-markers-stripped tamper, so any FUTURE change that
+// silently weakens (or unexpectedly strengthens) this boundary becomes visible
+// here. A clear code comment at the hasObserverMarkers gate in
+// src/reconcile.ts documents the same contract.
+// =============================================================================
+
+test("ING-1 (KNOWN BOUNDARY): both observer markers stripped + authoring_state relabeled + tampered forward passes reconcileReceipt ALONE (internal-consistency-only; engine-reproduce path is the standalone trust gate)", () => {
+  const r = loadExternalFixture(RULE14_ONLY) as {
+    forward: Record<string, { net?: number; out?: number }>
+    fixture_status: { authoring_state?: string }
+    source_framework?: unknown
+    attestor?: unknown
+  }
+  const clone = JSON.parse(JSON.stringify(r)) as typeof r
+  // Tamper a forward-pass value (forward.h1.net) so the receipt's forward math
+  // is fabricated relative to an independent engine recompute.
+  assert.ok(
+    clone.forward.h1 && typeof clone.forward.h1.net === "number",
+    "fixture precondition: forward.h1.net must exist to tamper",
+  )
+  clone.forward.h1.net = clone.forward.h1.net! + 0.5
+  // Relabel authoring_state to an engine value AND strip BOTH observer markers
+  // so hasObserverMarkers() is false and Rule 14 no-ops.
+  clone.fixture_status.authoring_state = "engine_generated"
+  delete clone.attestor
+  delete clone.source_framework
+
+  const result = reconcileReceipt(clone)
+  // DOCUMENTED BOUNDARY: reconcileReceipt ALONE does NOT reject this. It is an
+  // internal-consistency checker, NOT a standalone trust gate for receipts of
+  // unknown provenance — the byte-equality / engine-reproduce path (bp verify
+  // general) is required to close the anti-circularity envelope for such
+  // receipts. If this assertion ever flips, the boundary changed: re-derive
+  // whether reconcileReceipt is now a standalone trust gate (and update the
+  // README's claim + the hasObserverMarkers gate comment accordingly).
+  assert.strictEqual(
+    result.ok,
+    true,
+    "PINNED KNOWN BOUNDARY: with BOTH observer markers stripped and authoring_state relabeled to an " +
+      "engine value, reconcileReceipt is internal-consistency-only and does NOT re-derive the forward " +
+      "pass, so a tampered-but-internally-consistent receipt passes. The standalone trust gate for " +
+      "unknown-provenance receipts is the engine-reproduce path (bp verify general), NOT reconcileReceipt " +
+      `alone. Got: ${
+        result.ok === false
+          ? JSON.stringify(result.failures.map((f) => ({ rule: f.rule, field_path: f.field_path })))
+          : "ok"
+      }`,
+  )
+
+  // CONTRAST (proves the boundary is exactly marker-gated, not a blanket hole):
+  // leaving EITHER marker in place re-arms Rule 14 / Rule 0 and the SAME tamper
+  // is rejected — so reconcileReceipt is sound for receipts that honestly carry
+  // their observer provenance; only the both-markers-stripped + relabeled case
+  // escapes, and only because it has erased every signal that it is foreign.
+  const reArmed = JSON.parse(JSON.stringify(clone)) as typeof r & {
+    source_framework?: unknown
+  }
+  reArmed.source_framework = (r as { source_framework?: unknown }).source_framework
+  const reArmedResult = reconcileReceipt(reArmed)
+  assert.strictEqual(
+    reArmedResult.ok,
+    false,
+    "CONTRAST: restoring source_framework (an honest observer marker) re-arms the math gate and the " +
+      "SAME tampered forward is rejected — the ING-1 escape is strictly the both-markers-stripped case",
+  )
+})
+
+// =============================================================================
 // FIX-2 (CROSS-WAVE SEAM): Rule 14 COMPLETENESS — selective-omission attack.
 //
 // checkRule14EngineRecomputeDifferential verifies AGREEMENT on PRESENT fields
@@ -305,7 +385,6 @@ test("G-S2 anti-vacuity: an engine-authored golden (no source_framework) does NO
 
 test("FIX-2: an observer receipt that OMITS one weight's update + parameters_after is REJECTED (Rule 14 completeness)", () => {
   const r = loadExternalFixture("fixtures/external/pytorch.softmax-ce.golden.jsonl")
-  if (r === null) return
   // Pick a weight the engine DOES update and selectively omit it: drop both its
   // updates[] entry AND its parameters_after value, but LEAVE it in
   // topology.parameter_order + parameters_before (so the receipt still claims the
@@ -357,7 +436,6 @@ test("FIX-2: an observer receipt that OMITS one weight's update + parameters_aft
 
 test("FIX-2: omitting ONLY the parameters_after value (update entry kept) is REJECTED (parameters_after key set must EQUAL parameter_order)", () => {
   const r = loadExternalFixture("fixtures/external/pytorch.softmax-ce.golden.jsonl")
-  if (r === null) return
   // A narrower omission: keep the update entry (so the update key-set check is
   // satisfied) but drop the final-state value. The parameters_after-EQUALS-
   // parameter_order check is the load-bearing assertion here.
@@ -396,7 +474,6 @@ test("FIX-2: omitting ONLY the parameters_after value (update entry kept) is REJ
 
 test("FIX-2: omitting ONLY the update entry (parameters_after value kept) is REJECTED (updates key set must COVER every engine-updated parameter)", () => {
   const r = loadExternalFixture("fixtures/external/pytorch.softmax-ce.golden.jsonl")
-  if (r === null) return
   // ISOLATING case for the update-completeness block: drop ONLY the update entry
   // for a weight the engine updates, but KEEP its parameters_after value. The
   // parameters_after-EQUALS-parameter_order check is satisfied (no key missing),
@@ -446,7 +523,6 @@ test("FIX-2: omitting ONLY the update entry (parameters_after value kept) is REJ
 // ok:true — the completeness check must not condemn a well-formed receipt.
 test("FIX-2 anti-vacuity: the complete pytorch observer golden still reconciles ok:true (completeness check does not mis-fire)", () => {
   const r = loadExternalFixture("fixtures/external/pytorch.softmax-ce.golden.jsonl")
-  if (r === null) return
   const result = reconcileReceipt(r)
   assert.strictEqual(
     result.ok,
@@ -467,7 +543,6 @@ test("FIX-2 anti-vacuity: the complete pytorch observer golden still reconciles 
 
 test("external.bad-skip-without-basis fires Rule 15 ALONE (skip declared without attestor.skip_basis)", () => {
   const r = loadBadFixture("external.bad-skip-without-basis.jsonl")
-  if (r === null) return
   const result = reconcileReceipt(r)
   assert.strictEqual(result.ok, false)
   if (result.ok) return
@@ -491,7 +566,6 @@ test("external.bad-skip-without-basis fires Rule 15 ALONE (skip declared without
 
 test("external.bad-attested-mutated-after fires Rule 16 (digest no longer matches)", () => {
   const r = loadBadFixture("external.bad-attested-mutated-after.jsonl")
-  if (r === null) return
   const result = reconcileReceipt(r)
   assert.strictEqual(result.ok, false)
   if (result.ok) return
@@ -511,7 +585,6 @@ test("external.bad-attested-mutated-after fires Rule 16 (digest no longer matche
 
 test("external.bad-shape-not-math fires Rule 12 (cross_entropy_softmax branch) on ingest path", () => {
   const r = loadBadFixture("external.bad-shape-not-math.jsonl")
-  if (r === null) return
   const result = reconcileReceipt(r)
   assert.strictEqual(result.ok, false)
   if (result.ok) return
@@ -521,7 +594,6 @@ test("external.bad-shape-not-math fires Rule 12 (cross_entropy_softmax branch) o
 
 test("external.bad-framework-spoof fires Rule 0.8 (probability bounds — identity does not mute math)", () => {
   const r = loadBadFixture("external.bad-framework-spoof.jsonl")
-  if (r === null) return
   const result = reconcileReceipt(r)
   assert.strictEqual(result.ok, false)
   if (result.ok) return
@@ -534,7 +606,6 @@ test("external.bad-partial-tamper-internally-consistent fires Rule 7 on ingest p
   const r = loadBadFixture(
     "external.bad-partial-tamper-internally-consistent.jsonl",
   )
-  if (r === null) return
   const result = reconcileReceipt(r)
   assert.strictEqual(result.ok, false)
   if (result.ok) return
@@ -551,7 +622,6 @@ test("external.bad-partial-tamper-internally-consistent fires Rule 7 on ingest p
 
 test("external.bad-trusted-source-bad-math fires Rule 0.8 (trusted source URL cannot mute math gate)", () => {
   const r = loadBadFixture("external.bad-trusted-source-bad-math.jsonl")
-  if (r === null) return
   const result = reconcileReceipt(r)
   assert.strictEqual(result.ok, false)
   if (result.ok) return

@@ -281,6 +281,133 @@ function stripFlags(args: string[]): string[] {
 const argv = stripFlags(rawArgv);
 
 // =============================================================================
+// global unknown-flag rejection (CLI-1)
+// =============================================================================
+
+// The complete set of value-bearing flags: each consumes its next token as a
+// value (the `--flag value` form) OR carries it inline (the `--flag=value`
+// form). Mirrors the consumption logic in stripFlags / valueFlag exactly so a
+// flag's VALUE is never mistaken for an unknown flag. Note: `-` and `--` are
+// accepted as values (isFlagShaped excludes them) so a consumed `-` is never
+// flagged.
+const VALUE_BEARING_FLAGS = ["--out", "--topology", "--color"] as const;
+
+// Meta flags handled POSITIONALLY by the dispatcher (not in FLAG_TOKENS, so
+// stripFlags leaves them in argv on purpose — `bp --help`, `bp validate --help`,
+// `bp --version` all dispatch on argv position). They are RECOGNIZED for the
+// unknown-flag check so they are not wrongly rejected, but are NOT stripped.
+const META_FLAG_TOKENS = new Set(["--help", "-h", "--version", "-v"]);
+
+// Subcommand-LOCAL flags: recognized globally for the unknown-flag check (so
+// `bp examples pytorch --print` is not wrongly rejected by rejectUnknownFlags)
+// but, like META_FLAG_TOKENS, NOT in FLAG_TOKENS — stripFlags leaves them in
+// argv so the owning subcommand handler still reads them and validates context
+// (`bp examples pytorch` rejects `--print` misuse itself). These are not
+// verdict-changing, so global recognition does not reintroduce the
+// silent-gate-downgrade risk CLI-1 closed for --strict / --warn-as-fail.
+const SUBCOMMAND_LOCAL_FLAGS = new Set(["--print"]);
+
+// Recognized flags for suggestion + membership. Includes every FLAG_TOKENS
+// entry plus the value-bearing flags and the positional meta flags. Used both
+// to decide whether a token is known and (via Damerau-Levenshtein) to suggest
+// the intended flag for a typo.
+const RECOGNIZED_FLAGS: string[] = [
+  ...FLAG_TOKENS,
+  ...VALUE_BEARING_FLAGS,
+  ...META_FLAG_TOKENS,
+  ...SUBCOMMAND_LOCAL_FLAGS,
+];
+
+/**
+ * CLI-1: suggest the intended flag for an unrecognized flag-shaped token,
+ * reusing the same Damerau-Levenshtein distance the subcommand suggester uses
+ * (`--strcit` -> `--strict`, `--warn-as-fials` -> `--warn-as-fail`). Compares
+ * against the canonical long-flag names (the value-bearing flags are matched on
+ * their bare `--flag` form, so `--colr=always` still suggests `--color`).
+ * Returns null when nothing is within a length-scaled threshold so we never
+ * collapse a wholly-unrelated token onto a misleading suggestion.
+ */
+function suggestFlag(unknown: string): string | null {
+  // Strip an inline `=value` so `--colr=always` is matched as `--colr`.
+  const eqIdx = unknown.indexOf("=");
+  const head = eqIdx === -1 ? unknown : unknown.slice(0, eqIdx);
+  let best: { flag: string; dist: number } | null = null;
+  for (const flag of RECOGNIZED_FLAGS) {
+    const dist = damerauLevenshtein(head, flag);
+    const threshold = Math.max(2, Math.ceil(flag.length / 3));
+    if (dist > threshold) continue;
+    if (best === null || dist < best.dist || (dist === best.dist && flag.length < best.flag.length)) {
+      best = { flag, dist };
+    }
+  }
+  return best ? best.flag : null;
+}
+
+/**
+ * CLI-1: a flag-shaped token is RECOGNIZED if it is an exact FLAG_TOKENS entry,
+ * a value-bearing flag in either `--flag` or `--flag=value` form, or one of the
+ * bare `-` / `--` sentinels (which are legitimate value tokens, not flags).
+ */
+function isRecognizedFlagToken(token: string): boolean {
+  if (token === "-" || token === "--") return true;
+  if (FLAG_TOKENS.has(token)) return true;
+  if (META_FLAG_TOKENS.has(token)) return true;
+  if (SUBCOMMAND_LOCAL_FLAGS.has(token)) return true;
+  for (const flag of VALUE_BEARING_FLAGS) {
+    if (token === flag || token.startsWith(`${flag}=`)) return true;
+  }
+  return false;
+}
+
+/**
+ * CLI-1: global unknown-flag rejection. After stripFlags has removed every
+ * recognized flag (and consumed each value-bearing flag's value), any token
+ * that still looks like a flag — `/^--/` for long flags or `/^-[^-]/` for
+ * single-dash flags — and is NOT recognized was being silently dropped, so the
+ * CLI exited 0 on an unknown flag. That violates the documented exit-3 contract
+ * AND silently downgrades a CI gate when a verdict-changing flag is mistyped
+ * (`--warn-as-fail` -> `--warn-as-fials`, `--strict` -> `--strcit`). Walk
+ * rawArgv, skip every recognized flag and every consumed value, and exit 3 with
+ * a structured INVALID_FLAG envelope naming the first offending token (with a
+ * cheap fuzzy suggestion when one is in range). The bare `-` (stdin) and `--`
+ * (separator) sentinels stay exempt.
+ */
+function rejectUnknownFlags(args: string[]): void {
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i] ?? "";
+    // Sentinels and recognized flags are fine; recognized value-bearing flags
+    // also consume their following value so it is not re-examined as a flag.
+    if (isRecognizedFlagToken(token)) {
+      // For the `--flag value` form (not `--flag=value`), skip the consumed
+      // value token if it is a real value (present, not itself flag-shaped) —
+      // mirrors stripFlags / valueFlag so a value like `-` or a filename is
+      // never flag-rejected.
+      const isBareValueBearing = (VALUE_BEARING_FLAGS as readonly string[]).includes(token);
+      if (isBareValueBearing && !isFlagShaped(args[i + 1]) && args[i + 1] !== undefined) {
+        i += 1;
+      }
+      continue;
+    }
+    // Flag-shaped? `--xxx` (long) or `-x` (single-dash, not `--`/`-`). The
+    // isFlagShaped helper already excludes the bare `-` / `--` sentinels.
+    if (isFlagShaped(token)) {
+      const suggestion = suggestFlag(token);
+      exitWithUsageError(
+        `unrecognized flag ${JSON.stringify(token)}.` +
+          (suggestion ? ` Did you mean ${JSON.stringify(suggestion)}?` : "") +
+          ` Run 'bp --help' for the recognized options.`,
+        "INVALID_FLAG",
+        3,
+        suggestion ? { hint: `did you mean ${suggestion}?` } : undefined,
+      );
+    }
+    // Non-flag token (a subcommand or file argument) — not our concern here.
+  }
+}
+
+rejectUnknownFlags(rawArgv);
+
+// =============================================================================
 // color helpers (FT-C-004)
 // =============================================================================
 
@@ -1764,6 +1891,44 @@ const CLAIM_PATHS: Record<string, string> = {
   post_update_total_error: "post_update_loss.total",
 };
 
+/**
+ * TST-4: convert an error thrown by the engine-reproduce recompute into a
+ * user-readable, diagnosable check detail — never a raw V8 TypeError / node
+ * internals stack. Mirrors reconcileReceipt's core-B-002 structured-failure
+ * conversion: a corrupted or structurally-malformed receipt (e.g. a
+ * post_update_forward / forward block that is a lifecycle placeholder rather
+ * than per-unit {net,out} data) makes the canonical emitter dereference an
+ * undefined unit and throw "Cannot read properties of undefined (reading
+ * 'net')". We name the likely cause so the operator can act, and keep the raw
+ * message only as a parenthetical (with its `Cannot read properties` / node:
+ * internal markers stripped) so no raw-stack text reaches the structured detail.
+ */
+function diagnoseEngineReproduceFailure(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  // A V8 property-access TypeError on an undefined unit is the canonical
+  // corrupted-receipt signature (missing forward / post_update_forward unit
+  // data the engine recompute + canonical emit dereference). Name the field
+  // class instead of echoing the raw "Cannot read properties of undefined"
+  // text. The `(reading 'X')` tail, when present, identifies the missing field.
+  const readingMatch = /reading '([^']+)'/.exec(raw);
+  if (/Cannot read properties|Cannot read property/.test(raw)) {
+    const field = readingMatch ? readingMatch[1] : undefined;
+    return (
+      `engine recompute aborted: the receipt is structurally malformed — the engine ` +
+      `re-run / canonical emit dereferenced a missing field` +
+      (field ? ` ('${field}')` : "") +
+      `, typically an absent forward / post_update_forward unit (a lifecycle ` +
+      `placeholder where per-unit {net, out} data was expected). Run ` +
+      `'bp validate <file>' against schemas/receipt.v0.1.0.json to locate the ` +
+      `offending field precisely.`
+    );
+  }
+  // Any other throw: surface the message, but defensively strip node-internal
+  // path markers so a stack frame can never leak into the structured detail.
+  const sanitized = raw.replace(/node:internal\S*/g, "(node internal)");
+  return `engine recompute aborted: ${sanitized}`;
+}
+
 function runVerifyMazur(opts: {
   receiptPath: string;
   warnAsFail: boolean;
@@ -1842,10 +2007,18 @@ function runVerifyMazur(opts: {
       });
     }
   } catch (err) {
+    // TST-4: a corrupted receipt can make the engine recompute throw a raw V8
+    // TypeError (e.g. emitMazurReceipt dereferencing receipt.post_update_forward
+    // .<unit>.net when the block is a lifecycle placeholder, not unit data). The
+    // raw "Cannot read properties of undefined (reading 'net')" must NOT leak
+    // into the structured check detail (no-raw-stacks discipline). Convert it to
+    // a diagnosable detail — mirroring reconcileReceipt's core-B-002 structured-
+    // failure conversion — so the operator sees WHY the recompute aborted. The
+    // verdict is still 'fail' (the receipt is structurally broken).
     checks.push({
       name: "engine-reproduce",
       status: "fail",
-      message: err instanceof Error ? err.message : String(err),
+      message: diagnoseEngineReproduceFailure(err),
     });
   }
 
