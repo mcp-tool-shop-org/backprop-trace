@@ -160,7 +160,7 @@ except ImportError:  # pragma: no cover
     jnp = None  # type: ignore
 
 
-HELPER_VERSION = "0.12.0"
+HELPER_VERSION = "1.0.0"
 HELPER_NAME = "backprop-trace-jax-helper"
 SCHEMA_FORMAT = "framework-trace.v0.7.0"
 DEFAULT_TOLERANCE_ATOL = 1e-6

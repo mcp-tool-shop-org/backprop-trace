@@ -60,7 +60,7 @@ import pytorch as H  # the live helper  # noqa: E402
 # build / wall clock / on-disk helper hash.
 FIXTURE_HELPER_BLOCK = {
     "name": "backprop-trace-pytorch-helper",
-    "version": "0.12.0",
+    "version": "1.0.0",
     "distribution": "repo-script",
     "source_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     "framework": {"name": "pytorch", "version": "2.5.0"},
@@ -103,7 +103,7 @@ def _pin_forensics(sidecar: dict) -> dict:
         "name": "pytorch",
         "version": PINNED_SOURCE_VERSION,
         "information_uri": "https://pytorch.org",
-        "extractor": {"name": "backprop-trace-pytorch-helper", "version": "0.12.0"},
+        "extractor": {"name": "backprop-trace-pytorch-helper", "version": "1.0.0"},
     }
     if "numeric_policy" not in sidecar:
         sidecar["numeric_policy"] = json.loads(json.dumps(DEFAULT_OBSERVER_NUMERIC_POLICY))

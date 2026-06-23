@@ -14,6 +14,48 @@ introduces a SEPARATE input-config schema (`topology-input.v0.4.0.json`) that
 validates engine INPUTS — distinct from the receipt schemas that validate
 engine OUTPUTS.
 
+## [1.0.0] - 2026-06-23
+
+**v1.0.0 — the sober promotion.** A comprehensive dogfood swarm took
+backprop-trace from honest mid-v0 to a v1.0.0 that meets the product's own gate
+criteria. Tests 792 → 940; CPU-only; 26 reconciler rules.
+
+### Added
+- **SGD coupled-L2 weight decay** (the documented Rule 7 third branch) for plain
+  SGD and SGD-momentum (classical / Nesterov / dampening). Coupled, not
+  decoupled — the decay folds into the gradient and enters the momentum buffer,
+  the deliberate opposite of AdamW. New additive schemas `receipt.v0.8.0` +
+  `framework-trace.v0.8.0`. Math cross-family-verified and validated against real
+  PyTorch.
+- **Real-world hero fixture** — `fixtures/hero-classifier.golden.jsonl`, a
+  recognizable 9-pixel → 16-ReLU → 4-class softmax glyph classifier (single +
+  multi-step), byte-reproducible on CPU.
+- **Live JAX helper** (`scripts/extract/jax.py`) — extracts a real JAX step into
+  a verifiable sidecar with a stronger trust boundary than PyTorch eager (a
+  `jax.make_jaxpr(jax.grad(loss))` digest); CPU + `jax_enable_x64` enforced; a
+  dedicated CI `jax-e2e` job validates it against real JAX.
+- **Compliance audit bundle** ([`docs/compliance.md`](./docs/compliance.md)) — a
+  worked "substantive internal use case" mapping a receipt to EU AI Act Annex IV
+  §2(g)/§2(b) + Article 15 (honestly *not* Article 10) and composing below
+  SLSA-for-ML / Sigstore.
+- **Rule-coverage observability** — `bp verify --json`/`--verbose` now report
+  which of the 26 rules a PASS actually exercised (`rules_evaluated` /
+  `gated_off`): an auditable PASS.
+
+### Fixed (soundness)
+- **Rule 0.9 (forward-map completeness)** — closes a false-PASS where a
+  softmax receipt could reconcile `ok:true` while its probabilities did not sum
+  to 1.0, by dropping a forward output unit (Rules 0.8/11/12 silently skipped it).
+- **Rule 14 completeness** — the engine-recompute differential now checks
+  `post_update_forward`/`post_update_loss` and the batched per-sample maps with
+  key-set equality, closing selective-omission laundering.
+- **Emit/hash integrity** — `emit` can no longer inject a bare `undefined` into
+  canonical bytes; `hashReceipt` refuses to digest non-JSON and now accepts
+  general (non-Mazur) receipts; bounded observer-mode sidecar ingest.
+- **CLI** — unknown flags exit 3 (a mistyped `--warn-as-fail`/`--strict` no
+  longer silently downgrades a CI gate); `--help` consistent across all verbs;
+  degenerate (size-0) topologies rejected.
+
 ## [0.12.0] - 2026-06-02
 
 **Soundness-hardening release.** Following a comprehensive adversarial audit,

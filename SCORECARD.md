@@ -1,25 +1,25 @@
 # Scorecard — backprop-trace
 
 **Repo:** mcp-tool-shop-org/backprop-trace
-**Release:** v0.12.0 (soundness-hardening)
-**Date:** 2026-06-02
+**Release:** v1.0.0
+**Date:** 2026-06-23
 **Type tags:** `[all]` `[npm]` `[cli]`
-**Gate result:** hard gates A–D ✅ CLOSED within the explicit v0.x scope — **NOT a v1.0.0 promotion** (two product-completeness gaps remain)
+**Gate result:** hard gates A–D ✅ CLOSED **and** the two v1.0.0 product-completeness gaps now closed (real-world hero fixture + adopter-validation compliance bundle) — **v1.0.0 promotion earned.** 940 deterministic tests.
 
 > The live, item-by-item gate artifact is **[`SHIP_GATE.md`](./SHIP_GATE.md)**.
 > This scorecard is the at-a-glance roll-up; `SHIP_GATE.md` is authoritative
 > when the two disagree.
 
-## v0.12.0 in one line
+## v1.0.0 in one line
 
-A soundness-hardening release after a comprehensive dogfood-swarm audit: it
-closes 5 CRITICAL false-PASS holes (a verifier accepting receipts it must
-reject — the worst defect class), adds verifier-owned tolerance ceilings and
-resource caps, and grows the suite 502 → 792 deterministic tests with 12
-trust invariants now holding non-vacuously. CPU-only; 26 reconciler rules;
-SGD / Adam / AdamW / SGD-momentum (classical + Nesterov + dampening) +
-observer-mode PyTorch/JAX/TF import (Rule 14 is the authority) + a live
-PyTorch helper.
+The sober v1.0.0 promotion after a comprehensive dogfood swarm: it hardens
+soundness further (the Rule 0.9 forward-completeness false-PASS, per-sample
+Rule 14 completeness, emit/hash integrity), adds an auditable rule-coverage
+layer, and ships the four v1.0 product-completeness items — SGD coupled-L2
+weight decay, a recognizable hero fixture, a real-JAX live helper, and a worked
+compliance bundle. CPU-only; 26 reconciler rules; SGD / Adam / AdamW /
+SGD-momentum (+ coupled-L2 weight decay); live PyTorch **and** JAX helpers
+(Rule 14 is the authority on every import); 940 deterministic tests.
 
 ## Hard-gate roll-up (from SHIP_GATE.md)
 
@@ -28,26 +28,24 @@ PyTorch helper.
 | A. Security | ✅ CLOSED | SECURITY.md content-rich; explicit README threat model; zero telemetry / zero secrets; v0.12.0 adds tolerance-gaming + provenance-laundering as named in-scope classes. |
 | B. Error handling | ✅ CLOSED | Tier-1 structured error envelope (`code`/`message`/`hint`); documented 4-bucket exit codes; no raw stacks. |
 | C. Operator docs | ✅ CLOSED | README + docs current to the 26-rule v0.12.0 surface; CHANGELOG + LICENSE present; `--help` accurate. Silent/debug logging flags `SKIP` (deferred to v1.0.x; `--verbose` covers the diagnostic need). |
-| D. Shipping hygiene | ✅ CLOSED | `verify` script; pinned `engines.node` + `.nvmrc`; committed lockfile; CI dep scanning; pack/install smoke gate. Version-matches-tag clears at the `v0.12.0` tag. |
+| D. Shipping hygiene | ✅ CLOSED | `verify` script; pinned `engines.node` + `.nvmrc`; committed lockfile; CI dep scanning; pack/install smoke gate. Version-matches-tag clears at the `v1.0.0` tag. |
 | E. Identity (soft) | ✅ (no block) | Logo, 8-language translations, landing page + Starlight handbook, GitHub metadata all present. |
 
-## What still blocks v1.0.0 (product-completeness, not artifact hygiene)
+## What v1.0.0 closed (the product-completeness gaps)
 
-These are NOT shipcheck items — they are about whether the product is what a
-v1.0.0 promise would imply. Most of the original gaps have shipped (multi-step
-observer-mode, Adam/AdamW + SGD momentum, batching, the PyTorch live helper).
-Two remain:
+The two gaps that kept backprop-trace honestly mid-v0 are now closed:
 
-1. **Real-world hero fixture** — a tiny conv→ReLU→dense net, byte-reproducible
-   on CPU, so cold reviewers see recognizable ML (gated to v1.0).
-2. **Adopter validation** — at least one external (or substantive internal)
-   use case: a researcher case study, a course adoption, or a compliance
-   audit bundle (gated to v1.0).
+1. **Real-world hero fixture** ✅ — `fixtures/hero-classifier.golden.jsonl`, a
+   recognizable 9-pixel → 16-ReLU → 4-class softmax glyph classifier,
+   byte-reproducible on CPU. (Conv stays out of the deterministic-CPU corner.)
+2. **Adopter validation** ✅ — [`docs/compliance.md`](./docs/compliance.md), a
+   worked compliance-audit-bundle (the gate's accepted substantive-internal use
+   case), mapped honestly to EU AI Act Annex IV §2(g) + Article 15.
 
 See [`SHIP_GATE.md`](./SHIP_GATE.md#product-completeness-gaps-blocking-v100)
-for the full table with per-gap rationale, and the README's
+for the per-gap detail, and the README's
 [What's not in this version (yet)](./README.md#whats-not-in-this-version-yet)
-section for the cold-user-facing version.
+roadmap for what remains deliberately out of scope.
 
 ## Study-verified roadmap (post-v0.12.0)
 

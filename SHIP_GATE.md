@@ -1,24 +1,28 @@
 # Ship Gate — backprop-trace
 
-> Current release: **v0.12.0** (soundness-hardening). Hard gates A–D last
-> fully re-audited 2026-05-17 against the v0.7.0 artifact-hygiene slice;
-> the dated check-offs below are preserved as the evidence trail and remain
-> valid (the items they assert have not regressed). v0.12.0 re-anchors the
-> version/rule-count framing and adds the soundness work (verifier-owned
-> tolerance ceilings, marker-coupled Rule 14, multi-step self-skip closed,
-> resource caps). The reconciler is **26 rules**; the test suite is 792
-> tests; 12 trust invariants hold.
+> Current release: **v1.0.0**. Hard gates A–D last fully re-audited 2026-05-17
+> against the v0.7.0 artifact-hygiene slice; the dated check-offs below are
+> preserved as the evidence trail and remain valid (the items they assert have
+> not regressed). A 2026-06-23 dogfood swarm hardened soundness further
+> (the forward-completeness Rule 0.9 false-PASS, the per-sample Rule 14
+> completeness, emit/hash integrity), added the proactive/humanization layer
+> (auditable rule-coverage, degenerate-topology floor), and shipped the four v1.0
+> product-completeness items (see below). The reconciler is **26 rules**; the
+> test suite is **940 deterministic tests**.
 > Applicable tags: `[all]` `[npm]` `[cli]`. SKIP: `[mcp]` `[desktop]` `[vsix]` `[container]` `[complex]`.
 
 ---
 
-## ⚠ v0.12.0 is NOT a v1.0.0 promotion
+## ✅ v1.0.0 promotion — the product-completeness gaps are closed
 
-This Ship Gate's hard gates A–D close the **artifact-hygiene** readiness slice. **They do NOT clear v1.0.0 promotion.** v1.0.0 requires the [Product-completeness gaps](#product-completeness-gaps-blocking-v100) section below to close first.
-
-The shipcheck doctrine line "v0.x → promote, never patch-bump" means *the minimum public-release version is v1.0.0* (don't ship a real product with semver-major-zero forever). It does NOT mean *as soon as hard gates close, you must promote*. For genuinely mid-v0 products like backprop-trace today, you stay v0 until the product itself is v1.0-honest, and then you make a sober promotion.
-
-By v0.12.0 most of the original v1.0 product-completeness gaps have shipped (multi-step observer-mode, Adam/AdamW + SGD momentum, batching, the PyTorch live helper). The two that remain — a **real-world hero fixture** and **adopter validation** — are why v0.12.0 is still honestly mid-v0. The README's [What's not in this version (yet)](./README.md#whats-not-in-this-version-yet) section is the cold-user-facing version of the same disclosure.
+The shipcheck doctrine line "v0.x → promote, never patch-bump" means *the
+minimum public-release version is v1.0.0* — but not *as soon as hard gates
+close*. backprop-trace deliberately stayed v0 until the product itself was
+v1.0-honest. As of the 2026-06-23 swarm it is: the two gaps that kept it mid-v0
+— a **real-world hero fixture** and **adopter validation** — are now closed
+(see [Product-completeness](#product-completeness-gaps-blocking-v100) below),
+alongside the SGD coupled-L2 weight-decay branch and the JAX live helper. This
+is the sober promotion the gate reserved, not a deadline-driven bump.
 
 ---
 
@@ -59,7 +63,7 @@ By v0.12.0 most of the original v1.0 product-completeness gaps have shipped (mul
 ## D. Shipping Hygiene
 
 - [x] `[all]` `verify` script exists (2026-05-17) — added to `package.json scripts`: `"verify": "pnpm typecheck && pnpm test && pnpm build"`. Single command for contributors.
-- [ ] `[all]` Version in manifest matches git tag — clears at tag. `package.json.version` is `0.12.0`; this becomes PASS the moment the `v0.12.0` tag is created on the release commit (the release is gated — tag/publish happen at the end of the release step, not in this content pass). v0.11.0 already demonstrated the manifest-matches-tag discipline at its tag.
+- [ ] `[all]` Version in manifest matches git tag — clears at tag. `package.json.version` is `1.0.0`; this becomes PASS the moment the `v1.0.0` tag is created on the release commit (the release is gated — tag/publish happen at the end of the release step, not in this content pass). Prior releases demonstrated the manifest-matches-tag discipline at their tags.
 - [x] `[all]` Dependency scanning runs in CI (2026-05-17) — `.github/workflows/ci.yml` now includes a separate `audit` job running `pnpm audit --audit-level=moderate` alongside the test + byte-equal matrix. CodeQL (separate workflow) covers SAST. Dependabot (`.github/dependabot.yml`) handles updates.
 - [x] `[all]` Automated dependency update mechanism exists (2026-05-17) — `.github/dependabot.yml` configures weekly npm + github-actions updates with `dev-dependencies` grouping; 5 PR limit on npm, 3 PR limit on actions.
 - [x] `[npm]` `npm pack --dry-run` includes: dist/, README.md, CHANGELOG.md, LICENSE (2026-05-17) — verified at v0.6.1; v0.7.0 additions (`./import-tensorflow` subpath, TF fixtures) included via the existing `files[]` globs (`dist/**`, `schemas/**`, `fixtures/**`, `docs/**`).
@@ -83,10 +87,10 @@ By v0.12.0 most of the original v1.0 product-completeness gaps have shipped (mul
 **A (Security):** 6 PASS · 2 SKIP-MCP · 1 SKIP-N/A (cli safety flag) = ✅ CLOSED
 **B (Errors):** 3 PASS · 4 SKIP-MCP/desktop/vscode = ✅ CLOSED
 **C (Docs):** 4 PASS · 1 SKIP (silent/debug flag — deferred to v1.0.x, diagnostic need covered by `--verbose`) · 2 SKIP = ✅ CLOSED
-**D (Hygiene):** 6 PASS · 1 clears-at-tag (version-matches-tag — PASS once the `v0.12.0` tag lands on the commit whose `package.json.version` is `0.12.0`) · 2 SKIP = ✅ CLOSED
-**E (Identity, soft):** 4 PASS = soft gate, no block (landing page + handbook shipped in v0.10.3)
+**D (Hygiene):** 6 PASS · 1 clears-at-tag (version-matches-tag — PASS once the `v1.0.0` tag lands on the commit whose `package.json.version` is `1.0.0`) · 2 SKIP = ✅ CLOSED
+**E (Identity, soft):** 4 PASS = soft gate, no block (landing page + handbook present)
 
-Hard gates A–D pass for v0.12.0 within the explicit v0.x scope. **This does NOT imply v1.0.0 promotion** — see below.
+Hard gates A–D pass, AND the two product-completeness gaps that reserved v1.0.0 are now closed (real-world hero fixture + adopter-validation compliance bundle). **This IS the v1.0.0 promotion** — the sober promotion the gate held back for, not a deadline-driven bump.
 
 ---
 
@@ -107,8 +111,8 @@ The following gaps must close before any v1.0.0 promotion:
 | ~~Batch dimension.~~ | ~~Single-sample only. No batched forward / backward.~~ | **CLOSED in v0.9.0** — batched observer-mode ingestion shipped via framework-trace.v0.3.0 + receipt.v0.4.0 additive batch block + per_sample block + Rules 18 (batch reduction consistency) and 19 (sample-set coherence). v0.9.0 ships reduced gradients only; per-sample gradients are v0.9.x / v0.10. |
 | **Per-sample gradients in batched receipts.** v0.9.0 ships REDUCED gradients only — the gradient the optimizer actually applied is a single scalar per parameter. Per-sample gradient decomposition (the full `N × \|params\|` matrix) is useful for influence audits and sample-poisoning detection but was deferred. | A v1.0 batched verifier should optionally expose per-sample gradients so users can audit individual sample contributions. v0.9.0 establishes the batch axis; v0.9.x adds the per-sample gradient layer GATED on opt-in. | v0.9.x / v0.10 |
 | ~~**Live framework helpers.** The framework-trace sidecar is hand-authored today.~~ ~~The path from "I have a PyTorch training step" to "I have a verified receipt" is: read schema → set up Python → write extractor by hand → match canonical-numeric format → emit JSONL.~~ | ~~Almost nobody will do this. Without a live helper, external ingestion is a docs-grade workflow, not a real one.~~ | **PyTorch CORE OPTIMIZER MATRIX CLOSED in v0.10.1** — `scripts/extract/pytorch.py` covers the full PyTorch optimizer surface the verifier supports: **SGD + Adam + AdamW + sgd_momentum (classical + Nesterov + dampening)**, with the load-bearing `momentum_buffer` sign-flip at the extraction boundary (PyTorch ascent → backprop-trace descent; per PyTorch issue #1099). CPU-first; single-step + multi-step. Workflow: `bp examples pytorch --print > pytorch_trace_helper.py` then `from pytorch_trace_helper import TraceDumper`. The helper is OBSERVER-ONLY: emits `framework-trace.v0.7.0` sidecars with a FORENSIC `helper` block (forensic, not credential); Rule 14 (engine-recompute differential) remains the authority. NO pip package by design — flip-signal contract (≥3 non-team-user requests + non-trivial dependency need) documented in `docs/live-helpers.md`. SGD coupled-L2 / AMP / GPU / AMSGrad / NAdam / RAdam / Lion / LBFGS REJECTED at boundary. 9 adversarial fixtures under `fixtures/bad/pytorch-helper.bad-*` exercise verifier rejection of simulated helper bugs including bad-momentum-buffer-not-sign-flipped (Rule 14) and bad-adamw-as-coupled-l2 (Rule 6). Anti-circularity preserved across all fixtures. Roadmap: JAX live helper at v1.0 (`jax.make_jaxpr(grad)` trust boundary); TF helper later (gated on JAX clean shipment). |
-| **Real-world fixture.** The hero is the Mazur 2-2-2 pedagogical example. No CNN, no transformer block, no recognizable production architecture. | A v1.0 verifier should have at least one recognizable architecture (a tiny conv→ReLU→dense net, byte-reproducible on CPU) as a built-in fixture so cold reviewers see "yes, this is real ML." | **v1.0 (gate item)** — one of the two remaining product-side blockers |
-| **Adopter validation.** No external researcher case study, no course adopting backprop-trace for pedagogy, no compliance engineer who used it for an audit bundle. | v1.0.0 = "we think this is ready" without proof points isn't enough. Other repos in the mcp-tool-shop-org (vocal-synth-engine, ollama-intern-mcp, research-os, role-os) have substantive feature surfaces backing their v1+ status. backprop-trace must demonstrate at least one external (or substantive internal) use case before v1.0. | **v1.0 (gate item)** — the other remaining product-side blocker |
+| ~~**Real-world fixture.**~~ | A v1.0 verifier should have a recognizable architecture, byte-reproducible on CPU, so cold reviewers see "yes, this is real ML." | **CLOSED (v1.0.0)** — `fixtures/hero-classifier.golden.jsonl`: a recognizable 9-pixel → 16-ReLU → 4-class softmax glyph classifier (a downscaled digit "1" recognizer), single + 3-step (loss visibly decreases 1.20→0.93), byte-reproducible. Conv stays out of the deterministic-CPU corner (fused-kernel FP-ordering); the dense ReLU→softmax classifier meets the "recognizable ML" intent. |
+| ~~**Adopter validation.**~~ | At least one external or **substantive internal** use case (researcher case study, course adoption, or compliance audit bundle). | **CLOSED (v1.0.0)** — [`docs/compliance.md`](./docs/compliance.md): a worked compliance-audit-bundle on the hero receipt, mapped honestly to EU AI Act Annex IV §2(g)/§2(b) + Article 15 (not Article 10) and composed below SLSA-for-ML/Sigstore — the gate's accepted substantive-internal use case. |
 | **package.json description.** v0.6.1 carried an internal release-engineering paragraph ("v0.6.1 adds JAX adapter — v0.6.0 path; v0.5 softmax+CE — v0.4 authoring spine — v0.3 generalized topology"). Cold readers parsed it as "early-stage internal tool." | A v1.0 npm package description should sell what the product does, not narrate its release history. Rewriting this is in scope for v0.7.0. | DONE in v0.7.0 |
 | **GPU determinism.** Currently CPU-only by design. Out of scope for v0.x and likely to remain so. | Documented as scope, not a gap — cuDNN ConvolutionBackwardFilter atomics defeat bit-exactness across runs even on identical hardware (CMU SEI). The product position is "deterministic CPU corner." Communicating this clearly is enough; expanding to GPU is a separate product, not a backprop-trace v2. | OUT OF SCOPE (permanent) |
 

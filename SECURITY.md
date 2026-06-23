@@ -7,18 +7,15 @@ Older versions are not supported — upgrade to a supported line.
 
 | Version | Supported |
 |---------|-----------|
-| 0.12.x  | yes (current)         |
-| 0.11.x  | yes (previous minor)  |
-| 0.10.x  | best-effort           |
-| < 0.10  | no                    |
+| 1.0.x   | yes (current)         |
+| 0.12.x  | best-effort           |
+| < 0.12  | no                    |
 
-backprop-trace remains pre-v1.0 — see the README "What's not in this version
-(yet)" section for the product-completeness gaps that block v1.0.0 promotion.
-Most of the earlier gaps have since shipped (multi-step observer-mode,
-Adam/AdamW + SGD momentum, batching, the PyTorch live helper); the remaining
-v1.0 blockers are a **real-world hero fixture** (a tiny conv→ReLU→dense net)
-and **adopter validation**. Versions and the supported window will be
-re-anchored at v1.0.0 release.
+backprop-trace is **v1.0.0**. The deterministic-CPU corner is covered end to
+end (SGD-family optimizers incl. coupled-L2 weight decay, live PyTorch + JAX
+helpers, a recognizable hero fixture, a worked compliance bundle). Out of scope
+by design: GPU / fused-kernel bit-determinism and conv / multi-hidden-layer
+topologies — see the README "What's not in this version (yet)" roadmap.
 
 ## Reporting a vulnerability
 

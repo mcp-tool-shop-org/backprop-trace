@@ -165,7 +165,7 @@ except ImportError:  # pragma: no cover
     nn = None  # type: ignore
 
 
-HELPER_VERSION = "0.12.0"
+HELPER_VERSION = "1.0.0"
 HELPER_NAME = "backprop-trace-pytorch-helper"
 SCHEMA_FORMAT = "framework-trace.v0.7.0"
 # v0.13 — SGD coupled L2 (the documented Rule 7 third branch) FORCES a schema
