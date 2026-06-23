@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # ci-future-B-009: manual fallback so the heavy e2e jobs (torch / jax) can be
+  # forced on demand even when the import/emission helper path did not change.
+  workflow_dispatch:
 
 # ci-future-B-008: cancel superseded runs on the same ref so rapid PR pushes
 # don't stack the full multi-OS test + canary + torch matrix.
@@ -13,6 +16,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ci-future-B-009: detect whether the LIVE-helper import/emission path changed,
+  # so the two heavy e2e jobs (each installs a large ML wheel — torch / jaxlib)
+  # run ONLY when relevant, instead of on EVERY push/PR. This gates the e2e jobs
+  # WITHOUT touching the core gates: test / byte-equal / audit have no `needs:` on
+  # this job and so continue to run unconditionally on all source changes.
+  # Always green (it just reports booleans), so it never blocks anything; on
+  # workflow_dispatch the e2e jobs run regardless of the filter (see their `if:`).
+  changes:
+    name: detect changed paths (gate heavy e2e)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5  # ci-future-B-007: bound a hung filter/checkout
+    outputs:
+      helpers: ${{ steps.filter.outputs.helpers }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: filter
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        with:
+          filters: |
+            helpers:
+              - 'scripts/extract/**'
+              - 'src/import-*.ts'
+              - 'src/general-engine.ts'
+              - 'src/reconcile.ts'
+              - 'test/import-*helper*'
+              - '.github/workflows/ci.yml'
+
   test:
     name: test (node ${{ matrix.node }} / ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -153,6 +183,10 @@ jobs:
     # ubuntu-latest, single OS (CPU torch only). Runs on the normal triggers.
     name: torch end-to-end (live helper)
     runs-on: ubuntu-latest
+    # ci-future-B-009: skip the costly CPU-torch wheel install unless the
+    # import/emission helper path changed, or on a manual workflow_dispatch.
+    needs: changes
+    if: ${{ needs.changes.outputs.helpers == 'true' || github.event_name == 'workflow_dispatch' }}
     timeout-minutes: 25  # ci-future-B-007: torch wheel install dominates; bound it
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -194,6 +228,10 @@ jobs:
     # ubuntu-latest, single OS (CPU jax only). Runs on the normal triggers.
     name: jax end-to-end (live helper)
     runs-on: ubuntu-latest
+    # ci-future-B-009: skip the costly CPU-jax+jaxlib wheel install unless the
+    # import/emission helper path changed, or on a manual workflow_dispatch.
+    needs: changes
+    if: ${{ needs.changes.outputs.helpers == 'true' || github.event_name == 'workflow_dispatch' }}
     timeout-minutes: 25  # ci-future-B-007: jaxlib wheel install dominates; bound it
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3

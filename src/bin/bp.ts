@@ -1256,20 +1256,21 @@ function examplesUsageText(): string {
   return [
     "Usage: bp examples <framework> [--print]",
     "",
-    "  Print the absolute path of (or cat the contents of) a bundled",
-    "  framework helper. v0.10 ships only the PyTorch helper:",
+    "  Print the absolute path of (or cat the contents of) a bundled live",
+    "  framework helper. Ships PyTorch and JAX helpers:",
     "",
-    "    bp examples pytorch              Print the absolute path of",
+    "    bp examples pytorch              Print the path of",
     "                                     scripts/extract/pytorch.py.",
-    "    bp examples pytorch --print      Cat the helper to stdout (pipe",
-    "                                     into a local file: `bp examples",
-    "                                     pytorch --print > pytorch_trace",
-    "                                     _helper.py`).",
+    "    bp examples pytorch --print      Cat the PyTorch helper to stdout.",
+    "    bp examples jax                  Print the path of",
+    "                                     scripts/extract/jax.py.",
+    "    bp examples jax --print          Cat the JAX helper to stdout (pipe",
+    "                                     into a local file).",
     "",
-    "  TRUST BOUNDARY: the helper is an observer that extracts a",
-    "  framework-trace.v0.7.0 sidecar. It is NEVER a verifier. Rule 14",
-    "  (engine-recompute differential) in `bp import pytorch` is the",
-    "  authority on every helper-emitted sidecar. See docs/live-helpers.md.",
+    "  TRUST BOUNDARY: a helper is an observer that extracts a framework-trace",
+    "  sidecar. It is NEVER a verifier. Rule 14 (engine-recompute differential)",
+    "  in `bp import <framework>` is the authority on every helper-emitted",
+    "  sidecar. See docs/live-helpers.md.",
     "",
     "  Exit codes:",
     "    0  Success.",
@@ -1333,6 +1334,73 @@ function runExamplesPytorch(printFlag: string | undefined): never {
   exitWithUsageError(
     `bp examples pytorch: unrecognized flag ${JSON.stringify(printFlag)}. Use --print or no flag. ` +
       `Run 'bp examples pytorch --help' for usage.`,
+    "INVALID_FLAG",
+    3,
+  );
+}
+
+/**
+ * Resolve the absolute path of the bundled live JAX helper file
+ * (`<pkg root>/scripts/extract/jax.py`, shipped via `files[]: ["scripts/**"]`).
+ */
+function resolveJaxHelperPath(): string | null {
+  return resolveBundledFile("scripts/extract/jax.py");
+}
+
+function examplesJaxUsageText(): string {
+  return [
+    "Usage: bp examples jax [--print]",
+    "",
+    "  Default (no flag): print the absolute filesystem path of the bundled",
+    "  live JAX helper. The user can then `cat`, `cp`, or `less` it.",
+    "",
+    "    --print              Cat the helper's bytes to stdout. Useful for",
+    "                         pipe-into-file:",
+    "                             bp examples jax --print > jax_trace_helper.py",
+    "",
+    "  The JAX helper uses jax.grad (negated to descent) and folds a",
+    "  jax.make_jaxpr(jax.grad(loss)) digest into the forensic block — a",
+    "  stronger trust boundary than PyTorch eager. It REQUIRES",
+    "  jax.config.update('jax_enable_x64', True) + CPU (the determinism",
+    "  contract). Observer-only — Rule 14 is the authority. See",
+    "  docs/live-helpers.md.",
+    "",
+    "  Exit codes:",
+    "    0  Success.",
+    "    2  Usage or I/O error (helper file missing from package).",
+    "    3  Invalid CLI argument.",
+    "",
+  ].join("\n");
+}
+
+function runExamplesJax(printFlag: string | undefined): never {
+  const helperPath = resolveJaxHelperPath();
+  if (helperPath === null) {
+    exitWithUsageError(
+      "bp examples jax: helper file scripts/extract/jax.py not found in this package. " +
+        "The helper SHOULD ship with the npm package via package.json files[] — " +
+        "if you're running from a local checkout, ensure scripts/extract/jax.py exists; " +
+        "if from a pnpm/npm install, try reinstalling @mcptoolshop/backprop-trace.",
+      "HELPER_FILE_MISSING",
+      2,
+    );
+  }
+  if (printFlag === undefined) {
+    if (jsonMode) {
+      process.stdout.write(JSON.stringify({ ok: true, helper_path: helperPath }) + "\n");
+    } else {
+      process.stdout.write(helperPath + "\n");
+    }
+    process.exit(0);
+  }
+  if (printFlag === "--print") {
+    const bytes = readFileSync(helperPath, "utf-8");
+    process.stdout.write(bytes);
+    process.exit(0);
+  }
+  exitWithUsageError(
+    `bp examples jax: unrecognized flag ${JSON.stringify(printFlag)}. Use --print or no flag. ` +
+      `Run 'bp examples jax --help' for usage.`,
     "INVALID_FLAG",
     3,
   );
@@ -4672,9 +4740,16 @@ if (argv[0] === "examples") {
     }
     runExamplesPytorch(argv[2]);
   }
+  if (argv[1] === "jax") {
+    if (argv[2] === "--help" || argv[2] === "-h") {
+      process.stdout.write(examplesJaxUsageText());
+      process.exit(0);
+    }
+    runExamplesJax(argv[2]);
+  }
   const examplesSubnoun = argv[1];
   exitWithUsageError(
-    `unknown subcommand 'examples ${examplesSubnoun}'. v0.10 ships only 'examples pytorch'. ` +
+    `unknown subcommand 'examples ${examplesSubnoun}'. Ships 'examples pytorch' and 'examples jax'. ` +
       `Run 'bp examples --help' for usage.`,
   );
 }

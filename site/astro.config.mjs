@@ -10,7 +10,7 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'backprop-trace',
-      description: 'Deterministic 26-rule verifier for neural-network training steps. Re-derives gradients + optimizer state from named factors; emits canonical JSONL. PyTorch helper + sidecar import. Mid-v0; CPU-only.',
+      description: 'Deterministic 26-rule verifier for neural-network training steps. Re-derives gradients + optimizer state from named factors; emits canonical JSONL. v1.0.0: SGD/Adam/AdamW/SGD-momentum + coupled-L2 weight decay; live PyTorch and JAX helpers; sidecar import; compliance bundle. CPU-only; deterministic.',
       disable404Route: true,
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/mcp-tool-shop-org/backprop-trace' },

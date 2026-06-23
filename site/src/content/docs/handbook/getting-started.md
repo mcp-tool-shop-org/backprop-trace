@@ -48,6 +48,18 @@ This runs the full Mazur gate on the bundled fixture (`fixtures/mazur.golden.jso
 
 The Mazur 2-2-2 is the most-cited single-step backprop example on the open web. Every number in it is derivable by hand.
 
+### A recognizable receipt: the hero classifier (v1.0.0)
+
+The Mazur 2-2-2 is the textbook toy; v1.0.0 also ships a receipt you can *picture*. `fixtures/hero-classifier.golden.jsonl` is a **9-pixel → 16-ReLU → 4-class softmax glyph classifier** — a step that looks like a real (if tiny) network — byte-reproducible on CPU, single and multi-step:
+
+```bash
+npx bp verify general \
+  node_modules/@mcptoolshop/backprop-trace/fixtures/hero-classifier.golden.jsonl --json
+# exit 0 — schema + reconcile (26 rules) + engine-reproduce byte-equal
+```
+
+The `--json` envelope carries `rules_evaluated` and `gated_off`, so the PASS is **auditable** — you see which substantive rules actually fired (e.g. softmax + cross-entropy rules) versus which were gated off because their feature block was absent (e.g. the Adam-family or batch rules). This is the receipt the [compliance bundle](https://github.com/mcp-tool-shop-org/backprop-trace/blob/main/docs/compliance.md) worked example uses.
+
 ### 2. Reject a deliberately-broken receipt
 
 ```bash

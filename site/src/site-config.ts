@@ -3,7 +3,7 @@ import type { SiteConfig } from '@mcptoolshop/site-theme';
 export const config: SiteConfig = {
   title: '@mcptoolshop/backprop-trace',
   description:
-    'Deterministic 26-rule verifier for neural-network training steps. Re-derives gradients + optimizer state from named factors; emits canonical JSONL. v0.12.0 soundness-hardening release: verifier-owned tolerance ceilings, marker-gated Rule 14, resource caps. PyTorch helper + sidecar import. Mid-v0; CPU-only.',
+    'Deterministic 26-rule verifier for neural-network training steps. Re-derives gradients + optimizer state from named factors; emits canonical JSONL. v1.0.0: SGD/Adam/AdamW/SGD-momentum + SGD coupled-L2 weight decay; live PyTorch and JAX helpers; a recognizable hero classifier fixture; rule-coverage observability; a worked EU AI Act compliance bundle. 940 tests; CPU-only; deterministic.',
   logoBadge: 'BT',
   brandName: 'backprop-trace',
   repoUrl: 'https://github.com/mcp-tool-shop-org/backprop-trace',
@@ -12,11 +12,11 @@ export const config: SiteConfig = {
     'MIT Licensed — built by <a href="https://github.com/mcp-tool-shop-org" style="color:var(--color-muted);text-decoration:underline">mcp-tool-shop-org</a>',
 
   hero: {
-    badge: 'v0.12.0 · Soundness-hardened · Mid-v0 · CPU-only',
+    badge: 'v1.0.0 · CPU-only · Deterministic · 26 rules · 940 tests',
     headline: 'backprop-trace',
     headlineAccent: 'verifies one training step.',
     description:
-      'Hand it a receipt naming every factor that contributed to one gradient update. The reconciler re-derives every claim from those factors and rejects on disagreement. In the Csmith/CompCert lineage: the oracle must not consult the artifact it judges. v0.12.0 closes five false-PASS holes found in an adversarial audit — a receipt can no longer widen its own tolerance, relabel its way past Rule 14, or skip the math gate.',
+      'Hand it a receipt naming every factor that contributed to one gradient update. The reconciler re-derives every claim from those factors and rejects on disagreement. In the Csmith/CompCert lineage: the oracle must not consult the artifact it judges. v1.0.0 covers the deterministic-CPU corner end to end — SGD/Adam/AdamW/SGD-momentum plus SGD coupled-L2 weight decay, live PyTorch and JAX helpers, a recognizable hero classifier fixture, rule-coverage observability, and a worked EU AI Act compliance bundle.<br><a href="https://www.npmjs.com/package/@mcptoolshop/backprop-trace" style="display:inline-block;margin-top:1rem"><img alt="npm version" src="https://img.shields.io/npm/v/@mcptoolshop/backprop-trace.svg?color=2563eb" style="height:20px"></a>',
     primaryCta: { href: '#usage', label: 'Quick start' },
     secondaryCta: { href: 'handbook/', label: 'Read the Handbook' },
     previews: [
@@ -30,9 +30,9 @@ export const config: SiteConfig = {
           'npx bp reconcile receipt fixtures/bad/mazur.bad-gradient.jsonl\n# exit 1 — Rule 4: update.gradient mismatch on w5',
       },
       {
-        label: 'Live PyTorch',
+        label: 'Auditable PASS',
         code:
-          'npx bp examples pytorch --print > pytorch_trace_helper.py\n# from pytorch_trace_helper import TraceDumper\n# with dumper.step(...): loss.backward(); opt.step()\n# python my_train.py | npx bp import pytorch - | npx bp verify multi -',
+          'npx bp verify general fixtures/hero-classifier.golden.jsonl --json\n# exit 0 — 9-pixel -> 16-ReLU -> 4-class softmax glyph classifier\n# --json carries rules_evaluated / gated_off: WHICH rules the PASS exercised',
       },
     ],
   },
@@ -43,87 +43,87 @@ export const config: SiteConfig = {
       id: 'features',
       title: 'What it does',
       subtitle:
-        '26 rules. Per-step structural consistency. Adversarial corpora prove the verifier — every rule ships with a paired bad fixture. v0.12.0 hardens the refusals.',
+        '26 rules. Per-step structural consistency. Adversarial corpora prove the verifier — every rule ships with a paired bad fixture. v1.0.0 covers the deterministic-CPU corner end to end.',
       features: [
         {
           title: '26-rule reconciler',
           desc:
-            'Re-derives gradients, error signals, parameter updates, Adam/AdamW moment state, and PyTorch-style SGD momentum buffer (classical + Nesterov + dampening) from named factors. Within hybrid tolerance (atol + rtol) — now clamped to a verifier-owned ceiling before any rule runs.',
+            'Re-derives gradients, error signals, parameter updates, Adam/AdamW moment state, and PyTorch-style SGD momentum buffer (classical + Nesterov + dampening) from named factors. Within hybrid tolerance (atol + rtol) — clamped to a verifier-owned ceiling before any rule runs. A receipt can tighten its pass band, never loosen it.',
         },
         {
-          title: 'Verifier-owned tolerance ceilings (v0.12.0)',
+          title: 'SGD coupled-L2 weight decay (v1.0.0)',
           desc:
-            'A receipt can no longer name a giant tolerance to wave its own errors through. The verifier clamps to fixed ceilings before any rule runs — engine {atol 1e-8, rtol 1e-6}, observer {atol 1e-5, rtol 1e-3}, differential {atol 1e-5, rtol 1e-3} — with schema maximums as defense-in-depth. A receipt can tighten but never loosen.',
+            'Rule 7’s third branch covers plain SGD and SGD-momentum with weight_decay > 0. Coupled, not decoupled — the decay folds into the gradient and enters the momentum buffer, the deliberate opposite of AdamW. Cross-family-verified math, validated against real PyTorch. New additive schemas receipt.v0.8.0 + framework-trace.v0.8.0.',
         },
         {
-          title: 'Marker-gated Rule 14 (v0.12.0)',
+          title: 'Live PyTorch and JAX helpers (observer-only)',
           desc:
-            'Rule 14 (engine-recompute differential) is the only math gate on imported framework traces. It now triggers on observer-marker presence (source_framework / import_provenance), so a sidecar cannot dodge re-derivation by stripping or relabeling its authoring-state field. It also asserts completeness — every engine-updated parameter is covered.',
+            'Single auditable Python files. scripts/extract/pytorch.py covers SGD/Adam/AdamW/sgd_momentum (with the momentum_buffer ascent→descent sign-flip). scripts/extract/jax.py adds a stronger trust boundary — it folds a jax.make_jaxpr(jax.grad(loss)) digest into the forensic block (the inspectable gradient graph PyTorch eager lacks) and refuses to run without jax_enable_x64 + CPU. Rule 14 (engine-recompute) is the authority on every imported sidecar.',
         },
         {
-          title: 'Bad-receipts-precede-good',
+          title: 'Recognizable hero fixture (v1.0.0)',
           desc:
-            'Every rule has a paired bad fixture under fixtures/bad/ that the verifier must reject before reading any fixture_status metadata. Csmith/CompCert anti-circularity ratchet. Unknown optimizer names are now a Rule 0 structural reject, not a silent skip.',
+            'fixtures/hero-classifier.golden.jsonl — a 9-pixel → 16-ReLU → 4-class softmax glyph classifier, single and multi-step, byte-reproducible on CPU. A receipt a reader can picture, not just a 2-2-2 toy. The v1.0 gate fixture, now shipped.',
         },
         {
-          title: 'Live PyTorch helper (observer-only)',
+          title: 'Rule-coverage observability (v1.0.0)',
           desc:
-            'scripts/extract/pytorch.py extracts SGD/Adam/AdamW/sgd_momentum (with the momentum_buffer ascent→descent sign-flip) and per-neuron biases, torch-validated end-to-end. Single auditable file. No pip package. Rule 14 (engine-recompute) remains the authority.',
+            'bp verify --json / --verbose now reports which of the 26 rules a PASS actually exercised (rules_evaluated) and which were applicable-but-gated-off because a feature block was absent (gated_off). A green PASS becomes auditable — you can see the 9 substantive rules that ran, not just trust that 26 might have.',
         },
         {
-          title: 'Resource caps + graceful failure (v0.12.0)',
+          title: 'Compliance audit bundle (v1.0.0)',
           desc:
-            'Verifier-owned caps (MAX_BATCH_SAMPLES, TOPOLOGY_SIZE_CEILING) turn OOM-or-hang inputs into an actionable "limit exceeded" message. Oversized files return a structured INPUT_TOO_LARGE error, never a raw stack. reconcileReceipt always returns a structured result — it never throws.',
+            'A worked mapping of a receipt to EU AI Act Annex IV §2(g)/§2(b) test-log records and Article 15 robustness controls — honestly NOT Article 10 (data governance is out of scope). A receipt is the numerical-consistency leaf of a compliance tree; it composes below SLSA-for-ML / Sigstore, it does not replace them. See docs/compliance.md.',
         },
         {
           title: 'Sidecar ingestion',
           desc:
-            'bp import pytorch | jax | tensorflow — single-step, multi-step (Rules 9/10), batched (Rules 18/19), Adam moments (22-24), SGD momentum (20/21/25/26). Per-step engine-recompute differential (Rule 14) is mandatory; multi-step self-declared skips are now NON-PASS. float32 observer receipts no longer false-FAIL.',
+            'bp import pytorch | jax | tensorflow — single-step, multi-step (Rules 9/10), batched (Rules 18/19), Adam moments (22-24), SGD momentum (20/21/25/26). Per-step engine-recompute differential (Rule 14) is mandatory and marker-gated; multi-step self-declared skips are NON-PASS. float32 observer receipts pass within the observer tolerance band.',
         },
         {
           title: 'Canonical JSONL + distribution integrity',
           desc:
-            'Decimal strings, schema-defined key order, 9-sig-fig byte-equal on Node 22.x, in-toto v1 attestation seam. pack-install smoke runs on every push across ubuntu + macos + windows — tarball contents, cold install, CLI behavior, stdin pipe semantics, all CI-gated.',
+            'Decimal strings, schema-defined key order, 9-sig-fig byte-equal on Node 22.x, in-toto v1 attestation seam. pack-install smoke runs on every push across ubuntu + macos + windows — tarball contents, cold install, CLI behavior, stdin pipe semantics, all CI-gated. A dedicated jax-e2e job validates the JAX helper against real JAX.',
         },
       ],
     },
     {
       kind: 'data-table',
-      id: 'soundness',
-      title: 'v0.12.0 — soundness hardening',
+      id: 'surface',
+      title: 'v1.0.0 — the sober promotion',
       subtitle:
-        'A comprehensive adversarial audit found five classes of false-PASS — the worst defect a verifier can have, where it ACCEPTS a receipt it must reject. All five are closed. A verifier earns trust by what it refuses.',
-      columns: ['Hole closed', 'How it slipped past', 'The fix'],
+        'A comprehensive dogfood swarm took backprop-trace from honest mid-v0 to a v1.0.0 that meets the product’s own gate criteria — without overclaiming. Tests 792 → 940. CPU-only, deterministic. Conv / GPU stay out of the deterministic corner by design.',
+      columns: ['v1.0.0 surface', 'What ships', 'Honest scope'],
       rows: [
         [
-          'Receipt-controlled tolerance',
-          'A receipt named its own comparison tolerance and widened it until every numeric rule passed.',
-          'Tolerance is now verifier-owned and clamped before any rule runs (engine / observer / differential ceilings), with schema maximums as defense-in-depth. A receipt can tighten but never loosen.',
+          'Optimizers',
+          'SGD, Adam, AdamW, SGD-momentum (classical / Nesterov / dampening), and SGD coupled-L2 weight decay (Rule 7 third branch).',
+          'Coupled L2 folds decay into the gradient + momentum buffer — the deliberate opposite of AdamW decoupled decay. An unrecognized optimizer name is a Rule 0 structural reject, never a silent skip.',
         ],
         [
-          'Rule 14 bypass by relabeling',
-          'Rule 14 (the only math gate on imports) could be skipped by stripping or renaming the authoring-state field.',
-          'Rule 14 now triggers on observer-marker presence (source_framework / import_provenance) — an imported sidecar cannot dodge re-derivation.',
+          'Live helpers',
+          'PyTorch (scripts/extract/pytorch.py) and JAX (scripts/extract/jax.py) — single auditable files, copy-and-read, no pip package.',
+          'Observer-only. Rule 14 (engine-recompute differential) is the authority on every sidecar. The JAX helper enforces jax_enable_x64 + CPU and records a make_jaxpr(grad) digest as a forensic — not credential — trust signal.',
         ],
         [
-          'Multi-step self-skip',
-          'bp verify multi accepted a trace that announced its own math gate had been skipped.',
-          'A self-declared skip is now a NON-PASS on every path.',
+          'Hero fixture',
+          'fixtures/hero-classifier.golden.jsonl — a 9-pixel → 16-ReLU → 4-class softmax glyph classifier, single + multi-step.',
+          'A recognizable dense ReLU→softmax classifier, byte-reproducible on CPU. The v1.0 gate fixture. Conv / multi-hidden-layer topologies remain out — they fight bit-determinism.',
         ],
         [
-          'Rule 14 agreement without completeness',
-          'Rule 14 confirmed the fields a sidecar presented were correct, but not that it covered every updated parameter.',
-          'Rule 14 now asserts the update set covers every engine-updated parameter and parameters_after matches the declared topology — no passing by omission.',
+          'Auditable PASS',
+          'bp verify --json / --verbose reports rules_evaluated and gated_off.',
+          'A green PASS records which substantive rules actually fired vs which were gated off because a feature block was absent — so an auditor sees the coverage, not just the verdict.',
         ],
         [
-          'Unknown optimizer silently skipped',
-          'An unrecognized optimizer name slipped past the update-equation rules entirely.',
-          'An unrecognized optimizer.name is now a Rule 0 structural rejection.',
+          'Compliance bundle',
+          'docs/compliance.md — a receipt mapped to EU AI Act Annex IV §2(g)/§2(b) + Article 15, wrapped in an in-toto v1 statement.',
+          'A receipt attests math, not data governance. It is the numerical-consistency leaf below model-signing — honestly NOT Article 10. Compose, don’t conflate.',
         ],
         [
-          'Proactive: resource caps + graceful failure',
-          'Oversized batches / topologies / files hit OOM, hung, or dumped raw stacks.',
-          'Verifier-owned caps (MAX_BATCH_SAMPLES, TOPOLOGY_SIZE_CEILING) emit "limit exceeded"; oversized files return a structured INPUT_TOO_LARGE error; reconcileReceipt never throws.',
+          'Determinism boundary',
+          'Byte-equal on Node 22.x across ubuntu + macos + windows. A Math.exp(-0.5) canary fires on every CI cell.',
+          'GPU / fused-kernel bit-determinism is permanently out of scope (FP non-associativity, arXiv:2408.05148). The product is the deterministic CPU corner.',
         ],
       ],
     },
@@ -147,14 +147,19 @@ export const config: SiteConfig = {
             'npx bp reconcile receipt \\\n  node_modules/@mcptoolshop/backprop-trace/fixtures/bad/mazur.bad-gradient.jsonl\n# exit 1 — Rule 4: update.gradient mismatch on w5\n# (rejected BEFORE the verifier reads fixture_status)',
         },
         {
+          title: 'Verify the hero classifier (auditable PASS)',
+          code:
+            'npx bp verify general \\\n  node_modules/@mcptoolshop/backprop-trace/fixtures/hero-classifier.golden.jsonl --json\n# exit 0 — 9-pixel -> 16-ReLU -> 4-class softmax glyph classifier\n# --json carries rules_evaluated / gated_off:\n# {"overall":"PASS","rules_evaluated":[1,2,3,4,5,6,7,8,11,12,13],"gated_off":[...]}',
+        },
+        {
           title: 'Verify your own PyTorch training step',
           code:
             'npx bp examples pytorch --print > pytorch_trace_helper.py\n\n# in your training loop:\nfrom pytorch_trace_helper import TraceDumper\ndumper = TraceDumper(model, optimizer, loss_fn, out="trace.jsonl")\nfor x, y in loader:\n    with dumper.step(inputs={...}, targets={...}):\n        optimizer.zero_grad()\n        loss_fn(model(x), y).backward()\n        optimizer.step()\n\n# verify:\nnpx bp import pytorch trace.jsonl | npx bp verify multi -',
         },
         {
-          title: 'Hash for an attestation envelope',
+          title: 'Verify a JAX training step',
           code:
-            'npx bp generate mazur | sha256sum\n# 9-sig-fig canonical bytes (V8/Node 22.x)\n# wrap as in-toto v1 DSSE subject',
+            '# copy the single auditable file, read it, run it:\ncp node_modules/@mcptoolshop/backprop-trace/scripts/extract/jax.py jax_trace_helper.py\n\n# requires jax_enable_x64 + CPU (the helper refuses otherwise)\n# from jax_trace_helper import TraceDumper\n# with dumper.step(inputs=x, targets=y) as ctx: params = ctx.run(params)\n\nnpx bp import jax trace.jsonl | npx bp verify multi -',
         },
       ],
     },

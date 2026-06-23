@@ -32,10 +32,10 @@ backprop-trace is six interlocking layers:
                                          ▲
                                          │
                               ┌─────────────────────────────┐
-   real PyTorch step  ──────▶ │   Live PyTorch helper       │ ─▶ framework-trace.v0.7.0
-   (user's training loop)      │  scripts/extract/pytorch.py │     sidecar (+ helper block)
-                              │  TraceDumper context        │
-                              │  manager                    │
+   real PyTorch / JAX step ─▶ │   Live helpers              │ ─▶ framework-trace sidecar
+   (user's training loop)      │  scripts/extract/pytorch.py │     (+ forensic helper block)
+                              │  scripts/extract/jax.py     │
+                              │  TraceDumper context manager│
                               └─────────────────────────────┘
 ```
 
@@ -50,6 +50,10 @@ The engine is the canonical reference. When the importer ingests a foreign sidec
 ## The reconciler
 
 26 rules organized into per-receipt math (1-8), multi-step (9-10), schema-gated extensions (11-13, 18-19), engine-recompute differential (14), trust-related gates (15-17), Adam-family (20, 22-26), and SGD-momentum-family (20, 21, 25, 26). Each rule has a closed-form numerical expression — the rule re-derives the receipt's claimed value from the named factors, compares within hybrid tolerance (`atol + rtol`, symmetric max form), records {ok | failure} with the rule name + field path + numeric quartet (stored / recomputed / delta / tolerance).
+
+Rule 7 (final-state consistency) carries three optimizer branches: the plain `weight_before + update` (SGD/Adam), the AdamW decoupled-decay `(1 - lr*wd) * weight_before + update`, and — new in v1.0.0 — **SGD coupled-L2 weight decay**, where the decay is *coupled*: it folds into the gradient and enters the momentum buffer before the update, the deliberate opposite of AdamW. The v0.8.0 schemas carry the coupled-L2 surface additively; the engine recomputes the coupled path closed-form on CPU.
+
+A green PASS is **auditable** (v1.0.0): the reconciler reports `rules_evaluated` (which of the 26 rules actually fired) and `gated_off` (applicable-but-skipped because a feature block was absent). `bp verify --json` carries both arrays; `--verbose` renders a coverage line. A reader can distinguish "11 substantive rules ran" from "all 26 ran" rather than trusting a bare `ok: true`.
 
 The reconciler is **pure** (no I/O), **anti-circular** (does not read `fixture_status` / `authoring_state` / `verification_state` to decide whether to reject — those are operator-facing lifecycle metadata, NOT verifier authority), and **never throws** — it always returns a structured `{ok, failures[]}` result, even on malformed input, so callers never have to wrap it in try/catch. The verifier rejects on math, not on labels. This is the Csmith/CompCert ratchet enforced in code.
 
@@ -106,6 +110,15 @@ Three load-bearing details:
 
 **The helper has no verdict vocabulary.** No field named `rule14_passed` / `verification_passed` / `expected_outcome` / `differential_passed`. The schema's `additionalProperties: false` enforces this — the helper would fail validation if it tried. Rule 14 owns the verdict; the helper has no business predicting it.
 
+## The live JAX helper (v1.0.0)
+
+`scripts/extract/jax.py` is the JAX sibling of the PyTorch helper — a single auditable file, same observer-not-verifier discipline, same forensic `helper` block, same Rule 14 authority. It covers SGD and Adam. Two things make it a *stronger* trust boundary than PyTorch eager:
+
+1. **It records the gradient jaxpr.** `jax.make_jaxpr(jax.grad(loss))` captures the gradient computation graph as an inspectable, auditable artifact, and the helper folds its digest into the forensic block. PyTorch eager has no first-class equivalent — its autograd graph is reconstructed implicitly at `.backward()` time. The jaxpr is forensic like the `source_hash`: it does NOT bypass Rule 14; it makes post-hoc attribution richer.
+2. **It enforces its determinism preconditions at the boundary.** The helper refuses to run on non-CPU devices (GPU/TPU FP reductions are non-associative across kernels) and refuses to run without `jax.config.update("jax_enable_x64", True)` (JAX defaults to float32; the engine runs binary64, so a forgotten x64 flip would silently produce a float32 sidecar that Rule 14 would flag as a tolerance disagreement). Failing loudly at extraction beats a confusing differential later.
+
+A dedicated CI `jax-e2e` job validates the helper against real JAX on every relevant push, the same way `pack-install-smoke` validates distribution.
+
 ## Distribution integrity (v0.10.2+)
 
 `scripts/pack-install-smoke.mjs` runs on every push across ubuntu + macos + windows. Six steps: pnpm pack → tarball size ceiling (10 MB) → tarball content listing (in-process gunzip + manual tar header walk; cross-platform) → cold install into `mkdtemp` via `npm install <abs-tarball>` → CLI smoke matrix on the installed `bp` → pipe smoke (`verify multi -` via stdin + file roundtrip).
@@ -114,9 +127,9 @@ Caught real bugs during development: helper version drift from package version (
 
 ## Trust boundary statement (load-bearing)
 
-The helper, the engine, and the reconciler are three separate authorities:
+The live helpers (PyTorch + JAX), the engine, and the reconciler are three separate authorities:
 
-- **Helper** — observer; extracts named factors. NEVER a verifier.
+- **Helper** — observer; extracts named factors. NEVER a verifier. Both the PyTorch and JAX helpers obey the same boundary.
 - **Engine** — independent recomputer; takes named factors, produces all 26 rules' evidence.
 - **Reconciler** — judge; compares stored vs. recomputed, rejects on disagreement.
 

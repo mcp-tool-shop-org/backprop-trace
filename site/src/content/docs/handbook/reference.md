@@ -61,13 +61,13 @@ bp scaffold topology --topology mazur|xor|iris [--out F]    Write a starter Gene
 bp validate-input <file>                                    Schema-validate a topology+input config (no engine).
 ```
 
-### Live framework helpers (v0.10+)
+### Live framework helpers
 
 ```
 bp examples pytorch [--print]    Print absolute path of (or cat to stdout) the bundled PyTorch helper.
 ```
 
-`bp examples pytorch --print > pytorch_trace_helper.py` is the locked v0.10 workflow. The helper is observer-only; Rule 14 is the authority. See [Usage](../usage/) for the workflow.
+`bp examples pytorch --print > pytorch_trace_helper.py` is the locked PyTorch workflow. The helper is observer-only; Rule 14 is the authority. The **live JAX helper** (v1.0.0) ships as a single auditable file at `scripts/extract/jax.py` — copy it from the installed package (`cp node_modules/@mcptoolshop/backprop-trace/scripts/extract/jax.py jax_trace_helper.py`), then import it and verify with `bp import jax`. It records a `jax.make_jaxpr(jax.grad(loss))` digest in the forensic block and enforces `jax_enable_x64` + CPU. See [Usage](../usage/) for both workflows.
 
 ### Meta
 
@@ -79,8 +79,14 @@ bp --help       Print usage, exit 0.
 ### Common flags
 
 ```
---json                       Machine-readable JSON output (Tier-1 error envelope)
---verbose, -V                Diagnostic stderr (file path, schema_version, fixture id)
+--json                       Machine-readable JSON output (Tier-1 error envelope).
+                             On bp verify, the report carries rule-coverage
+                             observability (v1.0.0): rules_evaluated[] (which of
+                             the 26 rules the PASS actually exercised) and
+                             gated_off[] (applicable-but-skipped, feature block
+                             absent) — an auditable PASS, not a silent one.
+--verbose, -V                Diagnostic stderr (file path, schema_version, fixture
+                             id); also renders the rule-coverage line for a PASS
 --color=auto|never|always    ANSI color (honors NO_COLOR)
 --out <file>                 (generate / scaffold / import) write to file instead of stdout
 --check                      (generate) compare vs golden, exit 1 on drift
@@ -143,13 +149,15 @@ Subpath imports (smaller bundle):
 ./import-tensorflow ./import-observer
 ./schema/0.1.0      ./schema/0.2.0      ./schema/0.3.0
 ./schema/receipt-0.4.0  ./schema/receipt-0.5.0
-./schema/receipt-0.6.0  ./schema/receipt-0.7.0
+./schema/receipt-0.6.0  ./schema/receipt-0.7.0  ./schema/receipt-0.8.0
 ./schema/0.4.0  (topology-input)
 ./schema/framework-trace-0.1.0  ./schema/framework-trace-0.2.0
 ./schema/framework-trace-0.3.0  ./schema/framework-trace-0.4.0
 ./schema/framework-trace-0.5.0  ./schema/framework-trace-0.6.0
-./schema/framework-trace-0.7.0
+./schema/framework-trace-0.7.0  ./schema/framework-trace-0.8.0
 ```
+
+`receipt.v0.8.0` + `framework-trace.v0.8.0` are the additive v1.0.0 schemas carrying the SGD coupled-L2 weight-decay surface. Earlier versions remain valid for receipts that don't use it.
 
 ## The 26 rules (full statements)
 
@@ -165,7 +173,7 @@ Full statements + paired bad fixtures live in [`docs/reconciliation.md`](https:/
 | 4 | Update gradient consistency |
 | 5 | Update value consistency (GATED OFF for non-SGD; Adam/AdamW use Rule 24) |
 | 6 | Weight progression (AdamW branch adds `(1 - lr*wd)` decoupled-decay) |
-| 7 | Final state consistency (AdamW branch adds decoupled-decay) |
+| 7 | Final state consistency. AdamW branch adds decoupled-decay `(1 - lr*wd)`; **the third branch (v1.0.0) is SGD coupled-L2 weight decay** — for plain SGD and SGD-momentum the decay folds into the gradient and enters the momentum buffer (coupled, the deliberate opposite of AdamW) |
 | 8 | Provenance reference consistency |
 | 9 | Multi-step parameter chain |
 | 10 | Multi-step trace identity |
