@@ -16,13 +16,24 @@
  * String / Buffer inputs bypass re-emission and hash the caller-supplied
  * bytes directly. Callers using this overload are responsible for ensuring
  * those bytes are canonical-emission-equivalent — otherwise the digest is
- * meaningless for cross-machine comparison. The MazurReceipt overload is
+ * meaningless for cross-machine comparison. The receipt-object overload is
  * the safe path for any caller that has the receipt object in hand.
+ *
+ * The object overload accepts BOTH receipt families — the v0.1 Mazur receipt
+ * (schema_version "0.1.0") and any v0.2+ General receipt (xor/iris/softmax/
+ * observer-imported, schema_version "0.2.0".."0.7.0"). It discriminates on the
+ * receipt's own `schema_version` (the same in-band discriminator the validator
+ * dispatches on — see pickSchemaVersion in src/validate.ts) and routes to
+ * emitMazurReceipt vs emitGeneralReceipt accordingly, so each family is hashed
+ * over ITS canonical bytes. Routing a General receipt through emitMazurReceipt
+ * (the pre-fix behavior) threw a raw formatter error rather than returning a
+ * digest, since the two emitters expect structurally different receipt shapes.
  */
 
 import { createHash } from "node:crypto";
 import type { MazurReceipt } from "./engine.js";
-import { emitMazurReceipt, EmitError } from "./emit.js";
+import type { GeneralReceipt } from "./general-engine.js";
+import { emitMazurReceipt, emitGeneralReceipt, EmitError } from "./emit.js";
 
 /**
  * Supported digest algorithms. sha256 is the in-toto / sigstore baseline
@@ -51,14 +62,15 @@ export type HashAlgorithm = "sha256" | "sha512";
  *     "predicate":     { /* engine metadata, reconciler-rule version, ... *\/ }
  *   }
  *
- * @param input      Either a MazurReceipt (recommended — guarantees
- *                   canonical bytes), or a raw string/Buffer of bytes
+ * @param input      A MazurReceipt or GeneralReceipt (recommended — both
+ *                   guarantee canonical bytes; the family is auto-detected
+ *                   via schema_version), or a raw string/Buffer of bytes
  *                   the caller has already canonicalized.
  * @param algorithm  "sha256" (default, in-toto baseline) or "sha512".
  * @returns          Lowercase hex string of the digest.
  */
 export function hashReceipt(
-  input: MazurReceipt | string | Buffer,
+  input: MazurReceipt | GeneralReceipt | string | Buffer,
   algorithm: HashAlgorithm = "sha256",
 ): string {
   let bytes: string | Buffer;
@@ -85,7 +97,18 @@ export function hashReceipt(
     );
     bytes = input;
   } else {
-    bytes = emitMazurReceipt(input);
+    // Receipt-object overload. Discriminate the family on the receipt's own
+    // schema_version — the SAME in-band discriminator the validator dispatches
+    // on (pickSchemaVersion in src/validate.ts: "0.1.0" is the Mazur-pinned
+    // schema; "0.2.0".."0.7.0" are the generalized schemas). The Mazur emitter
+    // and the General emitter expect structurally different receipt shapes, so
+    // routing must follow the version: a General receipt (xor/iris/softmax/
+    // observer) through emitMazurReceipt throws a raw formatter error instead
+    // of returning a digest. "0.1.0" → Mazur; everything else → General.
+    bytes =
+      input.schema_version === "0.1.0"
+        ? emitMazurReceipt(input)
+        : emitGeneralReceipt(input);
   }
   return createHash(algorithm).update(bytes).digest("hex");
 }

@@ -262,11 +262,36 @@ export type ReconciliationFailure = {
  * All fields are absent (not `false` / not `[]`) on the normal fully-verified
  * path so existing consumers that ignore them are unaffected (additive,
  * backward-compatible — no index.ts change required).
+ *
+ * PH-ENG-02 (rule-coverage transparency): ~14 of the 26 documented rules are
+ * GATED — they fire only when their feature block is present (softmax outputs,
+ * a `dual_form`, a `batch`, an Adam optimizer, observer-import markers, a
+ * multi-step bundle, …). Before these fields, a user reading a green PASS could
+ * not tell which substantive rules actually RAN from those that silently no-op'd
+ * because their feature was absent. The two ADDITIVE arrays make coverage
+ * machine-readable WITHOUT changing any verdict or receipt bytes (this is
+ * diagnostics, computed from the receipt's feature blocks — it does not gate or
+ * alter any rule):
+ *
+ *   - `rules_evaluated` — the documented rule numbers (1..26) whose gate was
+ *     SATISFIED for this receipt, i.e. the rules that substantively ran. Sorted
+ *     ascending. (Rule 0 sentinels — structural/shape failures — are not counted
+ *     here; they are not "rules" in the operator's coverage mental model.)
+ *   - `gated_off` — the documented rules (1..26) that were APPLICABLE-but-skipped
+ *     because their feature block was absent (e.g. Rule 11 on a non-softmax
+ *     receipt, Rules 22-24 on an SGD receipt, Rules 17/25/26 on a single
+ *     receipt). Sorted ascending. `rules_evaluated ∪ gated_off == {1..26}` and
+ *     the two sets are disjoint.
+ *
+ * Both arrays are present on every result (the partition is total) but, like the
+ * skip fields above, consumers that ignore them are unaffected.
  */
 type ReconciliationDiagnostics = {
   math_gate_skipped?: boolean
   skipped_rules?: number[]
   math_gate_skipped_records?: number[]
+  rules_evaluated?: number[]
+  gated_off?: number[]
 }
 
 export type ReconciliationResult =
@@ -937,6 +962,201 @@ export function clampTolerancePolicy(
  *     process.exit(1);
  *   }
  */
+/**
+ * The documented reconciliation rules a coverage readout partitions over:
+ * 1..26. Rule 0 (and its 0.x sub-checks) is the structural-failure sentinel,
+ * NOT a "rule" in the operator's coverage mental model, so it is excluded.
+ */
+const COVERAGE_RULE_NUMBERS: readonly number[] = Array.from(
+  { length: 26 },
+  (_, i) => i + 1,
+)
+
+/**
+ * PH-ENG-02 — classify which documented rules (1..26) substantively RAN for a
+ * receipt vs were GATED OFF because their feature block is absent.
+ *
+ * This is a PURE, READ-ONLY inspection of the receipt's feature blocks that
+ * MIRRORS each rule's own gate predicate (the `if (… ) return` guards at the top
+ * of each checkRuleN helper). It does NOT run, alter, or gate any rule — it is a
+ * diagnostics-only second read used to populate ReconciliationDiagnostics. The
+ * partition is total over 1..26 and the two sets are disjoint.
+ *
+ * @param r          the receipt (already shape-guarded by the caller).
+ * @param multiStep  when true, the multi-step-only rules (9, 10, 17, 25, 26) are
+ *                    eligible to be EVALUATED (subject to their own gate); when
+ *                    false (single receipt) they are always gated off because a
+ *                    bundle is the feature they require. Per-record callers from
+ *                    reconcileMultiStep pass false here (each record is judged on
+ *                    its 1-8/11-24 surface) and the bundle-level union folds in
+ *                    9/10/17/25/26 separately.
+ */
+function classifyRuleCoverage(
+  r: Receipt,
+  multiStep: boolean,
+): { rules_evaluated: number[]; gated_off: number[] } {
+  const evaluated = new Set<number>()
+
+  const hasBackward =
+    r.backward !== undefined &&
+    r.backward !== null &&
+    typeof r.backward === "object"
+  const hasLoss = r.loss !== undefined && r.loss !== null
+  const batch = (r as { batch?: { reduction?: string; sample_order?: unknown } }).batch
+  const hasBatch = batch !== undefined && batch !== null
+  const topo = r.topology
+
+  // --- Core backward-signal rules (1-3): gated on a backward block. ---------
+  if (hasBackward) {
+    evaluated.add(1)
+    evaluated.add(2)
+    evaluated.add(3)
+  }
+  // --- Update / parameter rules (4-8): updates[] is guaranteed present by the
+  // top-level shape guard in reconcileReceipt, so these always run. Rule 8
+  // (provenance) resolves factor.from paths that live on updates' optimizer
+  // factors (and backward signals), so it runs whenever updates exist.
+  evaluated.add(4)
+  evaluated.add(5)
+  evaluated.add(6)
+  evaluated.add(7)
+  evaluated.add(8)
+
+  // --- Rule 11: gated on topology.activation_output === "softmax". ----------
+  if (topo?.activation_output === "softmax") evaluated.add(11)
+
+  // --- Rule 12: loss-formula consistency. Runs whenever loss is present and
+  // the receipt is NOT batched (batched loss is checked by Rule 18 + Rule 14).
+  if (hasLoss && !hasBatch) evaluated.add(12)
+
+  // --- Rule 13: gated on ANY output_error_signal carrying a dual_form. ------
+  const oes = r.backward?.output_error_signals
+  if (oes && typeof oes === "object") {
+    for (const k of Object.keys(oes)) {
+      const sig = oes[k]
+      if (sig && typeof sig === "object" && (sig as { dual_form?: unknown }).dual_form) {
+        evaluated.add(13)
+        break
+      }
+    }
+  }
+
+  // --- Rule 14: gated on observer-import markers (external_imported authoring
+  // state OR a surviving import-provenance / source_framework marker). Mirrors
+  // checkRule14EngineRecomputeDifferential's gate (incl. the laundering guard).
+  // A self-declared skip (verification_state === engine_recompute_skipped_with_
+  // basis) STILL counts as "evaluated" here — the gate was satisfied; the skip
+  // is surfaced separately via math_gate_skipped.
+  if (r.fixture_status?.authoring_state === "external_imported" || hasObserverMarkers(r)) {
+    evaluated.add(14)
+  }
+
+  // --- Rule 15: gated on verification_state === engine_recompute_skipped_with_basis.
+  if (r.fixture_status?.verification_state === "engine_recompute_skipped_with_basis") {
+    evaluated.add(15)
+  }
+
+  // --- Rule 16: gated on attestor.signed_subject_digest presence. -----------
+  const signedDigest = r.attestor?.signed_subject_digest
+  if (typeof signedDigest === "string" && signedDigest.length > 0) evaluated.add(16)
+
+  // --- Rule 18: gated on batch present AND reduction in {mean,sum}. ----------
+  if (hasBatch && (batch!.reduction === "mean" || batch!.reduction === "sum")) {
+    evaluated.add(18)
+  }
+  // --- Rule 19: gated on batch.sample_order presence. -----------------------
+  if (hasBatch && Array.isArray((batch as { sample_order?: unknown }).sample_order)) {
+    evaluated.add(19)
+  }
+
+  // --- Rules 20-24: gated on optimizer name. 20/21 fire for any stateful
+  // optimizer; 21 narrows to sgd_momentum; 22/23/24 to the Adam family. We
+  // classify from update.optimizer.name (the same field the rules gate on).
+  let anyAdam = false
+  let anyMomentum = false
+  for (const u of r.updates) {
+    if (isAdamFamilyUpdate(u)) anyAdam = true
+    else if (isSgdMomentumUpdate(u)) anyMomentum = true
+  }
+  if (anyAdam || anyMomentum) evaluated.add(20)
+  if (anyMomentum) evaluated.add(21)
+  if (anyAdam) {
+    evaluated.add(22)
+    evaluated.add(23)
+    evaluated.add(24)
+  }
+
+  // --- Multi-step-only rules (9, 10, 17, 25, 26): a bundle is the feature.
+  // For a single receipt they are always gated off. In a bundle the union
+  // helper (classifyBundleCoverage) folds them in based on bundle-wide gates.
+  if (multiStep) {
+    evaluated.add(9)
+    evaluated.add(10)
+    // 17/25/26 remain bundle-level (their gate spans receipts) — the bundle
+    // union adds them; per-record classification leaves them gated off.
+  }
+
+  const rules_evaluated = COVERAGE_RULE_NUMBERS.filter((n) => evaluated.has(n))
+  const gated_off = COVERAGE_RULE_NUMBERS.filter((n) => !evaluated.has(n))
+  return { rules_evaluated, gated_off }
+}
+
+/**
+ * PH-ENG-02 — bundle-level rule coverage for a multi-step reconcile.
+ *
+ * A rule counts as EVALUATED for the bundle if it was evaluated on ANY record
+ * (per-record rules 1-8, 11-24) OR if its bundle-spanning gate is satisfied
+ * (the multi-step-only rules 9, 10, 17, 25, 26). The union semantics match how
+ * the CLI reports a bundle: "across this bundle, these rules ran somewhere."
+ *
+ * Pure, read-only — same diagnostics-only contract as classifyRuleCoverage.
+ */
+function classifyBundleCoverage(
+  receipts: ReadonlyArray<unknown>,
+): { rules_evaluated: number[]; gated_off: number[] } {
+  const evaluated = new Set<number>()
+  const valid: Receipt[] = []
+  for (const raw of receipts) {
+    if (raw === null || typeof raw !== "object") continue
+    const r = raw as Receipt
+    if (!Array.isArray(r.updates)) continue
+    valid.push(r)
+    for (const n of classifyRuleCoverage(r, false).rules_evaluated) evaluated.add(n)
+  }
+
+  // Multi-step-only rules: their feature is a bundle of >= 2 records.
+  if (valid.length >= 2) {
+    // Rule 9 (adjacent parameter chain) + Rule 10 (trace identity / step_index
+    // sequencing) run unconditionally over any >=2-record bundle.
+    evaluated.add(9)
+    evaluated.add(10)
+    // Rule 17 — gated on ANY receipt declaring attestor.bundle_root_digest.
+    // (Field is read via cast to mirror checkRule17BundleBinding, which does the
+    // same — bundle_root_digest is not on the AttestorShape type.)
+    const anyBundleRoot = valid.some(
+      (r) =>
+        typeof (r as { attestor?: { bundle_root_digest?: unknown } }).attestor
+          ?.bundle_root_digest === "string",
+    )
+    if (anyBundleRoot) evaluated.add(17)
+    // Rules 25 / 26 — gated on a stateful optimizer (Adam family or
+    // sgd_momentum) declared across the bundle; 26 specifically on
+    // optimizer_config presence.
+    const anyStatefulOptimizer = valid.some((r) =>
+      r.updates.some((u) => isAdamFamilyUpdate(u) || isSgdMomentumUpdate(u)),
+    )
+    if (anyStatefulOptimizer) evaluated.add(25)
+    const anyOptimizerConfig = valid.some(
+      (r) => readOptimizerConfig(r) !== undefined,
+    )
+    if (anyOptimizerConfig) evaluated.add(26)
+  }
+
+  const rules_evaluated = COVERAGE_RULE_NUMBERS.filter((n) => evaluated.has(n))
+  const gated_off = COVERAGE_RULE_NUMBERS.filter((n) => !evaluated.has(n))
+  return { rules_evaluated, gated_off }
+}
+
 export function reconcileReceipt(receipt: unknown): ReconciliationResult {
   // Precondition: the receipt has passed schema validation against
   // schemas/receipt.v0.1.0.json or schemas/receipt.v0.2.0.json. This
@@ -1317,9 +1537,19 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
   // G-006: attach the machine-readable math-gate-skip signal to BOTH result
   // branches. When Rule 14 was skipped via the receipt's self-asserted
   // verification_state, a consumer MUST NOT read ok:true as full verification.
-  const diagnostics: ReconciliationDiagnostics = rule14.mathGateSkipped
-    ? { math_gate_skipped: true, skipped_rules: [14] }
-    : {}
+  //
+  // PH-ENG-02: ALSO attach the rule-coverage partition (rules_evaluated /
+  // gated_off) so a consumer reading a green PASS can tell which substantive
+  // rules ran vs were gated off because their feature block is absent. Both are
+  // ADDITIVE diagnostics computed from the receipt's feature blocks — they do
+  // not change any verdict or receipt bytes. Single-receipt path → multiStep
+  // false (rules 9/10/17/25/26 are gated off, a bundle being their feature).
+  const coverage = classifyRuleCoverage(r, false)
+  const diagnostics: ReconciliationDiagnostics = {
+    ...(rule14.mathGateSkipped ? { math_gate_skipped: true, skipped_rules: [14] } : {}),
+    rules_evaluated: coverage.rules_evaluated,
+    gated_off: coverage.gated_off,
+  }
 
   if (failures.length === 0) {
     return { ok: true, ...diagnostics }
@@ -3119,14 +3349,23 @@ export function reconcileMultiStep(
   // the union of skipped rule numbers, and the record indices that skipped — so a
   // consumer MUST NOT read the bundle ok:true as full verification. Absent when
   // no record skipped (backward-compatible with consumers that ignore them).
-  const diagnostics: ReconciliationDiagnostics =
-    skippedRecordIndices.length > 0
+  //
+  // PH-ENG-02: ALSO attach the bundle-level rule-coverage partition (the union
+  // over records plus the multi-step-only rules 9/10/17/25/26 when their
+  // bundle-spanning gate is satisfied). Additive diagnostics — no verdict / byte
+  // change.
+  const bundleCoverage = classifyBundleCoverage(receipts)
+  const diagnostics: ReconciliationDiagnostics = {
+    ...(skippedRecordIndices.length > 0
       ? {
           math_gate_skipped: true,
           skipped_rules: [...skippedRuleSet].sort((a, b) => a - b),
           math_gate_skipped_records: skippedRecordIndices,
         }
-      : {}
+      : {}),
+    rules_evaluated: bundleCoverage.rules_evaluated,
+    gated_off: bundleCoverage.gated_off,
+  }
 
   return failures.length === 0
     ? { ok: true, ...diagnostics }

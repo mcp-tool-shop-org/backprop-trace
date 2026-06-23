@@ -1837,6 +1837,16 @@ type VerifyReport = {
   math_gate_skipped?: boolean;
   /** G-006: the concrete rule numbers skipped via self-assertion (e.g. [14]). */
   skipped_rules?: number[];
+  /**
+   * PH-ENG-02 (rule-coverage transparency): the documented rules (1..26) that
+   * substantively RAN for this receipt vs were GATED OFF because their feature
+   * block was absent. Sourced from reconcileReceipt's additive diagnostics.
+   * Present whenever reconcile ran (i.e. schema validation passed). Let a
+   * consumer reading a green PASS see which substantive rules actually fired.
+   */
+  rules_evaluated?: number[];
+  /** PH-ENG-02: rules applicable-but-skipped (feature block absent). */
+  gated_off?: number[];
 };
 
 const VALID_AUTHORING_STATES = new Set([
@@ -2193,7 +2203,17 @@ function runVerifyMazur(opts: {
     });
   }
 
-  return finalizeReport(checks, opts);
+  const report = finalizeReport(checks, opts);
+  // PH-ENG-02: carry the rule-coverage partition onto the report (same as the
+  // verify-general path) so the --verbose render + --json envelope expose which
+  // substantive rules ran vs were gated off.
+  if (reconciliation.rules_evaluated !== undefined) {
+    report.rules_evaluated = reconciliation.rules_evaluated;
+  }
+  if (reconciliation.gated_off !== undefined) {
+    report.gated_off = reconciliation.gated_off;
+  }
+  return report;
 }
 
 function finalizeReport(
@@ -2250,8 +2270,67 @@ function renderVerifyReport(report: VerifyReport): string {
       lines.push(evidence);
     }
   }
+  // PH-ENG-02: rule-coverage transparency. A green PASS does not tell the
+  // operator WHICH of the 26 documented rules actually ran — ~14 are gated and
+  // silently no-op when their feature block is absent. Render a coverage line so
+  // the reader can distinguish "9 substantive rules ran" from "all 26 ran".
+  // Shown in --verbose only to keep the default render concise (the machine-
+  // readable arrays are always on the --json report).
+  const coverageLine = formatCoverageLine(report.rules_evaluated, report.gated_off);
+  if (verboseMode && coverageLine !== undefined) {
+    lines.push("");
+    lines.push(`  ${coverageLine}`);
+  }
   lines.push("");
   return lines.join("\n");
+}
+
+/**
+ * PH-ENG-02 — format the rule-coverage summary line, e.g.
+ *   "rules evaluated: 9/26 (gated off, feature absent: 13,16,17,18,19,21-26)".
+ * Returns undefined when coverage data is absent (schema validation failed
+ * before reconcile ran, so there is nothing to report). The gated-off list
+ * collapses consecutive runs (e.g. 21,22,23,24,25,26 -> "21-26") to stay
+ * readable as the rule set grows.
+ */
+function formatCoverageLine(
+  evaluated: number[] | undefined,
+  gatedOff: number[] | undefined,
+): string | undefined {
+  if (evaluated === undefined || gatedOff === undefined) return undefined;
+  const total = evaluated.length + gatedOff.length;
+  const ran = evaluated.length;
+  if (gatedOff.length === 0) {
+    return `rules evaluated: ${ran}/${total} (all applicable rules ran)`;
+  }
+  return `rules evaluated: ${ran}/${total} (gated off, feature absent: ${formatRuleRanges(gatedOff)})`;
+}
+
+/**
+ * Collapse a sorted-ascending list of rule numbers into a compact run notation:
+ * [13,16,17,18,19,21,22,23,24,25,26] -> "13,16-19,21-26". Pure formatter.
+ */
+function formatRuleRanges(nums: number[]): string {
+  if (nums.length === 0) return "";
+  const sorted = [...nums].sort((a, b) => a - b);
+  const parts: string[] = [];
+  let runStart = sorted[0]!;
+  let prev = sorted[0]!;
+  const flush = (): void => {
+    parts.push(runStart === prev ? `${runStart}` : `${runStart}-${prev}`);
+  };
+  for (let i = 1; i < sorted.length; i += 1) {
+    const n = sorted[i]!;
+    if (n === prev + 1) {
+      prev = n;
+    } else {
+      flush();
+      runStart = n;
+      prev = n;
+    }
+  }
+  flush();
+  return parts.join(",");
 }
 
 // =============================================================================
@@ -2767,6 +2846,10 @@ function runImportFramework(
         fieldPath: string;
         delta: number;
         appliedTolerance: number;
+        // ING-B-004: the two operands behind `delta` — `stored` is the
+        // receipt/sidecar-claimed value, `recomputed` is the engine value.
+        stored: number;
+        recomputed: number;
       }>;
     }
   >(libExportName);
@@ -2866,7 +2949,7 @@ function runImportFramework(
   );
   for (const d of result.differentialDisagreements.slice(0, 10)) {
     process.stderr.write(
-      `  ${color("disagree", RED, useColor)} ${d.fieldPath}: delta=${d.delta} (tolerance=${d.appliedTolerance})\n`,
+      `  ${color("disagree", RED, useColor)} ${d.fieldPath}: stored=${d.stored} recomputed=${d.recomputed} delta=${d.delta} (tolerance=${d.appliedTolerance})\n`,
     );
   }
   if (result.differentialDisagreements.length > 10) {
@@ -2874,6 +2957,18 @@ function runImportFramework(
       `  ... and ${result.differentialDisagreements.length - 10} more.\n`,
     );
   }
+  // ING-B-004: the import-time render now carries the two operands behind each
+  // delta — `stored` (the receipt/sidecar-claimed value) and `recomputed` (the
+  // engine value) — so an operator can tell a real tamper (large, structured
+  // divergence) from benign FP/Node drift WITHOUT re-running the gate. The
+  // emitted receipt's Rule-14 failures carry the same quartet under --json, and
+  // `bp verify general` remains the source of truth for the full per-field
+  // differential across the whole field set; this render is the at-import
+  // preview of it.
+  process.stderr.write(
+    `  Values above are stored (receipt-claimed) vs recomputed (engine). For the\n` +
+      `  full per-field differential, run: bp verify general <emitted-receipt> --json\n`,
+  );
   process.stderr.write("\n");
   process.exit(1);
 }
@@ -2966,6 +3061,10 @@ function runImportFrameworkStream(
           fieldPath: string;
           delta: number;
           appliedTolerance: number;
+          // ING-B-004: `stored` = receipt/sidecar-claimed value;
+          // `recomputed` = engine value behind `delta`.
+          stored: number;
+          recomputed: number;
         }>;
       }>;
     }
@@ -3081,10 +3180,19 @@ function runImportFrameworkStream(
     process.stderr.write(`  step ${idx}: ${s.differentialDisagreements.length} field(s) disagreed\n`);
     for (const d of s.differentialDisagreements.slice(0, 5)) {
       process.stderr.write(
-        `    ${color("disagree", RED, useColor)} ${d.fieldPath}: delta=${d.delta} (tolerance=${d.appliedTolerance})\n`,
+        `    ${color("disagree", RED, useColor)} ${d.fieldPath}: stored=${d.stored} recomputed=${d.recomputed} delta=${d.delta} (tolerance=${d.appliedTolerance})\n`,
       );
     }
   }
+  // ING-B-004: see the single-step import render for rationale — the render now
+  // carries each delta's two operands inline (stored = receipt-claimed,
+  // recomputed = engine), so an operator can triage a real tamper vs FP/Node
+  // drift without re-running the gate. `bp verify multi` of the emitted bundle
+  // remains the source of truth for the full per-field differential.
+  process.stderr.write(
+    `  Values above are stored (receipt-claimed) vs recomputed (engine). For the\n` +
+      `  full per-field differential, run: bp verify multi <emitted-bundle.jsonl> --json\n`,
+  );
   process.stderr.write("\n");
   process.exit(1);
 }
@@ -3336,6 +3444,15 @@ function runVerifyGeneral(opts: {
     report.math_gate_skipped = true;
     report.skipped_rules = mathGateSkippedRules ?? [14];
   }
+  // PH-ENG-02: carry the rule-coverage partition onto the report so the
+  // --verbose render and the --json envelope both expose which substantive
+  // rules ran vs were gated off (feature block absent).
+  if (reconciliation.rules_evaluated !== undefined) {
+    report.rules_evaluated = reconciliation.rules_evaluated;
+  }
+  if (reconciliation.gated_off !== undefined) {
+    report.gated_off = reconciliation.gated_off;
+  }
   return report;
 }
 
@@ -3371,6 +3488,16 @@ type VerifyMultiReport = {
   math_gate_skipped?: boolean;
   /** Concrete rule numbers skipped via self-assertion (currently [14]). */
   skipped_rules?: number[];
+  /**
+   * PH-ENG-02: the documented rules (1..26) that substantively ran ACROSS the
+   * bundle (union over records + the multi-step-only rules 9/10/17/25/26 when
+   * their bundle-spanning gate is satisfied) vs were gated off. Present only
+   * when the cross-record pass ran (every record passed schema). Lets a
+   * consumer reading a green bundle PASS see which substantive rules fired.
+   */
+  rules_evaluated?: number[];
+  /** PH-ENG-02: bundle rules applicable-but-skipped (feature block absent). */
+  gated_off?: number[];
 };
 
 /**
@@ -3480,6 +3607,11 @@ function runVerifyMulti(opts: {
   // chains and Rule 10 checks trace_id/step_index, neither of which is
   // safe on a structurally invalid record.
   const crossChecks: VerifyCheck[] = [];
+  // PH-ENG-02: bundle-level rule-coverage, populated from reconcileMultiStep
+  // when the cross-record pass runs (all records valid). Undefined when the
+  // cross pass is skipped (a record failed schema) — nothing to report then.
+  let bundleRulesEvaluated: number[] | undefined;
+  let bundleGatedOff: number[] | undefined;
   const allRecordsValidated = typedReceipts.length === records.length;
   if (!allRecordsValidated) {
     crossChecks.push({
@@ -3496,18 +3628,30 @@ function runVerifyMulti(opts: {
     // normal path, so older helper builds that don't set it are handled too (the
     // per-record detection above is the independent floor).
     type MultiStepResult =
-      | { ok: true; math_gate_skipped?: boolean; skipped_rules?: number[] }
+      | {
+          ok: true;
+          math_gate_skipped?: boolean;
+          skipped_rules?: number[];
+          rules_evaluated?: number[];
+          gated_off?: number[];
+        }
       | {
           ok: false;
           failures: ReconciliationFailure[];
           math_gate_skipped?: boolean;
           skipped_rules?: number[];
+          rules_evaluated?: number[];
+          gated_off?: number[];
         };
     const reconcileMultiStep = requireLibExport<
       (receipts: unknown[]) => MultiStepResult
     >("reconcileMultiStep");
     try {
       const multi = reconcileMultiStep(typedReceipts);
+      // PH-ENG-02: capture the bundle-level rule-coverage partition so the
+      // multi report can expose which substantive rules ran across the bundle.
+      if (multi.rules_evaluated !== undefined) bundleRulesEvaluated = multi.rules_evaluated;
+      if (multi.gated_off !== undefined) bundleGatedOff = multi.gated_off;
       // Fold the aggregated skip signal into the same accumulators the
       // per-record loop populated (Set/array de-dupe handle the overlap).
       if (multi.math_gate_skipped === true) {
@@ -3618,6 +3762,10 @@ function runVerifyMulti(opts: {
     ...(mathGateSkipped
       ? { math_gate_skipped: true, skipped_rules: mathGateSkippedRules }
       : {}),
+    ...(bundleRulesEvaluated !== undefined
+      ? { rules_evaluated: bundleRulesEvaluated }
+      : {}),
+    ...(bundleGatedOff !== undefined ? { gated_off: bundleGatedOff } : {}),
   };
 }
 
@@ -3667,6 +3815,14 @@ function renderVerifyMultiReport(report: VerifyMultiReport): string {
         .join("\n");
       lines.push(evidence);
     }
+  }
+  // PH-ENG-02: bundle rule-coverage transparency (--verbose only, same as the
+  // single-receipt verify path). Lets the reader see which substantive rules
+  // ran across the bundle vs were gated off because their feature is absent.
+  const coverageLine = formatCoverageLine(report.rules_evaluated, report.gated_off);
+  if (verboseMode && coverageLine !== undefined) {
+    lines.push("");
+    lines.push(`  ${coverageLine}`);
   }
   lines.push("");
   return lines.join("\n");
@@ -3769,6 +3925,13 @@ function runReconcileReceipt(file: string): void {
   if (result.ok && !mathGateSkipped) {
     if (jsonMode) {
       process.stdout.write(`${JSON.stringify({ ok: true })}\n`);
+    } else if (verboseMode) {
+      // PH-ENG-02: in --verbose human mode, surface which of the 26 documented
+      // rules actually ran vs were gated off (feature absent). Goes to stderr so
+      // the stdout contract is untouched (and --json's `{"ok":true}` stays
+      // byte-exact — this branch is human-mode only).
+      const coverageLine = formatCoverageLine(result.rules_evaluated, result.gated_off);
+      if (coverageLine !== undefined) verboseLog(coverageLine);
     }
     process.exit(0);
   }
@@ -3861,6 +4024,15 @@ if (argv[0] === "reconcile") {
       "incomplete command 'reconcile'. Did you mean 'bp reconcile receipt <file>'? Run 'bp --help' for usage.",
     );
   }
+  // cli-stageb-001: verb-level --help/-h. `bp reconcile --help` (no subnoun)
+  // prints the receipt usage (reconcile's only subcommand) and exits 0 —
+  // mirroring the import/examples/validate/validate-input verbs that already
+  // honor --help at the verb level. Checked BEFORE the subnoun guard so
+  // `--help` is not mistaken for an unknown subcommand.
+  if (argv[1] === "--help" || argv[1] === "-h") {
+    process.stdout.write(receiptUsageText());
+    process.exit(0);
+  }
   if (argv[1] !== "receipt") {
     exitWithUsageError(
       `unknown subcommand 'reconcile ${argv[1]}'. Did you mean 'bp reconcile receipt <file>'? Run 'bp --help' for usage.`,
@@ -3910,6 +4082,14 @@ if (argv[0] === "verify") {
     exitWithUsageError(
       "incomplete command 'verify'. Did you mean 'bp verify mazur', 'bp verify general <file>', or 'bp verify multi <file.jsonl>'? Run 'bp --help' for usage.",
     );
+  }
+  // cli-stageb-001: verb-level --help/-h. `bp verify --help` (no subnoun)
+  // prints the top-level usage (which documents all three verify subnouns —
+  // mazur / general / multi) and exits 0. Each subnoun still honors its own
+  // --help below; this closes the verb-level gap so every verb responds.
+  if (argv[1] === "--help" || argv[1] === "-h") {
+    process.stdout.write(usageText());
+    process.exit(0);
   }
 
   // ---------------------------------------------------------------------------
@@ -4079,6 +4259,14 @@ if (argv[0] === "generate") {
       "incomplete command 'generate'. Did you mean 'bp generate mazur', 'bp generate xor', 'bp generate iris', or 'bp generate from-config <file>'? Run 'bp --help' for usage.",
     );
   }
+  // cli-stageb-001: verb-level --help/-h. `bp generate --help` (no subnoun)
+  // prints the top-level usage (which documents all generate subnouns —
+  // mazur / xor / iris / from-config) and exits 0. Subnouns still honor
+  // their own --help below.
+  if (argv[1] === "--help" || argv[1] === "-h") {
+    process.stdout.write(usageText());
+    process.exit(0);
+  }
   if (argv[1] === "mazur") {
     if (argv[2] === "--help" || argv[2] === "-h") {
       process.stdout.write(generateUsageText());
@@ -4179,6 +4367,13 @@ if (argv[0] === "scaffold") {
     exitWithUsageError(
       "incomplete command 'scaffold'. Did you mean 'bp scaffold topology --topology mazur|xor|iris'? Run 'bp --help' for usage.",
     );
+  }
+  // cli-stageb-001: verb-level --help/-h. `bp scaffold --help` (no subnoun)
+  // prints the topology scaffold usage (scaffold's only subcommand) and
+  // exits 0. The `topology` subnoun still honors its own --help below.
+  if (argv[1] === "--help" || argv[1] === "-h") {
+    process.stdout.write(scaffoldTopologyUsageText());
+    process.exit(0);
   }
   if (argv[1] === "topology") {
     if (argv[2] === "--help" || argv[2] === "-h") {

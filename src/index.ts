@@ -35,7 +35,8 @@
  *     ./parse-input for the new topology-input schema family
  *   - hashReceipt + HashAlgorithm from ./hash
  *   - getReceiptSchema + SCHEMA_VERSIONS + SchemaVersion from ./schema-loader
- *     (v0.5: SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0"])
+ *     (SCHEMA_VERSIONS = ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0",
+ *     "0.6.0", "0.7.0"] — the seven shipped receipt-schema versions)
  *   - v0.4: getInputSchema + INPUT_SCHEMA_VERSIONS + InputSchemaVersion
  *     from ./schema-loader (INPUT_SCHEMA_VERSIONS = ["0.4.0"])
  *   - verifyEngineReproduces + VerifyEngineResult from ./verify-engine, plus
@@ -46,7 +47,9 @@
  *
  * The CLI lives in ./bin/bp and is exposed via package.json bin.
  *
- * Receipt schemas are shipped at schemas/receipt.v{0.1.0,0.2.0,0.3.0}.json
+ * Receipt schemas are shipped at schemas/receipt.v{0.1.0..0.7.0}.json (seven
+ * versions); the framework-trace sidecar schemas at
+ * schemas/framework-trace.v{0.1.0..0.7.0}.json
  * (importable via the "@mcptoolshop/backprop-trace/schema/0.1.0",
  * "@mcptoolshop/backprop-trace/schema/0.2.0", and
  * "@mcptoolshop/backprop-trace/schema/0.3.0" subpath exports;

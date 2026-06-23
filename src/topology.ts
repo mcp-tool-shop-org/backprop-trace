@@ -134,6 +134,11 @@ export const TOPOLOGY_SIZE_CEILING = 512 as const
  * fast at the engine boundary.
  *
  * Invariants checked:
+ *  0. (PH-ENG-01 / core-B-003) Each per-layer size is within
+ *     [1, TOPOLOGY_SIZE_CEILING]. The lower bound rejects degenerate
+ *     size-0 (or non-integer) layers that would otherwise reconcile as a
+ *     vacuous green PASS; the upper bound rejects adversarial sizes that
+ *     would hang/OOM the engine.
  *  1. `unit_order.{input,hidden,output}` lengths match `{input,hidden,
  *     output}_size`.
  *  2. Unit ids are unique across all three layers (no h1 reused as o1,
@@ -174,6 +179,26 @@ export function assertTopologyValid(t: Topology): void {
     ["hidden_size", t.hidden_size],
     ["output_size", t.output_size],
   ] as const) {
+    // PH-ENG-01. Degenerate-topology FLOOR — mirror of the ceiling above.
+    // A per-layer size of 0 (or any sub-1 / non-integer value) describes a
+    // network with no input, hidden, or output units in that layer. Such a
+    // topology runs end-to-end and reconciles as a vacuous green PASS:
+    // loss.total === 0, zero output_error_signals, an empty update set — a
+    // "verified" training step that verifies nothing. That is the same false-
+    // PASS defect class the wiring/fan-in checks defend against, so it is
+    // rejected at the SAME boundary. Checked alongside the ceiling (before the
+    // O(n^2) fan-in validation) so a degenerate size fails fast with a clear,
+    // path-naming message instead of producing a meaningless receipt. Each
+    // dimension named separately so the caller knows which to grow.
+    if (!Number.isInteger(size) || size < 1) {
+      throw new Error(
+        `Topology: ${dim} (${size}) is below the verifier minimum of 1. ` +
+          `Hint: a verifiable training step needs at least one input/hidden/output ` +
+          `unit; size 0 produces a vacuous receipt (loss.total 0, no output error ` +
+          `signals, no updates) that reconciles as a green PASS while verifying nothing. ` +
+          `Each of input_size, hidden_size, and output_size MUST be an integer >= 1.`,
+      )
+    }
     if (size > TOPOLOGY_SIZE_CEILING) {
       throw new Error(
         `Topology: ${dim} (${size}) exceeds verifier maximum TOPOLOGY_SIZE_CEILING (${TOPOLOGY_SIZE_CEILING}). ` +
