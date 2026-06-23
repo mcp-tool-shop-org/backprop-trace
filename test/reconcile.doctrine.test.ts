@@ -144,6 +144,13 @@ const FILENAME_KIND_TO_RULE: Record<string, number> = {
   // uses rule: 0, so its fixture maps to 0, not 0.8.
   "bad-prob-bound": 0,
   "prob-bound": 0,
+  // v0.12 Rule 0.9 (forward-map completeness, a Rule 0 sub-check). Dropping a
+  // declared output unit from `forward` while keeping it in unit_order.output
+  // (and a legitimately-0 loss.per_output entry) used to reconcile ok:true
+  // because Rules 0.8/11/12 silently skip a missing forward unit; Rule 0.9
+  // fails it closed. Failure record uses rule: 0, so the fixture maps to 0.
+  "bad-forward-unit-dropped": 0,
+  "forward-unit-dropped": 0,
   "bad-softmax-sum": 11,
   "softmax-sum": 11,
   "bad-ce-per-output": 12,
@@ -605,6 +612,18 @@ const SCHEMA_BYPASS_FIXTURES = new Set<string>([
   "adam.bad-amsgrad-confusion.jsonl",
   "momentum.bad-coefficient-omitted.jsonl",
   "batch.bad-sample-order-duplicate.jsonl", // schema uniqueItems is the primary gate (Rule 19 is defense-in-depth)
+  // R14-PERSAMPLE-OMISSION (Stage A iter-2): these drop a REQUIRED per-sample
+  // field (ForwardUnit.net / Loss.total), so schema validation (ForwardUnit.required
+  // / Loss.required) is the front-line gate. The dedicated behavioral test
+  // (test/reconcile.bad-per-sample-omission.test.ts) owns the reconcileReceipt
+  // proof: it asserts reconcileReceipt() ITSELF fails closed with a Rule 14
+  // COMPLETENESS failure WITHOUT schema validation, since library callers may
+  // reconcile without first schema-validating. The schema-PERMITTED variant
+  // (batch.bad-per-sample-forward-unit-dropped — open ForwardMap) is NOT listed
+  // here: it schema-validates and its Rule 14 COMPLETENESS rejection is verified
+  // by this doctrine loop directly.
+  "batch.bad-per-sample-forward-field-dropped.jsonl", // schema ForwardUnit.required=[net,out] is the primary gate
+  "batch.bad-per-sample-loss-total-dropped.jsonl", // schema Loss.required=[total] is the primary gate
 ]);
 
 // pytorch-helper.bad-* fixtures have a DEDICATED behavioral test file

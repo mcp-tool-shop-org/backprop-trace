@@ -290,7 +290,7 @@ export type ReconciliationResult =
  * source.
  */
 export const RULE_DESCRIPTIONS: Record<number, string> = {
-  0: "Structural failure: receipt-internal contradiction (shape invalid, unsupported product_order, non-finite arithmetic, OR v0.4.1+ cross-consistency between bias_policy.mode / bias_sharing / Update.kind / topology declarations; v0.5 adds Rule 0.8 sub-check: softmax probability bounds).",
+  0: "Structural failure: receipt-internal contradiction (shape invalid, unsupported product_order, non-finite arithmetic, OR v0.4.1+ cross-consistency between bias_policy.mode / bias_sharing / Update.kind / topology declarations; v0.5 adds Rule 0.8 sub-check: softmax probability bounds; v0.12 adds Rule 0.9 sub-check: forward-map completeness — forward key set == unit_order.hidden ∪ output).",
   1: "Output error signal consistency: signal_value == product(factors), left-to-right.",
   2: "Downstream contribution and backpropagated sum: contribution.value == downstream_signal * weight_value AND backpropagated_sum == sum(contributions in summation_order).",
   3: "Hidden error signal consistency: signal_value == backpropagated_sum * activation_derivative, left-to-right.",
@@ -1088,6 +1088,21 @@ export function reconcileReceipt(receipt: unknown): ReconciliationResult {
   // authoring_state === "external_imported".
   checkRule0ObserverProvenanceConsistency(r, failures)
 
+  // --- Rule 0 (Rule 0.9): forward-map completeness ---------------------
+  // When topology.unit_order.output is present, the forward map's key set MUST
+  // EQUAL unit_order.hidden ∪ unit_order.output (every declared forward unit
+  // present with numeric net AND out; no missing, no extra). Closes the
+  // gated-rule omission hole: Rules 0.8 (prob bounds), 11 (softmax norm), and
+  // 12 (loss formula) each silently SKIP a forward output unit they don't find,
+  // so an engine_generated softmax+CE receipt (Rule 14 off) that drops one
+  // output from `forward` — while keeping it in unit_order.output and keeping a
+  // legitimately-0 loss.per_output entry (G-018 satisfied) — would reconcile
+  // ok:true even though the surviving outputs no longer sum to 1.0. Mirrors
+  // G-018's loss-component coherence and Rule 14 ENG-2's forward completeness
+  // onto the normal per-receipt path so the omission fails closed. Schema
+  // does NOT catch it (ForwardMap is an open additionalProperties map).
+  checkRule0ForwardCompleteness(r, failures)
+
   if (failures.length > 0) {
     return { ok: false, failures }
   }
@@ -1567,6 +1582,172 @@ function checkRule0ObserverProvenanceConsistency(
       `is genuinely engine-authored. Csmith/CompCert anti-circularity: a receipt's self-label may ` +
       `not suppress the check that judges it.`,
   })
+}
+
+/**
+ * Rule 0.9 (structural): forward-map completeness against the declared
+ * topology. A Rule 0 sub-check (failure record uses `rule: 0` with "Rule 0.9"
+ * in the message), gated identically to G-018's loss-component coherence and
+ * mirroring Rule 14's ENG-2 forward-completeness discipline onto the NORMAL
+ * per-receipt path (Rule 14 only runs for external_imported receipts).
+ *
+ * THE HOLE THIS CLOSES: the gated forward-side rules each iterate over the
+ * forward keys they FIND and silently skip a unit they DON'T:
+ *   - Rule 11 (softmax normalization): `anyMissing` → bare `return`.
+ *   - Rule 0.8 (probability bounds): `if (!f || typeof f.out !== "number") continue`.
+ *   - Rule 12 (cross_entropy_softmax): missing `.out` → `totalReconstructable = false`
+ *     and `continue`, so neither the per-output nor the total loss is checked for it.
+ * So an `engine_generated` softmax+CE receipt (Rule 14 off by design) that
+ * DROPS one output unit from `forward` while keeping it declared in
+ * `topology.unit_order.output` — and keeping its `loss.per_output` entry (G-018
+ * stays satisfied; legitimately 0 when that unit's target is 0) — reconciles
+ * ok:true even though the SURVIVING forward outputs do NOT sum to 1.0. Schema
+ * validation does not catch it either: `ForwardMap` is an open
+ * additionalProperties map with no per-output-unit requirement. A dropped
+ * forward unit must FAIL CLOSED here, before Rules 0.8/11/12 get a chance to
+ * skip it.
+ *
+ * The contract: when `topology.unit_order.output` is present, the forward map's
+ * key set MUST EQUAL `unit_order.hidden ∪ unit_order.output` (the units that
+ * carry forward activations — inputs are not in `forward`). Every such declared
+ * unit must be present with BOTH a numeric `net` and a numeric `out` (mirrors
+ * the schema's `ForwardUnit.required = [net, out]` and Rule 14 ENG-2's "must
+ * carry BOTH"); no unit missing, no undeclared/extra unit. Hidden units get the
+ * same treatment as outputs: a dropped hidden forward unit would dangle the
+ * `from: "forward.h*.out"` upstream-activation provenance references that
+ * Rules 4/8 resolve, so the completeness floor covers them too.
+ *
+ * Division of labor with Rule 14 (so the two completeness checks don't collide
+ * or leave a gap): Rule 14's ENG-2 already enforces forward completeness for
+ * observer-mode receipts (authoring_state === "external_imported" OR observer
+ * markers present) via the engine-recompute differential. Rule 0.9 owns the
+ * COMPLEMENT — engine-side / no-marker receipts, where Rule 14 no-ops "by
+ * design" and the hole actually lived. The gate is the exact negation of Rule
+ * 14's trigger, so an observer receipt is left for Rule 14 (its ENG-2 attributes
+ * the omission to the engine recompute) rather than being short-circuited here.
+ *
+ * Gated identically to the rest of the unit-order-dependent behavior:
+ *   - No-ops for observer-mode receipts (Rule 14 owns those — see above).
+ *   - No-ops when `topology.unit_order.output` is absent or empty (v0.1 Mazur
+ *     receipts declare no unit_order; byte-identical behavior for them).
+ *   - A wholly-absent `forward` map under a non-empty declared output set is
+ *     itself a completeness failure (every declared unit reads as missing) —
+ *     the drop-the-entire-forward variant of the same omission class.
+ *
+ * Deterministic emission: missing-unit failures are emitted in declared order
+ * (hidden then output, each in `unit_order` order); extra-key failures in
+ * forward-map insertion order (`Object.keys`). Pure set/shape difference over
+ * stable orders — no wall-clock, randomness, or locale formatting.
+ */
+function checkRule0ForwardCompleteness(
+  r: Receipt,
+  failures: ReconciliationFailure[],
+): void {
+  // DIVISION OF LABOR with Rule 14: forward-map completeness for observer-mode
+  // receipts is already owned by Rule 14's ENG-2 check (engine-recompute
+  // differential — "the receipt's forward key set must EQUAL the engine's
+  // recomputed key set; every unit must carry BOTH net and out"). Rule 14 runs
+  // whenever authoring_state === "external_imported" OR observer markers are
+  // present (see the gate in checkRule14EngineRecomputeDifferential). Rule 0.9
+  // owns the COMPLEMENT — the engine-side / no-marker receipts where Rule 14
+  // no-ops "by design", which is EXACTLY where the hole lived (Rules 0.8/11/12
+  // silently skip a dropped forward unit and nothing else re-derives the forward
+  // pass). Gating on the complement keeps Rule 0.9 from short-circuiting an
+  // observer receipt before Rule 14's ENG-2 differential can attribute the
+  // omission to the engine recompute, while still failing the engine-side hole
+  // closed.
+  const authoringState = r.fixture_status?.authoring_state
+  if (authoringState === "external_imported" || hasObserverMarkers(r)) return
+
+  const unitOrder = r.topology?.unit_order
+  if (!unitOrder) return
+  const declaredOutput = unitOrder.output
+  if (!Array.isArray(declaredOutput) || declaredOutput.length === 0) return
+  const declaredHidden = Array.isArray(unitOrder.hidden) ? unitOrder.hidden : []
+
+  // Units that carry forward activations: hidden ∪ output (inputs are not in
+  // `forward`). Iterate hidden first, then output, for deterministic emission.
+  const declaredForwardUnits = [...declaredHidden, ...declaredOutput]
+  const declaredSet = new Set<string>(declaredForwardUnits)
+
+  const forward = r.forward ?? {}
+
+  // MISSING / INCOMPLETE: every declared forward unit must be present with BOTH
+  // a numeric net and a numeric out. A unit absent from `forward`, or present
+  // but carrying a non-numeric/absent scalar, lets Rules 0.8/11/12 skip it —
+  // raise rather than skip so the omission fails closed.
+  for (const unitId of declaredForwardUnits) {
+    const f = forward[unitId]
+    if (!f || typeof f !== "object") {
+      failures.push({
+        rule: 0,
+        parameter_id: unitId,
+        field_path: `forward.${unitId}`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 0.9 (forward completeness): topology.unit_order declares forward unit ${JSON.stringify(unitId)} ` +
+          `but the forward map has NO entry for it. A dropped forward unit is a SELECTIVE-OMISSION laundering ` +
+          `attempt — Rules 0.8/11/12 iterate only the forward keys present and silently skip a missing one, so a ` +
+          `softmax+CE receipt whose surviving outputs do not sum to 1.0 would reconcile ok:true. forward's key ` +
+          `set must EQUAL unit_order.hidden ∪ unit_order.output (G-018 / Rule-14 ENG-2 key-set-EQUAL discipline).`,
+      })
+      continue
+    }
+    if (typeof f.net !== "number") {
+      failures.push({
+        rule: 0,
+        parameter_id: unitId,
+        field_path: `forward.${unitId}.net`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 0.9 (forward completeness): forward unit ${JSON.stringify(unitId)} is missing its numeric ` +
+          `net value. A forward unit must carry BOTH net and out (schema ForwardUnit.required) so neither ` +
+          `escapes reconciliation by omission.`,
+      })
+    }
+    if (typeof f.out !== "number") {
+      failures.push({
+        rule: 0,
+        parameter_id: unitId,
+        field_path: `forward.${unitId}.out`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 0.9 (forward completeness): forward unit ${JSON.stringify(unitId)} is missing its numeric ` +
+          `out value. Rules 0.8 (probability bounds), 11 (softmax normalization), and 12 (loss formula) all ` +
+          `consume forward.${unitId}.out and silently skip a non-numeric one — it must be present and numeric.`,
+      })
+    }
+  }
+
+  // EXTRA: a forward key that is not a declared hidden/output unit. forward
+  // never carries input units, so an undeclared key is an undeclared unit
+  // smuggled past the per-unit rules. Emit in insertion order for determinism.
+  for (const unitId of Object.keys(forward)) {
+    if (!declaredSet.has(unitId)) {
+      failures.push({
+        rule: 0,
+        parameter_id: unitId,
+        field_path: `forward.${unitId}`,
+        stored: 0,
+        recomputed: 0,
+        delta: 0,
+        tolerance: 0,
+        message:
+          `Rule 0.9 (forward completeness): the forward map declares unit ${JSON.stringify(unitId)} that is ` +
+          `not in topology.unit_order.hidden ∪ output. forward's key set must EQUAL the declared hidden+output ` +
+          `unit set (no extra/undeclared forward units).`,
+      })
+    }
+  }
 }
 
 /**
@@ -4243,29 +4424,173 @@ function checkRule14EngineRecomputeDifferential(
     for (const sid of Object.keys(enginePerSample)) {
       const eSample = enginePerSample[sid]
       const rSample = receiptPerSample[sid]
-      if (!eSample || !rSample) continue // schema-level; not Rule 14's domain
-      // per_sample[sid].forward[*].{net, out}
-      for (const uId of Object.keys(eSample.forward)) {
-        const eUnit = eSample.forward[uId]
-        const rUnit = rSample.forward?.[uId]
-        if (!eUnit || !rUnit) continue
-        compareScalar(`per_sample.${sid}.forward.${uId}.net`, eUnit.net, rUnit.net)
-        compareScalar(`per_sample.${sid}.forward.${uId}.out`, eUnit.out, rUnit.out)
+      // A whole per-sample entry absent from the receipt is Rule 19's domain
+      // (it asserts per_sample's KEY SET equals batch.sample_order). Don't
+      // double-report here; the per-sample sub-field completeness below owns
+      // the NESTED dimension (forward unit / loss component / loss.total).
+      if (!eSample || !rSample) continue
+      // R14-PERSAMPLE-OMISSION (COMPLETENESS), per-sample forward dimension.
+      // Pre-fix this loop iterated the ENGINE's per-sample forward keys with
+      // `if (!eUnit || !rUnit) continue`, and fed rUnit.net/out into
+      // compareScalar (which early-returns on a non-number). So a batched
+      // observer receipt could DROP a nested per_sample[sid].forward.<u>.net
+      // (or .out, or the whole unit) and the omitted forward value escaped — a
+      // residual false-PASS. Rule 19 only checks the per_sample KEY SET (catches
+      // a dropped WHOLE sample), NOT a dropped NESTED forward field; this
+      // per-sample differential is the SOLE check on per-sample forward values.
+      // Mirror the top-level forward fix (ENG-2): the receipt's per-sample
+      // forward key set must EQUAL the engine's recomputed per-sample forward
+      // key set, and each present unit must carry BOTH net and out (raise rather
+      // than skip/early-return).
+      const rForward = rSample.forward ?? {}
+      const eForwardKeys = Object.keys(eSample.forward)
+      const eForwardSet = new Set<string>(eForwardKeys)
+      for (const uId of eForwardKeys) {
+        const eUnit = eSample.forward[uId]!
+        const rUnit = rForward[uId]
+        // COMPLETENESS — per-sample forward unit absent from the receipt.
+        if (!rUnit) {
+          failures.push({
+            rule: 14,
+            field_path: `per_sample.${sid}.forward.${uId}`,
+            stored: 0,
+            recomputed: 0,
+            delta: 0,
+            tolerance: 0,
+            message:
+              `Rule 14 (engine-recompute COMPLETENESS): the engine recomputed per-sample forward unit ` +
+              `${JSON.stringify(uId)} for sample ${JSON.stringify(sid)} (net=${eUnit.net}, out=${eUnit.out}) but ` +
+              `the receipt's per_sample.${sid}.forward map has NO entry for it. A dropped per-sample forward ` +
+              `unit is a SELECTIVE-OMISSION laundering attempt — per_sample[sid].forward's key set must EQUAL ` +
+              `the engine's recomputed per-sample forward key set (G-018 / Rule-19 key-set-EQUAL discipline, ` +
+              `per-sample forward dimension).`,
+          })
+          continue
+        }
+        // COMPLETENESS — a present per-sample forward unit must carry BOTH net
+        // and out. compareScalar early-returns on a non-number, so a unit that
+        // drops just .net (keeping .out) would otherwise skip the comparison.
+        if (typeof rUnit.net !== "number") {
+          failures.push({
+            rule: 14,
+            field_path: `per_sample.${sid}.forward.${uId}.net`,
+            stored: 0,
+            recomputed: eUnit.net,
+            delta: 0,
+            tolerance: 0,
+            message:
+              `Rule 14 (engine-recompute COMPLETENESS): receipt per-sample forward unit ${JSON.stringify(uId)} ` +
+              `(sample ${JSON.stringify(sid)}) is missing its net value but the engine recomputed net=${eUnit.net}. ` +
+              `A per-sample forward unit must carry BOTH net and out so neither escapes the differential by omission.`,
+          })
+        } else {
+          compareScalar(`per_sample.${sid}.forward.${uId}.net`, eUnit.net, rUnit.net)
+        }
+        if (typeof rUnit.out !== "number") {
+          failures.push({
+            rule: 14,
+            field_path: `per_sample.${sid}.forward.${uId}.out`,
+            stored: 0,
+            recomputed: eUnit.out,
+            delta: 0,
+            tolerance: 0,
+            message:
+              `Rule 14 (engine-recompute COMPLETENESS): receipt per-sample forward unit ${JSON.stringify(uId)} ` +
+              `(sample ${JSON.stringify(sid)}) is missing its out value but the engine recomputed out=${eUnit.out}. ` +
+              `A per-sample forward unit must carry BOTH net and out so neither escapes the differential by omission.`,
+          })
+        } else {
+          compareScalar(`per_sample.${sid}.forward.${uId}.out`, eUnit.out, rUnit.out)
+        }
       }
-      // per_sample[sid].loss.per_output[*]
-      for (const uId of Object.keys(eSample.loss.per_output)) {
+      // COMPLETENESS — extra per-sample forward unit in the receipt not produced
+      // by the engine. Emit in receipt insertion order for determinism.
+      for (const uId of Object.keys(rForward)) {
+        if (!eForwardSet.has(uId)) {
+          failures.push({
+            rule: 14,
+            field_path: `per_sample.${sid}.forward.${uId}`,
+            stored: 0,
+            recomputed: 0,
+            delta: 0,
+            tolerance: 0,
+            message:
+              `Rule 14 (engine-recompute COMPLETENESS): the receipt's per_sample.${sid}.forward map declares unit ` +
+              `${JSON.stringify(uId)} that the engine did NOT recompute. per_sample[sid].forward's key set must ` +
+              `EQUAL the engine's recomputed per-sample forward key set (no extra/undeclared forward units).`,
+          })
+        }
+      }
+      // COMPLETENESS — per-sample loss.per_output dimension. The receipt's
+      // per-sample loss.per_output key set must EQUAL the engine's recomputed
+      // per-sample loss.per_output key set (a dropped per-sample loss component
+      // escapes the differential exactly as a dropped top-level component does).
+      const rLossPerOutput = rSample.loss?.per_output ?? {}
+      const eLossPerOutputKeys = Object.keys(eSample.loss.per_output)
+      const eLossPerOutputSet = new Set<string>(eLossPerOutputKeys)
+      for (const uId of eLossPerOutputKeys) {
+        const rVal = rLossPerOutput[uId]
+        if (typeof rVal !== "number") {
+          failures.push({
+            rule: 14,
+            field_path: `per_sample.${sid}.loss.per_output.${uId}`,
+            stored: 0,
+            recomputed: eSample.loss.per_output[uId]!,
+            delta: 0,
+            tolerance: 0,
+            message:
+              `Rule 14 (engine-recompute COMPLETENESS): the engine recomputed per-sample loss.per_output ` +
+              `${JSON.stringify(uId)} (sample ${JSON.stringify(sid)}) = ${eSample.loss.per_output[uId]} but the ` +
+              `receipt is missing it. per_sample[sid].loss.per_output's key set must EQUAL the engine's recomputed ` +
+              `key set so no per-sample loss component escapes the differential by omission.`,
+          })
+        } else {
+          compareScalar(
+            `per_sample.${sid}.loss.per_output.${uId}`,
+            eSample.loss.per_output[uId]!,
+            rVal,
+          )
+        }
+      }
+      for (const uId of Object.keys(rLossPerOutput)) {
+        if (!eLossPerOutputSet.has(uId)) {
+          failures.push({
+            rule: 14,
+            field_path: `per_sample.${sid}.loss.per_output.${uId}`,
+            stored: 0,
+            recomputed: 0,
+            delta: 0,
+            tolerance: 0,
+            message:
+              `Rule 14 (engine-recompute COMPLETENESS): the receipt's per_sample.${sid}.loss.per_output declares ` +
+              `output ${JSON.stringify(uId)} that the engine did NOT recompute. The key set must EQUAL the engine's ` +
+              `recomputed key set (no extra/undeclared per-sample per-output losses).`,
+          })
+        }
+      }
+      // COMPLETENESS — per_sample[sid].loss.total must be present and numeric.
+      // compareScalar early-returns on a non-number, so a DROPPED per-sample
+      // loss.total would otherwise skip the comparison entirely (false PASS).
+      if (typeof rSample.loss?.total !== "number") {
+        failures.push({
+          rule: 14,
+          field_path: `per_sample.${sid}.loss.total`,
+          stored: 0,
+          recomputed: eSample.loss.total,
+          delta: 0,
+          tolerance: 0,
+          message:
+            `Rule 14 (engine-recompute COMPLETENESS): receipt per-sample ${JSON.stringify(sid)} is missing its ` +
+            `loss.total but the engine recomputed loss.total=${eSample.loss.total}. A dropped per-sample loss.total ` +
+            `escapes the differential by omission; it must be present and numeric.`,
+        })
+      } else {
         compareScalar(
-          `per_sample.${sid}.loss.per_output.${uId}`,
-          eSample.loss.per_output[uId]!,
-          rSample.loss?.per_output?.[uId],
+          `per_sample.${sid}.loss.total`,
+          eSample.loss.total,
+          rSample.loss.total,
         )
       }
-      // per_sample[sid].loss.total
-      compareScalar(
-        `per_sample.${sid}.loss.total`,
-        eSample.loss.total,
-        rSample.loss?.total,
-      )
     }
   }
 

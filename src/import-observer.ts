@@ -506,20 +506,95 @@ export function buildObserverReceiptFromSidecar(
       const engineSample = engineReceipt.per_sample?.[sid]
       const sidecarSample = sidecar.per_sample[sid]
       if (!engineSample || !sidecarSample) continue
-      for (const uId of Object.keys(engineSample.forward)) {
+      // R14-PERSAMPLE-OMISSION mirror — the producer-side verification_state
+      // claim must not be WEAKER than the verifier's (reconcile.ts Rule 14
+      // per-sample COMPLETENESS). Pre-fix this loop used `if (!c) continue`
+      // for a missing per-sample forward unit and `if (typeof cVal !== "number")
+      // continue` for a missing per-sample loss component, so a sidecar that
+      // DROPPED a nested per_sample field still reported differentialPassed=true.
+      // Treat any omitted/incomplete per-sample forward unit or loss field as a
+      // differential disagreement (key-set-EQUAL + both-scalars-present), so a
+      // dropped per-sample field cannot escape the producer's claim by omission.
+      const sForward = sidecarSample.forward ?? {}
+      const eForwardKeys = Object.keys(engineSample.forward)
+      const eForwardSet = new Set<string>(eForwardKeys)
+      for (const uId of eForwardKeys) {
         const e = engineSample.forward[uId]!
-        const c = sidecarSample.forward[uId]
-        if (!c) continue
-        compare(`per_sample.${sid}.forward.${uId}.net`, e.net, c.net)
-        compare(`per_sample.${sid}.forward.${uId}.out`, e.out, c.out)
+        const c = sForward[uId]
+        if (!c) {
+          // COMPLETENESS — per-sample forward unit absent from the sidecar.
+          disagreements.push({
+            fieldPath: `per_sample.${sid}.forward.${uId}`,
+            delta: Number.NaN,
+            appliedTolerance: 0,
+          })
+          continue
+        }
+        if (typeof c.net !== "number") {
+          disagreements.push({
+            fieldPath: `per_sample.${sid}.forward.${uId}.net`,
+            delta: Number.NaN,
+            appliedTolerance: 0,
+          })
+        } else {
+          compare(`per_sample.${sid}.forward.${uId}.net`, e.net, c.net)
+        }
+        if (typeof c.out !== "number") {
+          disagreements.push({
+            fieldPath: `per_sample.${sid}.forward.${uId}.out`,
+            delta: Number.NaN,
+            appliedTolerance: 0,
+          })
+        } else {
+          compare(`per_sample.${sid}.forward.${uId}.out`, e.out, c.out)
+        }
       }
-      for (const uId of Object.keys(engineSample.loss.per_output)) {
+      // COMPLETENESS — extra per-sample forward unit not produced by the engine.
+      for (const uId of Object.keys(sForward)) {
+        if (!eForwardSet.has(uId)) {
+          disagreements.push({
+            fieldPath: `per_sample.${sid}.forward.${uId}`,
+            delta: Number.NaN,
+            appliedTolerance: 0,
+          })
+        }
+      }
+      const sLossPerOutput = sidecarSample.loss?.per_output ?? {}
+      const eLossPerOutputKeys = Object.keys(engineSample.loss.per_output)
+      const eLossPerOutputSet = new Set<string>(eLossPerOutputKeys)
+      for (const uId of eLossPerOutputKeys) {
         const eVal = engineSample.loss.per_output[uId]!
-        const cVal = sidecarSample.loss.per_output[uId]
-        if (typeof cVal !== "number") continue
+        const cVal = sLossPerOutput[uId]
+        if (typeof cVal !== "number") {
+          // COMPLETENESS — per-sample loss component absent from the sidecar.
+          disagreements.push({
+            fieldPath: `per_sample.${sid}.loss.per_output.${uId}`,
+            delta: Number.NaN,
+            appliedTolerance: 0,
+          })
+          continue
+        }
         compare(`per_sample.${sid}.loss.per_output.${uId}`, eVal, cVal)
       }
-      compare(`per_sample.${sid}.loss.total`, engineSample.loss.total, sidecarSample.loss.total)
+      for (const uId of Object.keys(sLossPerOutput)) {
+        if (!eLossPerOutputSet.has(uId)) {
+          disagreements.push({
+            fieldPath: `per_sample.${sid}.loss.per_output.${uId}`,
+            delta: Number.NaN,
+            appliedTolerance: 0,
+          })
+        }
+      }
+      // COMPLETENESS — per-sample loss.total must be present and numeric.
+      if (typeof sidecarSample.loss?.total !== "number") {
+        disagreements.push({
+          fieldPath: `per_sample.${sid}.loss.total`,
+          delta: Number.NaN,
+          appliedTolerance: 0,
+        })
+      } else {
+        compare(`per_sample.${sid}.loss.total`, engineSample.loss.total, sidecarSample.loss.total)
+      }
     }
     // Reduced loss comparison.
     for (const uId of Object.keys(engineReceipt.loss.per_output)) {

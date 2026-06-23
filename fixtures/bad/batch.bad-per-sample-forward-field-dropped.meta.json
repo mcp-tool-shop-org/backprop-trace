@@ -1,0 +1,17 @@
+{
+  "schema_version": "0.1.0",
+  "fixture": "batch.bad-per-sample-forward-field-dropped.meta",
+  "describes": "fixtures/bad/batch.bad-per-sample-forward-field-dropped.jsonl",
+  "based_on": "Byte-precise mutation of fixtures/external/pytorch.softmax-ce.batched.golden.jsonl (external_imported batched observer golden, baseline reconcile ok:true). R14-PERSAMPLE-OMISSION residual-false-PASS fixture.",
+  "mutation": {
+    "kind": "drop_nested_per_sample_forward_scalar",
+    "field_path": "per_sample.s0.forward.h1.net",
+    "note": "A single NESTED per-sample forward scalar (net) is deleted, leaving everything else engine-consistent. Pre-fix, the per_sample differential in checkRule14EngineRecomputeDifferential fed rUnit.net into compareScalar, which early-returns on a non-number — so a DROPPED net silently skipped the comparison and reconcileReceipt returned ok:true (false PASS). Rule 18 checks only the FLAT loss.per_sample scalar; Rule 19 checks only the per_sample KEY SET equals batch.sample_order (a dropped WHOLE sample), not a dropped nested forward field. The per-sample differential is the SOLE check on per-sample forward values. The fix mirrors the top-level forward ENG-2 completeness pattern (key-set-EQUAL + both-scalars-present): a present per-sample forward unit must carry BOTH net and out, raising a Rule 14 COMPLETENESS failure on absence."
+  },
+  "reconciliation_check_targeted_first": "Rule 14 (engine-recompute COMPLETENESS): receipt per-sample forward unit \"h1\" (sample \"s0\") is missing its net value.",
+  "expected_rules_fired": [14],
+  "expected_field_path": "per_sample.s0.forward.h1.net",
+  "non_vacuity": "Reverting the per-sample COMPLETENESS additions to checkRule14EngineRecomputeDifferential makes reconcileReceipt return ok:true on this fixture (RED). compareScalar's non-number early-return is the laundering surface; no other rule visits the dropped nested per-sample forward scalar.",
+  "schema_note": "validateReceiptSchema ALSO rejects this fixture via ForwardUnit.required=[net,out] (welcome defense-in-depth). The targeted gate is reconcileReceipt, which library callers may invoke WITHOUT schema validation; it must fail closed on its own.",
+  "purpose": "R14-PERSAMPLE-OMISSION anti-circularity fixture. Pressure-tests that Rule 14's per-sample differential applies key-set-EQUAL + both-scalars-present completeness to per_sample[*].forward, not just value agreement on present scalars."
+}
