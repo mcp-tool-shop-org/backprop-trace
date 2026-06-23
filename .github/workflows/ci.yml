@@ -181,3 +181,45 @@ jobs:
           BP_TORCH_PYTHON: python
           NO_COLOR: '1'
           FORCE_COLOR: '0'
+
+  jax-e2e:
+    # Validate the LIVE JAX helper's REAL emission path against real JAX. The
+    # rest of CI runs JAX-less, so the jax-gated test
+    # (test/import-jax-helper.jax-e2e.test.ts) SKIPS there; this job installs CPU
+    # jax+jaxlib so it actually runs. Catches latent helper bugs that
+    # hand-authored fixtures can't (jax.grad descent gradients, jax.make_jaxpr
+    # forensic digest, the pytree->per-neuron-bias scalar mapping, the
+    # output-signal descent sign, optax-style Adam m/v with the documented
+    # NON-flip) plus the boundary rejections (x64-disabled / adamw / bad-topology).
+    # ubuntu-latest, single OS (CPU jax only). Runs on the normal triggers.
+    name: jax end-to-end (live helper)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25  # ci-future-B-007: jaxlib wheel install dominates; bound it
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+      # CPU-only jax+jaxlib — no CUDA/TPU, deterministic on CPU. The helper
+      # REQUIRES jax_enable_x64 + CPU (the determinism contract; enforced at the
+      # extraction boundary). Versions are PINNED in
+      # scripts/extract/requirements-jax-cpu.txt so the live-helper validation is
+      # reproducible (PIN_PER_STEP). An unpinned `pip install jax` lets an
+      # upstream point-release change XLA CPU codegen / jax.grad tracing under us.
+      - name: install CPU jax (pinned)
+        run: python -m pip install --upgrade pip && python -m pip install -r scripts/extract/requirements-jax-cpu.txt
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # Run ONLY the jax-gated suite. BP_JAX_PYTHON points the test at the
+      # interpreter that has jax installed; the test would otherwise skip.
+      - name: jax-gated live-helper end-to-end test
+        run: node --import tsx --test test/import-jax-helper.jax-e2e.test.ts
+        env:
+          BP_JAX_PYTHON: python
+          NO_COLOR: '1'
+          FORCE_COLOR: '0'

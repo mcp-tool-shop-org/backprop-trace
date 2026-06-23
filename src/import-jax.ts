@@ -19,6 +19,19 @@
  * dict and emitting a framework-trace.v0.1.0 JSONL line). The bp core
  * does NOT execute JAX code.
  *
+ * LIVE JAX HELPER (v1.0). `scripts/extract/jax.py` is the auditable single-file
+ * live helper — it runs a real JAX training step (jax.grad descent gradients,
+ * jax.make_jaxpr captured as a forensic graph digest, CPU + jax_enable_x64 for
+ * binary64 byte-stability) and emits a `framework-trace.v0.7.0` sidecar carrying
+ * the forensic `helper` block. This importer ingests those live sidecars through
+ * the SAME shared core (buildObserverReceiptFromSidecar) and the SAME Rule 14
+ * differential as hand-authored ones — no JAX-specific live code lives here. The
+ * helper is an OBSERVER; Rule 14 (engine-recompute differential) is the authority
+ * on every live sidecar regardless of the helper's `source_hash` / jaxpr claims.
+ * Proven end-to-end against real JAX 0.4.35 in
+ * test/import-jax-helper.jax-e2e.test.ts (gated on BP_JAX_PYTHON), with a frozen
+ * real-JAX-emitted golden at fixtures/external/jax.sgd-live.sidecar.jsonl.
+ *
  * Known JAX-specific extractor concerns (NOT importer concerns — these
  * happen in the user's Python helper, before the sidecar arrives at the
  * importer):
