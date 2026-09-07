@@ -11,7 +11,7 @@ on:
 # ci-future-B-008: cancel superseded runs on the same ref so a fast PR push
 # stream doesn't pile up CodeQL analyses (each is minutes-long).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:

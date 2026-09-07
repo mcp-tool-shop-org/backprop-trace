@@ -23,7 +23,7 @@ on:
 # ci-future-B-008: cancel superseded runs on the same ref (e.g. rapid PR
 # pushes) so the 3-OS pack-smoke matrix doesn't pile up.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:

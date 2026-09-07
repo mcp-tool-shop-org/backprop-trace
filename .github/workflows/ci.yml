@@ -12,7 +12,7 @@ on:
 # ci-future-B-008: cancel superseded runs on the same ref so rapid PR pushes
 # don't stack the full multi-OS test + canary + torch matrix.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
