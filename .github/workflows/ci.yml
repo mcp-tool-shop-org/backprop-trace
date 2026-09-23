@@ -88,6 +88,8 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: 'pnpm'
+      - name: Atlas check
+        run: npx --yes @dogfood-lab/atlas@1.15.0 check
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       # v0.10.2: build BEFORE test. The v0.10 CLI test plate

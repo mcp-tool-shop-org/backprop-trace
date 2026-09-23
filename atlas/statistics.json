@@ -1,0 +1,3554 @@
+{
+  "boundaries": [
+    {
+      "breakage": {
+        "coChangesOnly": [],
+        "collapsed": false,
+        "confidence": "low",
+        "importsAndCoChanges": [],
+        "importsOnly": []
+      },
+      "cohesion": null,
+      "cohesionDropped": false,
+      "confidence": "low",
+      "highWater": null,
+      "name": ".github",
+      "qualifyingSourceCommits": 0,
+      "rebaseline": null
+    },
+    {
+      "breakage": {
+        "coChangesOnly": [],
+        "collapsed": false,
+        "confidence": "low",
+        "importsAndCoChanges": [],
+        "importsOnly": []
+      },
+      "cohesion": null,
+      "cohesionDropped": false,
+      "confidence": "low",
+      "highWater": null,
+      "name": "docs",
+      "qualifyingSourceCommits": 0,
+      "rebaseline": null
+    },
+    {
+      "breakage": {
+        "coChangesOnly": [],
+        "collapsed": false,
+        "confidence": "low",
+        "importsAndCoChanges": [],
+        "importsOnly": []
+      },
+      "cohesion": null,
+      "cohesionDropped": false,
+      "confidence": "low",
+      "highWater": null,
+      "name": "examples",
+      "qualifyingSourceCommits": 1,
+      "rebaseline": null
+    },
+    {
+      "breakage": {
+        "coChangesOnly": [],
+        "collapsed": false,
+        "confidence": "low",
+        "importsAndCoChanges": [],
+        "importsOnly": []
+      },
+      "cohesion": null,
+      "cohesionDropped": false,
+      "confidence": "low",
+      "highWater": null,
+      "name": "fixtures",
+      "qualifyingSourceCommits": 0,
+      "rebaseline": null
+    },
+    {
+      "breakage": {
+        "coChangesOnly": [],
+        "collapsed": false,
+        "confidence": "low",
+        "importsAndCoChanges": [],
+        "importsOnly": [
+          "src"
+        ]
+      },
+      "cohesion": null,
+      "cohesionDropped": false,
+      "confidence": "low",
+      "highWater": null,
+      "name": "root",
+      "qualifyingSourceCommits": 0,
+      "rebaseline": null
+    },
+    {
+      "breakage": {
+        "coChangesOnly": [],
+        "collapsed": false,
+        "confidence": "low",
+        "importsAndCoChanges": [],
+        "importsOnly": []
+      },
+      "cohesion": null,
+      "cohesionDropped": false,
+      "confidence": "low",
+      "highWater": null,
+      "name": "schemas",
+      "qualifyingSourceCommits": 0,
+      "rebaseline": null
+    },
+    {
+      "breakage": {
+        "coChangesOnly": [
+          "test"
+        ],
+        "collapsed": false,
+        "confidence": "low",
+        "importsAndCoChanges": [],
+        "importsOnly": []
+      },
+      "cohesion": 0.285714,
+      "cohesionDropped": false,
+      "confidence": "low",
+      "highWater": null,
+      "name": "scripts",
+      "qualifyingSourceCommits": 21,
+      "rebaseline": null
+    },
+    {
+      "breakage": {
+        "coChangesOnly": [],
+        "collapsed": false,
+        "confidence": "low",
+        "importsAndCoChanges": [],
+        "importsOnly": []
+      },
+      "cohesion": null,
+      "cohesionDropped": false,
+      "confidence": "low",
+      "highWater": null,
+      "name": "site",
+      "qualifyingSourceCommits": 5,
+      "rebaseline": null
+    },
+    {
+      "breakage": {
+        "coChangesOnly": [],
+        "collapsed": false,
+        "confidence": "low",
+        "importsAndCoChanges": [
+          "test"
+        ],
+        "importsOnly": [
+          "scripts"
+        ]
+      },
+      "cohesion": 0.61116,
+      "cohesionDropped": false,
+      "confidence": "full",
+      "highWater": null,
+      "name": "src",
+      "qualifyingSourceCommits": 35,
+      "rebaseline": null
+    },
+    {
+      "breakage": {
+        "coChangesOnly": [
+          "scripts",
+          "src"
+        ],
+        "collapsed": false,
+        "confidence": "low",
+        "importsAndCoChanges": [],
+        "importsOnly": []
+      },
+      "cohesion": 0,
+      "cohesionDropped": false,
+      "confidence": "full",
+      "highWater": null,
+      "name": "test",
+      "qualifyingSourceCommits": 40,
+      "rebaseline": null
+    }
+  ],
+  "churn": {
+    "definition": "commits is how many commits in the window touch the file, including merges and commits dropped from coupling. lines is added plus deleted in those commits.",
+    "files": [
+      {
+        "commits": 4,
+        "lines": 10,
+        "path": ".gitattributes"
+      },
+      {
+        "commits": 1,
+        "lines": 51,
+        "path": ".github/ISSUE_TEMPLATE/bug_report.md"
+      },
+      {
+        "commits": 1,
+        "lines": 39,
+        "path": ".github/ISSUE_TEMPLATE/feature_request.md"
+      },
+      {
+        "commits": 3,
+        "lines": 35,
+        "path": ".github/dependabot.yml"
+      },
+      {
+        "commits": 1,
+        "lines": 54,
+        "path": ".github/pull_request_template.md"
+      },
+      {
+        "commits": 21,
+        "lines": 637,
+        "path": ".github/workflows/ci.yml"
+      },
+      {
+        "commits": 8,
+        "lines": 56,
+        "path": ".github/workflows/codeql.yml"
+      },
+      {
+        "commits": 10,
+        "lines": 93,
+        "path": ".github/workflows/pack-smoke.yml"
+      },
+      {
+        "commits": 7,
+        "lines": 82,
+        "path": ".github/workflows/pages.yml"
+      },
+      {
+        "commits": 10,
+        "lines": 251,
+        "path": ".github/workflows/release.yml"
+      },
+      {
+        "commits": 9,
+        "lines": 42,
+        "path": ".gitignore"
+      },
+      {
+        "commits": 2,
+        "lines": 2,
+        "path": ".nvmrc"
+      },
+      {
+        "commits": 24,
+        "lines": 3397,
+        "path": "CHANGELOG.md"
+      },
+      {
+        "commits": 4,
+        "lines": 68,
+        "path": "CONTRIBUTING.md"
+      },
+      {
+        "commits": 1,
+        "lines": 21,
+        "path": "LICENSE"
+      },
+      {
+        "commits": 8,
+        "lines": 1148,
+        "path": "README.es.md"
+      },
+      {
+        "commits": 8,
+        "lines": 1157,
+        "path": "README.fr.md"
+      },
+      {
+        "commits": 8,
+        "lines": 1183,
+        "path": "README.hi.md"
+      },
+      {
+        "commits": 8,
+        "lines": 1165,
+        "path": "README.it.md"
+      },
+      {
+        "commits": 7,
+        "lines": 869,
+        "path": "README.ja.md"
+      },
+      {
+        "commits": 21,
+        "lines": 1285,
+        "path": "README.md"
+      },
+      {
+        "commits": 8,
+        "lines": 1137,
+        "path": "README.pt-BR.md"
+      },
+      {
+        "commits": 8,
+        "lines": 1137,
+        "path": "README.zh.md"
+      },
+      {
+        "commits": 6,
+        "lines": 463,
+        "path": "SCORECARD.md"
+      },
+      {
+        "commits": 7,
+        "lines": 138,
+        "path": "SECURITY.md"
+      },
+      {
+        "commits": 14,
+        "lines": 484,
+        "path": "SHIP_GATE.md"
+      },
+      {
+        "commits": 3,
+        "lines": 276,
+        "path": "docs/attestation.md"
+      },
+      {
+        "commits": 1,
+        "lines": 177,
+        "path": "docs/authoring.md"
+      },
+      {
+        "commits": 5,
+        "lines": 239,
+        "path": "docs/canonical-emission.md"
+      },
+      {
+        "commits": 12,
+        "lines": 1103,
+        "path": "docs/cli.md"
+      },
+      {
+        "commits": 2,
+        "lines": 240,
+        "path": "docs/compliance.md"
+      },
+      {
+        "commits": 5,
+        "lines": 404,
+        "path": "docs/computation-order.md"
+      },
+      {
+        "commits": 6,
+        "lines": 508,
+        "path": "docs/live-helpers.md"
+      },
+      {
+        "commits": 3,
+        "lines": 432,
+        "path": "docs/multi-step.md"
+      },
+      {
+        "commits": 6,
+        "lines": 298,
+        "path": "docs/quickstart.md"
+      },
+      {
+        "commits": 15,
+        "lines": 1146,
+        "path": "docs/reconciliation.md"
+      },
+      {
+        "commits": 12,
+        "lines": 911,
+        "path": "docs/schema.md"
+      },
+      {
+        "commits": 1,
+        "lines": 233,
+        "path": "docs/topology.md"
+      },
+      {
+        "commits": 1,
+        "lines": 117,
+        "path": "examples/pytorch/extract_step.py"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/adam.bad-amsgrad-confusion.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 19,
+        "path": "fixtures/bad/adam.bad-amsgrad-confusion.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/adam.bad-beta-swap.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 18,
+        "path": "fixtures/bad/adam.bad-beta-swap.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/adam.bad-bias-correction-omitted.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 17,
+        "path": "fixtures/bad/adam.bad-bias-correction-omitted.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/adam.bad-engine-recompute-disagrees-adam.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 18,
+        "path": "fixtures/bad/adam.bad-engine-recompute-disagrees-adam.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/adam.bad-epsilon-inside-sqrt.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 17,
+        "path": "fixtures/bad/adam.bad-epsilon-inside-sqrt.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/adam.bad-hyperparameter-inconstancy.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/adam.bad-hyperparameter-inconstancy.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/adam.bad-stale-moment-state.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 27,
+        "path": "fixtures/bad/adam.bad-stale-moment-state.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/adam.bad-timestep-off-by-one.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/adam.bad-timestep-off-by-one.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/adam.bad-zero-init-state-mismatch.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 18,
+        "path": "fixtures/bad/adam.bad-zero-init-state-mismatch.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/adamw.bad-as-coupled-l2.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 17,
+        "path": "fixtures/bad/adamw.bad-as-coupled-l2.meta.json"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/bad/batch.bad-per-sample-forward-field-dropped.jsonl"
+      },
+      {
+        "commits": 2,
+        "lines": 34,
+        "path": "fixtures/bad/batch.bad-per-sample-forward-field-dropped.meta.json"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/bad/batch.bad-per-sample-forward-tamper.jsonl"
+      },
+      {
+        "commits": 2,
+        "lines": 40,
+        "path": "fixtures/bad/batch.bad-per-sample-forward-tamper.meta.json"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/bad/batch.bad-per-sample-forward-unit-dropped.jsonl"
+      },
+      {
+        "commits": 2,
+        "lines": 34,
+        "path": "fixtures/bad/batch.bad-per-sample-forward-unit-dropped.meta.json"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/bad/batch.bad-per-sample-loss-total-dropped.jsonl"
+      },
+      {
+        "commits": 2,
+        "lines": 34,
+        "path": "fixtures/bad/batch.bad-per-sample-loss-total-dropped.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/batch.bad-reduced-gradient-wrong.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 17,
+        "path": "fixtures/bad/batch.bad-reduced-gradient-wrong.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/batch.bad-reduction-mode-mismatch.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 18,
+        "path": "fixtures/bad/batch.bad-reduction-mode-mismatch.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/batch.bad-sample-id-missing.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 32,
+        "path": "fixtures/bad/batch.bad-sample-id-missing.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/batch.bad-sample-order-duplicate.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 26,
+        "path": "fixtures/bad/batch.bad-sample-order-duplicate.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/external.bad-attested-mutated-after.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/external.bad-attested-mutated-after.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/external.bad-collapsed-laundered.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/external.bad-collapsed-laundered.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/external.bad-engine-reproduce-disagrees.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/external.bad-engine-reproduce-disagrees.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/external.bad-framework-spoof.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/external.bad-framework-spoof.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/external.bad-partial-tamper-internally-consistent.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/external.bad-partial-tamper-internally-consistent.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/external.bad-shape-not-math.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/external.bad-shape-not-math.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/external.bad-skip-without-basis.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/external.bad-skip-without-basis.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/external.bad-trusted-source-bad-math.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/external.bad-trusted-source-bad-math.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/jax.bad-pytree-flatten-order.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 22,
+        "path": "fixtures/bad/jax.bad-pytree-flatten-order.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/mazur.bad-backprop-sum.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 50,
+        "path": "fixtures/bad/mazur.bad-backprop-sum.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/mazur.bad-contribution.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 46,
+        "path": "fixtures/bad/mazur.bad-contribution.meta.json"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/bad/mazur.bad-gradient.jsonl"
+      },
+      {
+        "commits": 3,
+        "lines": 105,
+        "path": "fixtures/bad/mazur.bad-gradient.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/mazur.bad-hidden-signal.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 54,
+        "path": "fixtures/bad/mazur.bad-hidden-signal.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/mazur.bad-loss-total.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 45,
+        "path": "fixtures/bad/mazur.bad-loss-total.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/mazur.bad-output-signal.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 52,
+        "path": "fixtures/bad/mazur.bad-output-signal.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/mazur.bad-params-after.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 51,
+        "path": "fixtures/bad/mazur.bad-params-after.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/mazur.bad-provenance.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 52,
+        "path": "fixtures/bad/mazur.bad-provenance.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/mazur.bad-update-value.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 54,
+        "path": "fixtures/bad/mazur.bad-update-value.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/mazur.bad-weight-after.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 48,
+        "path": "fixtures/bad/mazur.bad-weight-after.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/momentum-multi-step.bad-buffer-drop.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/momentum-multi-step.bad-buffer-drop.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/momentum-multi-step.bad-nesterov-flag-inconstancy.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/momentum-multi-step.bad-nesterov-flag-inconstancy.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/momentum-multi-step.bad-stale-buffer.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 18,
+        "path": "fixtures/bad/momentum-multi-step.bad-stale-buffer.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/momentum.bad-coefficient-omitted.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 15,
+        "path": "fixtures/bad/momentum.bad-coefficient-omitted.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/momentum.bad-coefficient-swapped.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 17,
+        "path": "fixtures/bad/momentum.bad-coefficient-swapped.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/momentum.bad-dampening-ignored.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 17,
+        "path": "fixtures/bad/momentum.bad-dampening-ignored.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/momentum.bad-engine-recompute-disagrees-momentum.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 18,
+        "path": "fixtures/bad/momentum.bad-engine-recompute-disagrees-momentum.meta.json"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/bad/momentum.bad-formula-mismatch.jsonl"
+      },
+      {
+        "commits": 2,
+        "lines": 34,
+        "path": "fixtures/bad/momentum.bad-formula-mismatch.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/momentum.bad-nesterov-flag-mismatch.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 17,
+        "path": "fixtures/bad/momentum.bad-nesterov-flag-mismatch.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/momentum.bad-nesterov-formula-mismatch.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 18,
+        "path": "fixtures/bad/momentum.bad-nesterov-formula-mismatch.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/multi-step-external.bad-bundle-digest-tampered.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 17,
+        "path": "fixtures/bad/multi-step-external.bad-bundle-digest-tampered.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/multi-step-external.bad-chain-break-cross-step-internally-consistent.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 18,
+        "path": "fixtures/bad/multi-step-external.bad-chain-break-cross-step-internally-consistent.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/multi-step-external.bad-cross-trace-splice.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 19,
+        "path": "fixtures/bad/multi-step-external.bad-cross-trace-splice.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/multi-step-external.bad-fabricated-mid-step.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 28,
+        "path": "fixtures/bad/multi-step-external.bad-fabricated-mid-step.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/multi-step-external.bad-step-index-gap.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 23,
+        "path": "fixtures/bad/multi-step-external.bad-step-index-gap.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/multi-step.bad-chain.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 44,
+        "path": "fixtures/bad/multi-step.bad-chain.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/multi-step.bad-trace-id.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 42,
+        "path": "fixtures/bad/multi-step.bad-trace-id.meta.json"
+      },
+      {
+        "commits": 7,
+        "lines": 0,
+        "path": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 13,
+        "path": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.meta.json"
+      },
+      {
+        "commits": 8,
+        "lines": 0,
+        "path": "fixtures/bad/pytorch-helper.bad-detach-not-applied.jsonl"
+      },
+      {
+        "commits": 3,
+        "lines": 17,
+        "path": "fixtures/bad/pytorch-helper.bad-detach-not-applied.meta.json"
+      },
+      {
+        "commits": 8,
+        "lines": 0,
+        "path": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 13,
+        "path": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.meta.json"
+      },
+      {
+        "commits": 8,
+        "lines": 0,
+        "path": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 13,
+        "path": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.meta.json"
+      },
+      {
+        "commits": 8,
+        "lines": 0,
+        "path": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 13,
+        "path": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.meta.json"
+      },
+      {
+        "commits": 8,
+        "lines": 0,
+        "path": "fixtures/bad/pytorch-helper.bad-loss-stale.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 13,
+        "path": "fixtures/bad/pytorch-helper.bad-loss-stale.meta.json"
+      },
+      {
+        "commits": 7,
+        "lines": 0,
+        "path": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 13,
+        "path": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.meta.json"
+      },
+      {
+        "commits": 8,
+        "lines": 0,
+        "path": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 13,
+        "path": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.meta.json"
+      },
+      {
+        "commits": 8,
+        "lines": 0,
+        "path": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 13,
+        "path": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.meta.json"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/bad/sgd-coupled-l2.bad-as-decoupled.jsonl"
+      },
+      {
+        "commits": 2,
+        "lines": 40,
+        "path": "fixtures/bad/sgd-coupled-l2.bad-as-decoupled.meta.json"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/bad/sgd-coupled-l2.bad-decay-dropped.jsonl"
+      },
+      {
+        "commits": 2,
+        "lines": 36,
+        "path": "fixtures/bad/sgd-coupled-l2.bad-decay-dropped.meta.json"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/bad/sgd-momentum-coupled-l2.bad-wrong-lambda.jsonl"
+      },
+      {
+        "commits": 2,
+        "lines": 32,
+        "path": "fixtures/bad/sgd-momentum-coupled-l2.bad-wrong-lambda.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/softmax-ce.bad-ce-per-output.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/softmax-ce.bad-ce-per-output.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/softmax-ce.bad-ce-total.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/softmax-ce.bad-ce-total.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/softmax-ce.bad-collapsed-vs-dual.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 24,
+        "path": "fixtures/bad/softmax-ce.bad-collapsed-vs-dual.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/softmax-ce.bad-dual-sum.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/softmax-ce.bad-dual-sum.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/softmax-ce.bad-dual-term.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/softmax-ce.bad-dual-term.meta.json"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/bad/softmax-ce.bad-forward-unit-dropped.jsonl"
+      },
+      {
+        "commits": 2,
+        "lines": 32,
+        "path": "fixtures/bad/softmax-ce.bad-forward-unit-dropped.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/softmax-ce.bad-prob-bound.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/softmax-ce.bad-prob-bound.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/softmax-ce.bad-softmax-sum.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 16,
+        "path": "fixtures/bad/softmax-ce.bad-softmax-sum.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/tensorflow.bad-variable-list-order.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 22,
+        "path": "fixtures/bad/tensorflow.bad-variable-list-order.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/xor.bad-bias-gradient.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 55,
+        "path": "fixtures/bad/xor.bad-bias-gradient.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/xor.bad-bias-mode-mismatch.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 50,
+        "path": "fixtures/bad/xor.bad-bias-mode-mismatch.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/xor.bad-bias-params-after.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 51,
+        "path": "fixtures/bad/xor.bad-bias-params-after.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/xor.bad-bias-provenance.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 54,
+        "path": "fixtures/bad/xor.bad-bias-provenance.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/xor.bad-bias-sharing-mismatch.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 34,
+        "path": "fixtures/bad/xor.bad-bias-sharing-mismatch.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/xor.bad-bias-update-value.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 59,
+        "path": "fixtures/bad/xor.bad-bias-update-value.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/xor.bad-bias-weight-after.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 51,
+        "path": "fixtures/bad/xor.bad-bias-weight-after.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/xor.bad-kind-vs-role.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 37,
+        "path": "fixtures/bad/xor.bad-kind-vs-role.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/bad/xor.bad-topology-size.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 34,
+        "path": "fixtures/bad/xor.bad-topology-size.meta.json"
+      },
+      {
+        "commits": 1,
+        "lines": 4,
+        "path": "fixtures/external/adam.reddi-2018-pathology.note.json"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/external/external.rule14-only-bias-divergence.jsonl"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/external/jax.sgd-live.sidecar.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/jax.softmax-ce.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/jax.softmax-ce.sidecar.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.adam.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.adam.multi-step.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.adam.multi-step.sidecar.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.adam.sidecar.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.adamw.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.adamw.sidecar.jsonl"
+      },
+      {
+        "commits": 9,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl"
+      },
+      {
+        "commits": 3,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.helper-emitted.sgd-coupled-l2.sidecar.jsonl"
+      },
+      {
+        "commits": 9,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl"
+      },
+      {
+        "commits": 10,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.sgd-coupled-l2.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.sgd-momentum.dampening.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.sgd-momentum.dampening.sidecar.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.sgd-momentum.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.sgd-momentum.multi-step.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.sgd-momentum.multi-step.sidecar.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.sgd-momentum.nesterov.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.sgd-momentum.nesterov.multi-step.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.sgd-momentum.nesterov.multi-step.sidecar.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.sgd-momentum.nesterov.sidecar.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.sgd-momentum.sidecar.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.softmax-ce.batched.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.softmax-ce.batched.sidecar.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.softmax-ce.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.softmax-ce.multi-step-batched.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.softmax-ce.multi-step-batched.sidecar.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.softmax-ce.multi-step.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.softmax-ce.multi-step.sidecar.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/pytorch.softmax-ce.sidecar.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/tensorflow.softmax-ce.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/external/tensorflow.softmax-ce.sidecar.jsonl"
+      },
+      {
+        "commits": 4,
+        "lines": 84,
+        "path": "fixtures/formatter.policy.golden.json"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/hero-classifier.golden.jsonl"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/hero-classifier.multi-step.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/iris.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 154,
+        "path": "fixtures/iris.published.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/mazur.golden.jsonl"
+      },
+      {
+        "commits": 2,
+        "lines": 67,
+        "path": "fixtures/mazur.published.json"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/sgd-coupled-l2.golden.jsonl"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/sgd-momentum-coupled-l2.golden.jsonl"
+      },
+      {
+        "commits": 2,
+        "lines": 0,
+        "path": "fixtures/sgd-momentum-coupled-l2.multi-step.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/softmax-ce.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 18,
+        "path": "fixtures/templates/formatter.runtime-node.template.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/xor-per-neuron-bias.golden.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 225,
+        "path": "fixtures/xor-per-neuron-bias.published.json"
+      },
+      {
+        "commits": 1,
+        "lines": 0,
+        "path": "fixtures/xor.golden.jsonl"
+      },
+      {
+        "commits": 3,
+        "lines": 0,
+        "path": "fixtures/xor.multi-step.jsonl"
+      },
+      {
+        "commits": 1,
+        "lines": 160,
+        "path": "fixtures/xor.published.json"
+      },
+      {
+        "commits": 31,
+        "lines": 302,
+        "path": "package.json"
+      },
+      {
+        "commits": 3,
+        "lines": 385,
+        "path": "pnpm-lock.yaml"
+      },
+      {
+        "commits": 6,
+        "lines": 351,
+        "path": "schemas/framework-trace.v0.1.0.json"
+      },
+      {
+        "commits": 6,
+        "lines": 373,
+        "path": "schemas/framework-trace.v0.2.0.json"
+      },
+      {
+        "commits": 6,
+        "lines": 408,
+        "path": "schemas/framework-trace.v0.3.0.json"
+      },
+      {
+        "commits": 6,
+        "lines": 484,
+        "path": "schemas/framework-trace.v0.4.0.json"
+      },
+      {
+        "commits": 6,
+        "lines": 569,
+        "path": "schemas/framework-trace.v0.5.0.json"
+      },
+      {
+        "commits": 6,
+        "lines": 599,
+        "path": "schemas/framework-trace.v0.6.0.json"
+      },
+      {
+        "commits": 7,
+        "lines": 753,
+        "path": "schemas/framework-trace.v0.7.0.json"
+      },
+      {
+        "commits": 2,
+        "lines": 1324,
+        "path": "schemas/framework-trace.v0.8.0.json"
+      },
+      {
+        "commits": 3,
+        "lines": 402,
+        "path": "schemas/receipt.v0.1.0.json"
+      },
+      {
+        "commits": 6,
+        "lines": 463,
+        "path": "schemas/receipt.v0.2.0.json"
+      },
+      {
+        "commits": 4,
+        "lines": 462,
+        "path": "schemas/receipt.v0.3.0.json"
+      },
+      {
+        "commits": 6,
+        "lines": 655,
+        "path": "schemas/receipt.v0.4.0.json"
+      },
+      {
+        "commits": 5,
+        "lines": 628,
+        "path": "schemas/receipt.v0.5.0.json"
+      },
+      {
+        "commits": 5,
+        "lines": 719,
+        "path": "schemas/receipt.v0.6.0.json"
+      },
+      {
+        "commits": 5,
+        "lines": 743,
+        "path": "schemas/receipt.v0.7.0.json"
+      },
+      {
+        "commits": 2,
+        "lines": 1388,
+        "path": "schemas/receipt.v0.8.0.json"
+      },
+      {
+        "commits": 4,
+        "lines": 215,
+        "path": "schemas/topology-input.v0.4.0.json"
+      },
+      {
+        "commits": 7,
+        "lines": 853,
+        "path": "scripts/build-pytorch-helper-fixtures.mjs"
+      },
+      {
+        "commits": 2,
+        "lines": 132,
+        "path": "scripts/emit-coupled-l2-observer-golden.mjs"
+      },
+      {
+        "commits": 3,
+        "lines": 2250,
+        "path": "scripts/extract/jax.py"
+      },
+      {
+        "commits": 11,
+        "lines": 3064,
+        "path": "scripts/extract/pytorch.py"
+      },
+      {
+        "commits": 2,
+        "lines": 48,
+        "path": "scripts/extract/requirements-cpu.txt"
+      },
+      {
+        "commits": 2,
+        "lines": 76,
+        "path": "scripts/extract/requirements-jax-cpu.txt"
+      },
+      {
+        "commits": 1,
+        "lines": 582,
+        "path": "scripts/generate-adam-bad-fixtures.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 248,
+        "path": "scripts/generate-batch-bad-fixtures.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 299,
+        "path": "scripts/generate-external-bad-fixtures.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 570,
+        "path": "scripts/generate-hero-classifier-fixtures.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 127,
+        "path": "scripts/generate-jax-bad-fixtures.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 173,
+        "path": "scripts/generate-jax-softmax-ce-fixtures.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 649,
+        "path": "scripts/generate-momentum-bad-fixtures.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 346,
+        "path": "scripts/generate-multi-step-external-bad-fixtures.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 444,
+        "path": "scripts/generate-pytorch-adam-fixtures.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 254,
+        "path": "scripts/generate-pytorch-batched-softmax-ce-fixtures.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 380,
+        "path": "scripts/generate-pytorch-coupled-l2-helper-goldens.py"
+      },
+      {
+        "commits": 5,
+        "lines": 472,
+        "path": "scripts/generate-pytorch-helper-goldens.py"
+      },
+      {
+        "commits": 2,
+        "lines": 580,
+        "path": "scripts/generate-pytorch-momentum-fixtures.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 204,
+        "path": "scripts/generate-pytorch-multi-step-softmax-ce-fixtures.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 98,
+        "path": "scripts/generate-pytorch-softmax-ce-fixtures.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 700,
+        "path": "scripts/generate-sgd-coupled-l2-fixtures.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 258,
+        "path": "scripts/generate-softmax-ce-bad-fixtures.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 151,
+        "path": "scripts/generate-tensorflow-bad-fixtures.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 183,
+        "path": "scripts/generate-tensorflow-softmax-ce-fixtures.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 74,
+        "path": "scripts/generate-xor-multi-step-golden.ts"
+      },
+      {
+        "commits": 5,
+        "lines": 437,
+        "path": "scripts/pack-install-smoke.mjs"
+      },
+      {
+        "commits": 4,
+        "lines": 39,
+        "path": "site/astro.config.mjs"
+      },
+      {
+        "commits": 2,
+        "lines": 13872,
+        "path": "site/package-lock.json"
+      },
+      {
+        "commits": 2,
+        "lines": 24,
+        "path": "site/package.json"
+      },
+      {
+        "commits": 1,
+        "lines": 7,
+        "path": "site/src/content.config.ts"
+      },
+      {
+        "commits": 5,
+        "lines": 206,
+        "path": "site/src/content/docs/handbook/architecture.md"
+      },
+      {
+        "commits": 5,
+        "lines": 109,
+        "path": "site/src/content/docs/handbook/getting-started.md"
+      },
+      {
+        "commits": 6,
+        "lines": 150,
+        "path": "site/src/content/docs/handbook/index.md"
+      },
+      {
+        "commits": 5,
+        "lines": 320,
+        "path": "site/src/content/docs/handbook/reference.md"
+      },
+      {
+        "commits": 5,
+        "lines": 193,
+        "path": "site/src/content/docs/handbook/security.md"
+      },
+      {
+        "commits": 5,
+        "lines": 319,
+        "path": "site/src/content/docs/handbook/usage.md"
+      },
+      {
+        "commits": 1,
+        "lines": 33,
+        "path": "site/src/pages/index.astro"
+      },
+      {
+        "commits": 6,
+        "lines": 450,
+        "path": "site/src/site-config.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 3,
+        "path": "site/src/styles/global.css"
+      },
+      {
+        "commits": 1,
+        "lines": 5,
+        "path": "site/src/styles/starlight-custom.css"
+      },
+      {
+        "commits": 1,
+        "lines": 5,
+        "path": "site/tsconfig.json"
+      },
+      {
+        "commits": 4,
+        "lines": 240,
+        "path": "src/activations.ts"
+      },
+      {
+        "commits": 27,
+        "lines": 7138,
+        "path": "src/bin/bp.ts"
+      },
+      {
+        "commits": 15,
+        "lines": 2041,
+        "path": "src/emit.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 575,
+        "path": "src/engine.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 165,
+        "path": "src/extract.ts"
+      },
+      {
+        "commits": 7,
+        "lines": 375,
+        "path": "src/format.ts"
+      },
+      {
+        "commits": 15,
+        "lines": 3383,
+        "path": "src/general-engine.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 279,
+        "path": "src/hash.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 138,
+        "path": "src/import-jax.ts"
+      },
+      {
+        "commits": 17,
+        "lines": 3852,
+        "path": "src/import-observer.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 736,
+        "path": "src/import-pytorch.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 134,
+        "path": "src/import-tensorflow.ts"
+      },
+      {
+        "commits": 10,
+        "lines": 569,
+        "path": "src/index.ts"
+      },
+      {
+        "commits": 5,
+        "lines": 661,
+        "path": "src/mazur.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 212,
+        "path": "src/parse-input.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 316,
+        "path": "src/parse.ts"
+      },
+      {
+        "commits": 24,
+        "lines": 9965,
+        "path": "src/reconcile.ts"
+      },
+      {
+        "commits": 5,
+        "lines": 235,
+        "path": "src/runtime-format.ts"
+      },
+      {
+        "commits": 13,
+        "lines": 434,
+        "path": "src/schema-loader.ts"
+      },
+      {
+        "commits": 8,
+        "lines": 972,
+        "path": "src/topology.ts"
+      },
+      {
+        "commits": 14,
+        "lines": 963,
+        "path": "src/validate.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 145,
+        "path": "src/verify-engine.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 68,
+        "path": "test/_fixture-utils.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 141,
+        "path": "test/activations.test.ts"
+      },
+      {
+        "commits": 6,
+        "lines": 635,
+        "path": "test/bp.cli.help-version.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 66,
+        "path": "test/bp.color.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 154,
+        "path": "test/bp.examples-jax.cli.test.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 188,
+        "path": "test/bp.examples-pytorch.cli.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 269,
+        "path": "test/bp.generate-from-config.cli.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 104,
+        "path": "test/bp.generate-iris.cli.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 77,
+        "path": "test/bp.generate-mazur.cli.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 118,
+        "path": "test/bp.generate-xor.cli.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 266,
+        "path": "test/bp.help-consistency.cli.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 586,
+        "path": "test/bp.rule-coverage.cli.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 183,
+        "path": "test/bp.scaffold-topology.cli.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 60,
+        "path": "test/bp.stdin.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 420,
+        "path": "test/bp.unknown-flag.cli.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 289,
+        "path": "test/bp.validate-input.cli.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 107,
+        "path": "test/bp.validate.cli.test.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 708,
+        "path": "test/bp.verify-general.cli.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 369,
+        "path": "test/bp.verify-mazur.cli.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 554,
+        "path": "test/bp.verify-multi.cli.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 870,
+        "path": "test/cli.error-envelope.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 95,
+        "path": "test/cli.multi-step-import-pipe.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 149,
+        "path": "test/determinism.math-exp-canary.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 427,
+        "path": "test/emit-multi.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 484,
+        "path": "test/emit.optional-fields.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 114,
+        "path": "test/engine.invalid-input.test.ts"
+      },
+      {
+        "commits": 5,
+        "lines": 743,
+        "path": "test/error-messages.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 288,
+        "path": "test/exports-drift.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 59,
+        "path": "test/extract.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 167,
+        "path": "test/format.policy.test.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 442,
+        "path": "test/format.property.test.ts"
+      },
+      {
+        "commits": 5,
+        "lines": 973,
+        "path": "test/general-engine.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 264,
+        "path": "test/hash.general-receipt.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 94,
+        "path": "test/hash.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 640,
+        "path": "test/hero-classifier.engine.test.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 1105,
+        "path": "test/hybrid-tolerance.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 580,
+        "path": "test/import-jax-helper.jax-e2e.test.ts"
+      },
+      {
+        "commits": 5,
+        "lines": 240,
+        "path": "test/import-jax.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 393,
+        "path": "test/import-pytorch-adam.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 544,
+        "path": "test/import-pytorch-batched.test.ts"
+      },
+      {
+        "commits": 7,
+        "lines": 279,
+        "path": "test/import-pytorch-helper.test.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 624,
+        "path": "test/import-pytorch-helper.torch-e2e.test.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 498,
+        "path": "test/import-pytorch-momentum.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 387,
+        "path": "test/import-pytorch-multi-step.test.ts"
+      },
+      {
+        "commits": 9,
+        "lines": 1341,
+        "path": "test/import-pytorch.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 256,
+        "path": "test/import-tensorflow.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 618,
+        "path": "test/import.humanization.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 574,
+        "path": "test/import.sidecar-bounds.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 154,
+        "path": "test/iris.engine.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 341,
+        "path": "test/mazur.engine.test.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 646,
+        "path": "test/multi-step.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 110,
+        "path": "test/pack-install-smoke.presence.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 379,
+        "path": "test/parse.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 251,
+        "path": "test/per-neuron-bias.engine.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 206,
+        "path": "test/published-claims.test.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 166,
+        "path": "test/reconcile.bad-adam.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 109,
+        "path": "test/reconcile.bad-backprop-sum.test.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 554,
+        "path": "test/reconcile.bad-batch.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 73,
+        "path": "test/reconcile.bad-bias-gradient.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 198,
+        "path": "test/reconcile.bad-bias-mode-mismatch.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 69,
+        "path": "test/reconcile.bad-bias-params-after.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 69,
+        "path": "test/reconcile.bad-bias-provenance.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 47,
+        "path": "test/reconcile.bad-bias-sharing-mismatch.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 70,
+        "path": "test/reconcile.bad-bias-update-value.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 75,
+        "path": "test/reconcile.bad-bias-weight-after.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 95,
+        "path": "test/reconcile.bad-ce-per-output.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 111,
+        "path": "test/reconcile.bad-contribution.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 178,
+        "path": "test/reconcile.bad-dual-form.test.ts"
+      },
+      {
+        "commits": 6,
+        "lines": 1280,
+        "path": "test/reconcile.bad-external.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 282,
+        "path": "test/reconcile.bad-forward-unit-dropped.test.ts"
+      },
+      {
+        "commits": 5,
+        "lines": 378,
+        "path": "test/reconcile.bad-gradient.cli.test.ts"
+      },
+      {
+        "commits": 6,
+        "lines": 763,
+        "path": "test/reconcile.bad-gradient.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 134,
+        "path": "test/reconcile.bad-hidden-signal.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 88,
+        "path": "test/reconcile.bad-jax.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 44,
+        "path": "test/reconcile.bad-kind-vs-role.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 497,
+        "path": "test/reconcile.bad-loss-total.test.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 160,
+        "path": "test/reconcile.bad-momentum.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 190,
+        "path": "test/reconcile.bad-multi-step-external.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 132,
+        "path": "test/reconcile.bad-output-signal.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 181,
+        "path": "test/reconcile.bad-params-after.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 430,
+        "path": "test/reconcile.bad-per-sample-omission.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 89,
+        "path": "test/reconcile.bad-prob-bound.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 140,
+        "path": "test/reconcile.bad-provenance.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 132,
+        "path": "test/reconcile.bad-pytorch-helper.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 68,
+        "path": "test/reconcile.bad-softmax-sum.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 102,
+        "path": "test/reconcile.bad-tensorflow.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 52,
+        "path": "test/reconcile.bad-topology-size.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 129,
+        "path": "test/reconcile.bad-update-value.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 124,
+        "path": "test/reconcile.bad-weight-after.test.ts"
+      },
+      {
+        "commits": 19,
+        "lines": 1332,
+        "path": "test/reconcile.doctrine.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 55,
+        "path": "test/reconcile.good.cli.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 522,
+        "path": "test/reconcile.nan-poisoning.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 574,
+        "path": "test/reconcile.rule14-post-update.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 220,
+        "path": "test/runtime-format.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 167,
+        "path": "test/schema-emit-consistency.test.ts"
+      },
+      {
+        "commits": 10,
+        "lines": 304,
+        "path": "test/schema-loader.test.ts"
+      },
+      {
+        "commits": 5,
+        "lines": 1084,
+        "path": "test/schema-tolerance-ceiling.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 470,
+        "path": "test/schema.input-schema.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 660,
+        "path": "test/sgd-coupled-l2.engine.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 117,
+        "path": "test/softmax-ce.engine.test.ts"
+      },
+      {
+        "commits": 2,
+        "lines": 284,
+        "path": "test/topology.min-size.test.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 475,
+        "path": "test/topology.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 174,
+        "path": "test/validate.multi-version.test.ts"
+      },
+      {
+        "commits": 4,
+        "lines": 1013,
+        "path": "test/validate.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 84,
+        "path": "test/verify-engine.test.ts"
+      },
+      {
+        "commits": 3,
+        "lines": 198,
+        "path": "test/xor.engine.test.ts"
+      },
+      {
+        "commits": 1,
+        "lines": 12,
+        "path": "tsconfig.build.json"
+      },
+      {
+        "commits": 1,
+        "lines": 20,
+        "path": "tsconfig.json"
+      }
+    ]
+  },
+  "confidence": {
+    "level": "low",
+    "reason": "fewer than 20 source files reach 10 revisions in the window"
+  },
+  "generatedAt": "2026-09-23T22:39:43.538Z",
+  "generatedFrom": {
+    "commit": "26eeaa36a136c4b586cf226038803b430f5c52b4"
+  },
+  "pairs": [
+    {
+      "a": ".github/workflows/codeql.yml",
+      "b": ".github/workflows/pack-smoke.yml",
+      "either": 8,
+      "shared": 5,
+      "strength": 0.625
+    },
+    {
+      "a": ".github/workflows/codeql.yml",
+      "b": ".github/workflows/pages.yml",
+      "either": 6,
+      "shared": 4,
+      "strength": 0.666667
+    },
+    {
+      "a": ".github/workflows/codeql.yml",
+      "b": ".github/workflows/release.yml",
+      "either": 8,
+      "shared": 4,
+      "strength": 0.5
+    },
+    {
+      "a": ".github/workflows/pack-smoke.yml",
+      "b": ".github/workflows/release.yml",
+      "either": 10,
+      "shared": 5,
+      "strength": 0.5
+    },
+    {
+      "a": ".github/workflows/pages.yml",
+      "b": ".github/workflows/release.yml",
+      "either": 8,
+      "shared": 4,
+      "strength": 0.5
+    },
+    {
+      "a": "CHANGELOG.md",
+      "b": "README.md",
+      "either": 24,
+      "shared": 13,
+      "strength": 0.541667
+    },
+    {
+      "a": "CHANGELOG.md",
+      "b": "SHIP_GATE.md",
+      "either": 20,
+      "shared": 11,
+      "strength": 0.55
+    },
+    {
+      "a": "CHANGELOG.md",
+      "b": "package.json",
+      "either": 27,
+      "shared": 20,
+      "strength": 0.740741
+    },
+    {
+      "a": "README.es.md",
+      "b": "README.fr.md",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "README.es.md",
+      "b": "README.hi.md",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "README.es.md",
+      "b": "README.it.md",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "README.es.md",
+      "b": "README.ja.md",
+      "either": 6,
+      "shared": 5,
+      "strength": 0.833333
+    },
+    {
+      "a": "README.es.md",
+      "b": "README.pt-BR.md",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "README.es.md",
+      "b": "README.zh.md",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "README.fr.md",
+      "b": "README.hi.md",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "README.fr.md",
+      "b": "README.it.md",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "README.fr.md",
+      "b": "README.ja.md",
+      "either": 6,
+      "shared": 5,
+      "strength": 0.833333
+    },
+    {
+      "a": "README.fr.md",
+      "b": "README.pt-BR.md",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "README.fr.md",
+      "b": "README.zh.md",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "README.hi.md",
+      "b": "README.it.md",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "README.hi.md",
+      "b": "README.ja.md",
+      "either": 6,
+      "shared": 5,
+      "strength": 0.833333
+    },
+    {
+      "a": "README.hi.md",
+      "b": "README.pt-BR.md",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "README.hi.md",
+      "b": "README.zh.md",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "README.it.md",
+      "b": "README.ja.md",
+      "either": 6,
+      "shared": 5,
+      "strength": 0.833333
+    },
+    {
+      "a": "README.it.md",
+      "b": "README.pt-BR.md",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "README.it.md",
+      "b": "README.zh.md",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "README.ja.md",
+      "b": "README.pt-BR.md",
+      "either": 6,
+      "shared": 5,
+      "strength": 0.833333
+    },
+    {
+      "a": "README.ja.md",
+      "b": "README.zh.md",
+      "either": 6,
+      "shared": 5,
+      "strength": 0.833333
+    },
+    {
+      "a": "README.md",
+      "b": "SHIP_GATE.md",
+      "either": 18,
+      "shared": 10,
+      "strength": 0.555556
+    },
+    {
+      "a": "README.pt-BR.md",
+      "b": "README.zh.md",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "docs/cli.md",
+      "b": "src/index.ts",
+      "either": 10,
+      "shared": 5,
+      "strength": 0.5
+    },
+    {
+      "a": "docs/schema.md",
+      "b": "src/schema-loader.ts",
+      "either": 12,
+      "shared": 6,
+      "strength": 0.5
+    },
+    {
+      "a": "docs/schema.md",
+      "b": "src/validate.ts",
+      "either": 12,
+      "shared": 6,
+      "strength": 0.5
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-detach-not-applied.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-loss-stale.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.jsonl",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.jsonl",
+      "b": "scripts/build-pytorch-helper-fixtures.mjs",
+      "either": 7,
+      "shared": 5,
+      "strength": 0.714286
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.jsonl",
+      "b": "scripts/extract/pytorch.py",
+      "either": 9,
+      "shared": 6,
+      "strength": 0.666667
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.jsonl",
+      "b": "test/import-pytorch-helper.test.ts",
+      "either": 7,
+      "shared": 5,
+      "strength": 0.714286
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-detach-not-applied.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-detach-not-applied.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-detach-not-applied.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-detach-not-applied.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-loss-stale.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-detach-not-applied.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-detach-not-applied.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-detach-not-applied.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-detach-not-applied.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-detach-not-applied.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-detach-not-applied.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
+      "either": 8,
+      "shared": 7,
+      "strength": 0.875
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-detach-not-applied.jsonl",
+      "b": "scripts/build-pytorch-helper-fixtures.mjs",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-detach-not-applied.jsonl",
+      "b": "scripts/extract/pytorch.py",
+      "either": 9,
+      "shared": 7,
+      "strength": 0.777778
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-detach-not-applied.jsonl",
+      "b": "test/import-pytorch-helper.test.ts",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-loss-stale.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
+      "either": 8,
+      "shared": 7,
+      "strength": 0.875
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.jsonl",
+      "b": "scripts/build-pytorch-helper-fixtures.mjs",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.jsonl",
+      "b": "scripts/extract/pytorch.py",
+      "either": 9,
+      "shared": 7,
+      "strength": 0.777778
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.jsonl",
+      "b": "test/import-pytorch-helper.test.ts",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-loss-stale.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
+      "either": 8,
+      "shared": 7,
+      "strength": 0.875
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.jsonl",
+      "b": "scripts/build-pytorch-helper-fixtures.mjs",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.jsonl",
+      "b": "scripts/extract/pytorch.py",
+      "either": 9,
+      "shared": 7,
+      "strength": 0.777778
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.jsonl",
+      "b": "test/import-pytorch-helper.test.ts",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-loss-stale.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
+      "either": 8,
+      "shared": 7,
+      "strength": 0.875
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.jsonl",
+      "b": "scripts/build-pytorch-helper-fixtures.mjs",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.jsonl",
+      "b": "scripts/extract/pytorch.py",
+      "either": 9,
+      "shared": 7,
+      "strength": 0.777778
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.jsonl",
+      "b": "test/import-pytorch-helper.test.ts",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-loss-stale.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-loss-stale.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-loss-stale.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-loss-stale.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-loss-stale.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-loss-stale.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
+      "either": 8,
+      "shared": 7,
+      "strength": 0.875
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-loss-stale.jsonl",
+      "b": "scripts/build-pytorch-helper-fixtures.mjs",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-loss-stale.jsonl",
+      "b": "scripts/extract/pytorch.py",
+      "either": 9,
+      "shared": 7,
+      "strength": 0.777778
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-loss-stale.jsonl",
+      "b": "test/import-pytorch-helper.test.ts",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.jsonl",
+      "b": "scripts/build-pytorch-helper-fixtures.mjs",
+      "either": 7,
+      "shared": 5,
+      "strength": 0.714286
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.jsonl",
+      "b": "scripts/extract/pytorch.py",
+      "either": 9,
+      "shared": 6,
+      "strength": 0.666667
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.jsonl",
+      "b": "test/import-pytorch-helper.test.ts",
+      "either": 7,
+      "shared": 5,
+      "strength": 0.714286
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.jsonl",
+      "b": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
+      "either": 8,
+      "shared": 7,
+      "strength": 0.875
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.jsonl",
+      "b": "scripts/build-pytorch-helper-fixtures.mjs",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.jsonl",
+      "b": "scripts/extract/pytorch.py",
+      "either": 9,
+      "shared": 7,
+      "strength": 0.777778
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.jsonl",
+      "b": "test/import-pytorch-helper.test.ts",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
+      "either": 8,
+      "shared": 7,
+      "strength": 0.875
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.jsonl",
+      "b": "scripts/build-pytorch-helper-fixtures.mjs",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.jsonl",
+      "b": "scripts/extract/pytorch.py",
+      "either": 9,
+      "shared": 7,
+      "strength": 0.777778
+    },
+    {
+      "a": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.jsonl",
+      "b": "test/import-pytorch-helper.test.ts",
+      "either": 7,
+      "shared": 6,
+      "strength": 0.857143
+    },
+    {
+      "a": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
+      "either": 7,
+      "shared": 7,
+      "strength": 1
+    },
+    {
+      "a": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
+      "either": 8,
+      "shared": 7,
+      "strength": 0.875
+    },
+    {
+      "a": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+      "b": "scripts/build-pytorch-helper-fixtures.mjs",
+      "either": 8,
+      "shared": 5,
+      "strength": 0.625
+    },
+    {
+      "a": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+      "b": "scripts/extract/pytorch.py",
+      "either": 9,
+      "shared": 7,
+      "strength": 0.777778
+    },
+    {
+      "a": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+      "b": "test/import-pytorch-helper.test.ts",
+      "either": 8,
+      "shared": 5,
+      "strength": 0.625
+    },
+    {
+      "a": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
+      "b": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
+      "either": 8,
+      "shared": 7,
+      "strength": 0.875
+    },
+    {
+      "a": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
+      "b": "scripts/build-pytorch-helper-fixtures.mjs",
+      "either": 8,
+      "shared": 5,
+      "strength": 0.625
+    },
+    {
+      "a": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
+      "b": "scripts/extract/pytorch.py",
+      "either": 9,
+      "shared": 7,
+      "strength": 0.777778
+    },
+    {
+      "a": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
+      "b": "test/import-pytorch-helper.test.ts",
+      "either": 8,
+      "shared": 5,
+      "strength": 0.625
+    },
+    {
+      "a": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
+      "b": "scripts/build-pytorch-helper-fixtures.mjs",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
+      "b": "scripts/extract/pytorch.py",
+      "either": 9,
+      "shared": 8,
+      "strength": 0.888889
+    },
+    {
+      "a": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
+      "b": "test/import-pytorch-helper.test.ts",
+      "either": 8,
+      "shared": 6,
+      "strength": 0.75
+    },
+    {
+      "a": "scripts/build-pytorch-helper-fixtures.mjs",
+      "b": "scripts/extract/pytorch.py",
+      "either": 9,
+      "shared": 6,
+      "strength": 0.666667
+    },
+    {
+      "a": "scripts/build-pytorch-helper-fixtures.mjs",
+      "b": "test/import-pytorch-helper.test.ts",
+      "either": 6,
+      "shared": 6,
+      "strength": 1
+    },
+    {
+      "a": "scripts/extract/pytorch.py",
+      "b": "test/import-pytorch-helper.test.ts",
+      "either": 9,
+      "shared": 6,
+      "strength": 0.666667
+    },
+    {
+      "a": "src/bin/bp.ts",
+      "b": "src/reconcile.ts",
+      "either": 28,
+      "shared": 15,
+      "strength": 0.535714
+    },
+    {
+      "a": "src/emit.ts",
+      "b": "src/general-engine.ts",
+      "either": 14,
+      "shared": 9,
+      "strength": 0.642857
+    },
+    {
+      "a": "src/emit.ts",
+      "b": "src/schema-loader.ts",
+      "either": 14,
+      "shared": 7,
+      "strength": 0.5
+    },
+    {
+      "a": "src/emit.ts",
+      "b": "src/validate.ts",
+      "either": 14,
+      "shared": 7,
+      "strength": 0.5
+    },
+    {
+      "a": "src/general-engine.ts",
+      "b": "src/reconcile.ts",
+      "either": 20,
+      "shared": 12,
+      "strength": 0.6
+    },
+    {
+      "a": "src/general-engine.ts",
+      "b": "src/schema-loader.ts",
+      "either": 13,
+      "shared": 9,
+      "strength": 0.692308
+    },
+    {
+      "a": "src/general-engine.ts",
+      "b": "src/validate.ts",
+      "either": 13,
+      "shared": 9,
+      "strength": 0.692308
+    },
+    {
+      "a": "src/general-engine.ts",
+      "b": "test/reconcile.doctrine.test.ts",
+      "either": 17,
+      "shared": 10,
+      "strength": 0.588235
+    },
+    {
+      "a": "src/general-engine.ts",
+      "b": "test/schema-loader.test.ts",
+      "either": 12,
+      "shared": 7,
+      "strength": 0.583333
+    },
+    {
+      "a": "src/import-observer.ts",
+      "b": "src/reconcile.ts",
+      "either": 23,
+      "shared": 12,
+      "strength": 0.521739
+    },
+    {
+      "a": "src/reconcile.ts",
+      "b": "test/reconcile.doctrine.test.ts",
+      "either": 23,
+      "shared": 12,
+      "strength": 0.521739
+    },
+    {
+      "a": "src/schema-loader.ts",
+      "b": "src/validate.ts",
+      "either": 11,
+      "shared": 9,
+      "strength": 0.818182
+    },
+    {
+      "a": "src/schema-loader.ts",
+      "b": "test/reconcile.doctrine.test.ts",
+      "either": 16,
+      "shared": 9,
+      "strength": 0.5625
+    },
+    {
+      "a": "src/schema-loader.ts",
+      "b": "test/schema-loader.test.ts",
+      "either": 10,
+      "shared": 7,
+      "strength": 0.7
+    },
+    {
+      "a": "src/validate.ts",
+      "b": "test/schema-loader.test.ts",
+      "either": 11,
+      "shared": 6,
+      "strength": 0.545455
+    }
+  ],
+  "parameters": {
+    "appliedChangesetLimit": 50,
+    "changeset": 50,
+    "changesetFraction": 0.25,
+    "cohesionDrop": 0.2,
+    "couplingPopulation": "source",
+    "fallenShared": 3,
+    "floor": "fallen",
+    "floorHeld": false,
+    "floorTrigger": "revision-depth",
+    "headDate": "2026-09-17T19:19:08-07:00",
+    "inScopeFiles": 449,
+    "pinnedStart": null,
+    "priorFloor": null,
+    "qualifyingCommits": 76,
+    "qualifyingMinimum": 30,
+    "revisions": 5,
+    "shared": 10,
+    "sharedFloorUsed": 3,
+    "since": "2026-03-22T02:19:08.000Z",
+    "sourceExtensions": [
+      ".js",
+      ".mjs",
+      ".cjs",
+      ".jsx",
+      ".ts",
+      ".tsx",
+      ".mts",
+      ".cts",
+      ".py"
+    ],
+    "sourceFileReach": 20,
+    "sourceFileRise": 25,
+    "sourceFilesReachingStrongFloor": 8,
+    "strength": 0.5,
+    "windowDays": 180
+  },
+  "strengthDefinition": "strength is the shared qualifying commits divided by either. either is the number of qualifying commits that touch either file."
+}

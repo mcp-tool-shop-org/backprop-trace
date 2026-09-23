@@ -1,0 +1,4026 @@
+{
+  "boundaries": [
+    {
+      "dynamicReads": 0,
+      "dynamicSpawns": 0,
+      "dynamicSpawnsInTests": 0,
+      "dynamicWrites": 0,
+      "entryPoints": [],
+      "externals": 0,
+      "files": [
+        {
+          "hash": "57fadf8f64554722a11df9c12d414ae8294a66c79b86e3bf12d78475fa97cd3e",
+          "path": ".github/ISSUE_TEMPLATE/bug_report.md"
+        },
+        {
+          "hash": "462d0ec570bd142b1ff687f7329bed3e1ef884c9f6fdeeb34388a9eae4af6743",
+          "path": ".github/ISSUE_TEMPLATE/feature_request.md"
+        },
+        {
+          "hash": "c4f492b4fbfa4c8a5d42a82c208423f83c932ed158ad24e490a9dddd60265e76",
+          "path": ".github/dependabot.yml"
+        },
+        {
+          "hash": "3ac1a588b1602f7c1f70128ab54f97e182f36aba1e8aab5a3aa0e14f75427dda",
+          "path": ".github/pull_request_template.md"
+        },
+        {
+          "hash": "68f890189c42ce7b99ffeb1d9141d8d8f7e2127c31369bb292b4499035393661",
+          "path": ".github/workflows/ci.yml"
+        },
+        {
+          "hash": "fffaded70c7617c621aabb055a38558e7a8a4feb1c51464323754792b9f55332",
+          "path": ".github/workflows/codeql.yml"
+        },
+        {
+          "hash": "295b20133b71ce63b1354f5b866e2b15eeb47319daa0091ccbf70d915cad3eb2",
+          "path": ".github/workflows/pack-smoke.yml"
+        },
+        {
+          "hash": "dd58b88efa9d62888875d220147608e29268f71cf3c4e61cc22272a86c6c4d97",
+          "path": ".github/workflows/pages.yml"
+        },
+        {
+          "hash": "46b8f8f6e87ba765ac5910559272c2a0ba2793584ba1f2a94b1aa6c9a940a56d",
+          "path": ".github/workflows/release.yml"
+        }
+      ],
+      "globs": [
+        ".github/**"
+      ],
+      "importConfidence": "full",
+      "name": ".github",
+      "origin": "authored",
+      "role": "config",
+      "testedBy": 0,
+      "unresolvedSites": 0
+    },
+    {
+      "dynamicReads": 0,
+      "dynamicSpawns": 0,
+      "dynamicSpawnsInTests": 0,
+      "dynamicWrites": 0,
+      "entryPoints": [
+        "docs/cli.md"
+      ],
+      "externals": 0,
+      "files": [
+        {
+          "hash": "35e2c6d20ee55eca9ccfb7a3ac9e80251c4f8a7f1c1d07bc0996c4e1cdbe43d4",
+          "path": "docs/attestation.md"
+        },
+        {
+          "hash": "8194b9cd62f3ed518de7c56aee96d074915c966c069e1ff9ea9b0478faab8bf0",
+          "path": "docs/authoring.md"
+        },
+        {
+          "hash": "bed637117bae4b48b1d0dad0cb581c406a987699471435fb20874340dad65ef5",
+          "path": "docs/canonical-emission.md"
+        },
+        {
+          "hash": "08cd34785a99f1062cf86c6358a5fdc1d2a64285a040dd3cdf1f624bb95d985e",
+          "path": "docs/cli.md"
+        },
+        {
+          "hash": "c5895b1e2feb571f92eaf6b3f94ec40c937b3d7a89ac015fc32f65f844012fad",
+          "path": "docs/compliance.md"
+        },
+        {
+          "hash": "29aa831925232e21714569c19153ebbd85db0ec4d138d272f6979056ac674729",
+          "path": "docs/computation-order.md"
+        },
+        {
+          "hash": "becec0eeb3e3a73272a1d9c2ec7491979b427d033f74d5d62e7fd755221e7ff8",
+          "path": "docs/live-helpers.md"
+        },
+        {
+          "hash": "4ac61838d812628e685e468fcd1ec746a43c22277de2197291d712f748722900",
+          "path": "docs/multi-step.md"
+        },
+        {
+          "hash": "164b483621e2fc97a3c2ec9f60ffed7e9b8e25de001e9e14bc051a063fdc2c08",
+          "path": "docs/quickstart.md"
+        },
+        {
+          "hash": "11d581f001e70f4c3e3b4dbe82c0633d40a9bc7b34ac82f63044ce285e77cfd8",
+          "path": "docs/reconciliation.md"
+        },
+        {
+          "hash": "3cf90dc6ff0670fb3dad42dd03446f21268361501dc8c7197937d714324dcb6c",
+          "path": "docs/schema.md"
+        },
+        {
+          "hash": "f9aafe310ab2d55e383069450f503e263877db0cb84acc6650c38bb6538c5545",
+          "path": "docs/topology.md"
+        }
+      ],
+      "globs": [
+        "docs/**"
+      ],
+      "importConfidence": "full",
+      "name": "docs",
+      "origin": "authored",
+      "role": "docs",
+      "testedBy": 0,
+      "unresolvedSites": 0
+    },
+    {
+      "dynamicReads": 0,
+      "dynamicSpawns": 0,
+      "dynamicSpawnsInTests": 0,
+      "dynamicWrites": 0,
+      "entryPoints": [],
+      "externals": 0,
+      "files": [
+        {
+          "exports": [
+            "main"
+          ],
+          "hash": "1bfb60785c8699da76c6e58f93ba92001e433427f4bb3793cd1948d7871640cb",
+          "path": "examples/pytorch/extract_step.py"
+        }
+      ],
+      "globs": [
+        "examples/**"
+      ],
+      "importConfidence": "full",
+      "name": "examples",
+      "origin": "authored",
+      "role": "code",
+      "testedBy": 0,
+      "unresolvedSites": 1
+    },
+    {
+      "dynamicReads": 0,
+      "dynamicSpawns": 0,
+      "dynamicSpawnsInTests": 0,
+      "dynamicWrites": 0,
+      "entryPoints": [],
+      "externals": 0,
+      "files": [
+        {
+          "hash": "72f4d6ac5eba4df6f48b490b87620ebf21ea33bd96f8416a9f14b4b2c21d6eb2",
+          "path": "fixtures/bad/adam.bad-amsgrad-confusion.jsonl"
+        },
+        {
+          "hash": "6852283c7133cf32024ddc22b843e3450eafb5240f68c375416d8dd3675df6c4",
+          "path": "fixtures/bad/adam.bad-amsgrad-confusion.meta.json"
+        },
+        {
+          "hash": "e21159217c7fb4641c3a603f9ea419e7e0d33ebd23afac9de5e8556e68fce95b",
+          "path": "fixtures/bad/adam.bad-beta-swap.jsonl"
+        },
+        {
+          "hash": "65e4cac0a525dc7635da8645b52294ac196767e3e8ae30c1d1e9adf59662dbc8",
+          "path": "fixtures/bad/adam.bad-beta-swap.meta.json"
+        },
+        {
+          "hash": "aeb7521dacfb2de83e2ec377845214a4eba953280245ba02c07a41c014423124",
+          "path": "fixtures/bad/adam.bad-bias-correction-omitted.jsonl"
+        },
+        {
+          "hash": "03570659aa0a66e599ec788128f67342adf7cba1d9545c62b0344feb7e64500c",
+          "path": "fixtures/bad/adam.bad-bias-correction-omitted.meta.json"
+        },
+        {
+          "hash": "5a0bf4e9dfeae6f7781af0989e94eda0ff0c78ab47ec1a3d78d602b531ec8568",
+          "path": "fixtures/bad/adam.bad-engine-recompute-disagrees-adam.jsonl"
+        },
+        {
+          "hash": "b58eaf30778a341149b6ce6fbe9963d5f34bb49aead5dd4d5ee801a7600a2ca7",
+          "path": "fixtures/bad/adam.bad-engine-recompute-disagrees-adam.meta.json"
+        },
+        {
+          "hash": "643ed520b726d47a056a681b7a04f1967da013b7af63c606f82cf243066a441d",
+          "path": "fixtures/bad/adam.bad-epsilon-inside-sqrt.jsonl"
+        },
+        {
+          "hash": "1ebce3088d618bd6a9f12a03737d3025c885a9675bd9e18919c5a3a85115ff8b",
+          "path": "fixtures/bad/adam.bad-epsilon-inside-sqrt.meta.json"
+        },
+        {
+          "hash": "f82b81e0d1e849dd2405d245cfd38beba6feaca35f4a222c6f5484833a63a51f",
+          "path": "fixtures/bad/adam.bad-hyperparameter-inconstancy.jsonl"
+        },
+        {
+          "hash": "0a4785e633fbcc3d297d76252f47b5a4591d3f43b3e7b3178a6700762982b3ce",
+          "path": "fixtures/bad/adam.bad-hyperparameter-inconstancy.meta.json"
+        },
+        {
+          "hash": "0cd36bff35d1d6c71d7b7c84c50c95967b93aeee60685a5ec8518e27f2f2beb8",
+          "path": "fixtures/bad/adam.bad-stale-moment-state.jsonl"
+        },
+        {
+          "hash": "930e60691f686339a8a49483c4eebb4f78d2848e120f4572a40c70d03bc6f371",
+          "path": "fixtures/bad/adam.bad-stale-moment-state.meta.json"
+        },
+        {
+          "hash": "c6a3842df6e0e097322a4a3d8a5d48abf148d87b4c1b5698800f73b42d1dc511",
+          "path": "fixtures/bad/adam.bad-timestep-off-by-one.jsonl"
+        },
+        {
+          "hash": "32d31db193346d173cf94aa53865f00597a4f9a954ad18fb75640e81c7ef6f83",
+          "path": "fixtures/bad/adam.bad-timestep-off-by-one.meta.json"
+        },
+        {
+          "hash": "d0a1f97602cc7d92d5288433c5f82f2115967a6cf77b8d26b8fab392c44649f8",
+          "path": "fixtures/bad/adam.bad-zero-init-state-mismatch.jsonl"
+        },
+        {
+          "hash": "56d27ac298dcc9b10497bc3885d271aaa62e86cf4695e27a75d724dd896c21c1",
+          "path": "fixtures/bad/adam.bad-zero-init-state-mismatch.meta.json"
+        },
+        {
+          "hash": "41203b69b62fb1425bd0cac3c6bdd9cbed6796bddcfc3a2c351f4f1486f32d00",
+          "path": "fixtures/bad/adamw.bad-as-coupled-l2.jsonl"
+        },
+        {
+          "hash": "7928bf60a5857af1a321cf836377f65c535adf87d883d1a6c32af1773beb75b1",
+          "path": "fixtures/bad/adamw.bad-as-coupled-l2.meta.json"
+        },
+        {
+          "hash": "3010b6c14c85a440c390c98cd00d46158cb7d55209e6a6b01ee18ec0708774ad",
+          "path": "fixtures/bad/batch.bad-per-sample-forward-field-dropped.jsonl"
+        },
+        {
+          "hash": "e3f9a15d641d36e77b86c9e3dc995cfc6deac455307b55a6d71acc6d52a7de9c",
+          "path": "fixtures/bad/batch.bad-per-sample-forward-field-dropped.meta.json"
+        },
+        {
+          "hash": "9040b38d323e7af31207b8755cf31500eb3122fb0dd2119111a34aceda59394a",
+          "path": "fixtures/bad/batch.bad-per-sample-forward-tamper.jsonl"
+        },
+        {
+          "hash": "b5754d0e10544da9e0aba34c7d62ff9d30638d69f0ceeb6f369befde2bee5776",
+          "path": "fixtures/bad/batch.bad-per-sample-forward-tamper.meta.json"
+        },
+        {
+          "hash": "472ec55c499785463f6c6c66869e2ac62e602e4843f9e7b14a68ca8cb58c4344",
+          "path": "fixtures/bad/batch.bad-per-sample-forward-unit-dropped.jsonl"
+        },
+        {
+          "hash": "ea9328666c50064910b25f84d20dec15a0d43ca8887e70ada06cb8a818287af0",
+          "path": "fixtures/bad/batch.bad-per-sample-forward-unit-dropped.meta.json"
+        },
+        {
+          "hash": "2d7cf805575578e2d6c981b126664e4196072f36ffd8feb23aa7f90ba27ed287",
+          "path": "fixtures/bad/batch.bad-per-sample-loss-total-dropped.jsonl"
+        },
+        {
+          "hash": "8020c543d24d00283709d72cbecedb94bac82667339eb6a03e0fd9c6abbed434",
+          "path": "fixtures/bad/batch.bad-per-sample-loss-total-dropped.meta.json"
+        },
+        {
+          "hash": "c550e8cd8b597a391ef55b8cce476356e3b5456c9ffe4c2123a924d05c5b362a",
+          "path": "fixtures/bad/batch.bad-reduced-gradient-wrong.jsonl"
+        },
+        {
+          "hash": "22e0b68d2ee162b438c345adeea5b1e50e065f3fe5557bd5b3075211d8f095b0",
+          "path": "fixtures/bad/batch.bad-reduced-gradient-wrong.meta.json"
+        },
+        {
+          "hash": "00bd240f57f00e9b903c4798a8620af53ad711ff9f756fd4bbb06fbe6fc8a1f0",
+          "path": "fixtures/bad/batch.bad-reduction-mode-mismatch.jsonl"
+        },
+        {
+          "hash": "98b7a1c0db01bc05d714a815783692c3c6a1e50a19db9a3014cb685d89ad3e1f",
+          "path": "fixtures/bad/batch.bad-reduction-mode-mismatch.meta.json"
+        },
+        {
+          "hash": "d92d2da140b40ae5249a400d68a6124dd760514b3fbb07b944ea7f8f085abdf1",
+          "path": "fixtures/bad/batch.bad-sample-id-missing.jsonl"
+        },
+        {
+          "hash": "b323eef1fc4d90f39ef3b3df8b97a1f3fca1b6b5d4e4caaf90371c6a633bc0ad",
+          "path": "fixtures/bad/batch.bad-sample-id-missing.meta.json"
+        },
+        {
+          "hash": "193590a1c75bdbba632f073d831155891560d91e13ffc2729ccd7fa4c752f90e",
+          "path": "fixtures/bad/batch.bad-sample-order-duplicate.jsonl"
+        },
+        {
+          "hash": "f6cd42c2c4ffb7e4a5b1fd56708c2fb52201d0f4cbcd8c6cbbc509184a44ede6",
+          "path": "fixtures/bad/batch.bad-sample-order-duplicate.meta.json"
+        },
+        {
+          "hash": "e3c07e0af734d1a87acf65ccc37e7b4e17d5803f608597ae4127e7a223fcb32e",
+          "path": "fixtures/bad/external.bad-attested-mutated-after.jsonl"
+        },
+        {
+          "hash": "f100d2ec9f2d2e15c9f78f10efb257ffb36b1733c71944108236adea1990db33",
+          "path": "fixtures/bad/external.bad-attested-mutated-after.meta.json"
+        },
+        {
+          "hash": "ea2f25c8fdff11fa88b891b0e81d308d4646f3d7c86aadd31a6a6ac74b3411c3",
+          "path": "fixtures/bad/external.bad-collapsed-laundered.jsonl"
+        },
+        {
+          "hash": "c6564a98910b936848468e44ac0f4c43f8334f2c00be253ffa3db91c7155a7d6",
+          "path": "fixtures/bad/external.bad-collapsed-laundered.meta.json"
+        },
+        {
+          "hash": "c255757ad61d437fb8c93153577615d45e4e408e90659c05522bb7c496d6a8d5",
+          "path": "fixtures/bad/external.bad-engine-reproduce-disagrees.jsonl"
+        },
+        {
+          "hash": "c3e55dd73a9d40f6701f75e195beab63ba97f77f51652c9523a25beb8569bda5",
+          "path": "fixtures/bad/external.bad-engine-reproduce-disagrees.meta.json"
+        },
+        {
+          "hash": "de57277f13353b700be675eaca07b6972da2ed3a052bbc19e205f0b7db936ce8",
+          "path": "fixtures/bad/external.bad-framework-spoof.jsonl"
+        },
+        {
+          "hash": "ef012df880d6bc76d37f6c418b59f5fcfe439823d3b4e6c93a216e4647da6e54",
+          "path": "fixtures/bad/external.bad-framework-spoof.meta.json"
+        },
+        {
+          "hash": "f11868de6f09f42a4c85b51224d43df24b91834b03cc27bc7daa34c136bed5d0",
+          "path": "fixtures/bad/external.bad-partial-tamper-internally-consistent.jsonl"
+        },
+        {
+          "hash": "eec73ec397715b60eb9ed39223494b0cea2f070154c8e92034fa212c60bbde1a",
+          "path": "fixtures/bad/external.bad-partial-tamper-internally-consistent.meta.json"
+        },
+        {
+          "hash": "a398a16db1434b966b8dd2ce87e80dab93b1c6afe69c6ec4d88413649290ae4a",
+          "path": "fixtures/bad/external.bad-shape-not-math.jsonl"
+        },
+        {
+          "hash": "a1314201c200cf473a0992963896b609539adbc61003dc4b09020648f8df591e",
+          "path": "fixtures/bad/external.bad-shape-not-math.meta.json"
+        },
+        {
+          "hash": "ae57df575d264b3a0224ce11c0ec9744f2fc258ae2e557596f35ee76db7aab43",
+          "path": "fixtures/bad/external.bad-skip-without-basis.jsonl"
+        },
+        {
+          "hash": "2b7c4ca95da6eca87cd697c4e4cfbec3ac14110bd1dd66b2b806f7a68a430205",
+          "path": "fixtures/bad/external.bad-skip-without-basis.meta.json"
+        },
+        {
+          "hash": "2e459bfca2f8c3c79c851bca27c7a5ed79767fa9a0482468fe1bcf0d54971c5f",
+          "path": "fixtures/bad/external.bad-trusted-source-bad-math.jsonl"
+        },
+        {
+          "hash": "f7e8932b0e2355f4b46d8adf10461f8fc035e998578848de9ae069792dd6f27c",
+          "path": "fixtures/bad/external.bad-trusted-source-bad-math.meta.json"
+        },
+        {
+          "hash": "7ed2d79e60e70342a7eb94ffbda3d31b193d537ef710372a7b23a54122b52f8f",
+          "path": "fixtures/bad/jax.bad-pytree-flatten-order.jsonl"
+        },
+        {
+          "hash": "fff94da39f450bae6729ada2b82c2bb33496de5dbc189d7affdfa0f173657acf",
+          "path": "fixtures/bad/jax.bad-pytree-flatten-order.meta.json"
+        },
+        {
+          "hash": "566a15448f9482c95bd00f9f5cd7aeecf49c6102e7b4bb67c35ba2bbd461b0b7",
+          "path": "fixtures/bad/mazur.bad-backprop-sum.jsonl"
+        },
+        {
+          "hash": "e762d5680b684d7ac596a8e9e09443da29b86b17c6ef8b4622fc81bead64e167",
+          "path": "fixtures/bad/mazur.bad-backprop-sum.meta.json"
+        },
+        {
+          "hash": "8e2e37504b15bd27cd08ab2520b195932b7cf1fa38df318bb9055d7d0a7ffd6d",
+          "path": "fixtures/bad/mazur.bad-contribution.jsonl"
+        },
+        {
+          "hash": "0eacdcad93df6b8974bf97922fcc7a4c87397e794ff51ad4ce66785d5f3fddc8",
+          "path": "fixtures/bad/mazur.bad-contribution.meta.json"
+        },
+        {
+          "hash": "02b4e2621ef2e024ee5d6ec6062534ee94fa2c21dac6f04718bd44ca783b51bb",
+          "path": "fixtures/bad/mazur.bad-gradient.jsonl"
+        },
+        {
+          "hash": "fe17cd8576fe2a7119789aa30f960bf9e01608ea9e4721f5d3982a2f4e7f6186",
+          "path": "fixtures/bad/mazur.bad-gradient.meta.json"
+        },
+        {
+          "hash": "42ce4d49d876c2e8b43c488b7729e4cdc3981af0fe41e3d0d95e3e3fea3ec1b1",
+          "path": "fixtures/bad/mazur.bad-hidden-signal.jsonl"
+        },
+        {
+          "hash": "d4775e5ab62a469a7d51faa0ba40bcd21459b544dabf423c2ea0b5d0c3404c36",
+          "path": "fixtures/bad/mazur.bad-hidden-signal.meta.json"
+        },
+        {
+          "hash": "7ff3ff8f6ce415101d3ab442157af981c02388f8f7c48d3b85a2465434f7ee21",
+          "path": "fixtures/bad/mazur.bad-loss-total.jsonl"
+        },
+        {
+          "hash": "fff1f0628338fca155bb8c5802ff49318132c89e05be44b1be16005febc5037f",
+          "path": "fixtures/bad/mazur.bad-loss-total.meta.json"
+        },
+        {
+          "hash": "442f9133237ab04e07cdb1a6e62fbd7daf92c7b1921e1152c5485c0fd78230a0",
+          "path": "fixtures/bad/mazur.bad-output-signal.jsonl"
+        },
+        {
+          "hash": "c2d04550b7759301cceddda01c14c7f9a5e21354010bdebbee1ce1aeb014551c",
+          "path": "fixtures/bad/mazur.bad-output-signal.meta.json"
+        },
+        {
+          "hash": "85c0ce5af18a4ebf3b119b71081460cfe9ce4ee10b1c98852fb096af0f96ac81",
+          "path": "fixtures/bad/mazur.bad-params-after.jsonl"
+        },
+        {
+          "hash": "96819d9910606b176fd867294e10aea4d3d4e05a377467903768e1f222fbe04c",
+          "path": "fixtures/bad/mazur.bad-params-after.meta.json"
+        },
+        {
+          "hash": "858e6e850d38fe728cfd5ec9a648bb125de6bbfc496a454c1115dfc0fd398224",
+          "path": "fixtures/bad/mazur.bad-provenance.jsonl"
+        },
+        {
+          "hash": "c818de189e0a86226176a32b66bde590810ff5331aecf1723d26cf75ba69acaf",
+          "path": "fixtures/bad/mazur.bad-provenance.meta.json"
+        },
+        {
+          "hash": "7b820acda734aba2ba84437a9ee3c4261b4fa12e423095f9ba3491070db4d09d",
+          "path": "fixtures/bad/mazur.bad-update-value.jsonl"
+        },
+        {
+          "hash": "2adcbd4b1df496e8f98b6e2285d0c50d4bde56dcbf86e7cb320caa77fe125e58",
+          "path": "fixtures/bad/mazur.bad-update-value.meta.json"
+        },
+        {
+          "hash": "41103a4da4bb2074e3eab44a816c3f306fcbb36ef63866d97f9767e99cc414c2",
+          "path": "fixtures/bad/mazur.bad-weight-after.jsonl"
+        },
+        {
+          "hash": "138a3a0342d29bf2555f2bd7e99fc19cfffa261e13765b8f3bc843053462f927",
+          "path": "fixtures/bad/mazur.bad-weight-after.meta.json"
+        },
+        {
+          "hash": "a7e4d0c43afe9adb8a5b26496ed2c8263fc55b084f7a883c209993d685a90f50",
+          "path": "fixtures/bad/momentum-multi-step.bad-buffer-drop.jsonl"
+        },
+        {
+          "hash": "b5e3eedfce310debc33cde4c79f98d839ec5820d5a8e33468d5414265d4025c5",
+          "path": "fixtures/bad/momentum-multi-step.bad-buffer-drop.meta.json"
+        },
+        {
+          "hash": "8333f4786fc85db4f944f6700c1156241aa499549b2a3a6b134d00c3e6ee9d1d",
+          "path": "fixtures/bad/momentum-multi-step.bad-nesterov-flag-inconstancy.jsonl"
+        },
+        {
+          "hash": "db3ecd6bef14fe099459610d98c67eb60f71688b5eab8d96b4b6d473cfea3316",
+          "path": "fixtures/bad/momentum-multi-step.bad-nesterov-flag-inconstancy.meta.json"
+        },
+        {
+          "hash": "e6182234a5aca182c1167992c0be417727356ebb7fd0f0bf2b56188aa054772d",
+          "path": "fixtures/bad/momentum-multi-step.bad-stale-buffer.jsonl"
+        },
+        {
+          "hash": "9e405030e1ae76954ef7e769258d45547a7f2ded328ad6ceed09d1811a483e8a",
+          "path": "fixtures/bad/momentum-multi-step.bad-stale-buffer.meta.json"
+        },
+        {
+          "hash": "7c8b67362466e746a81dfe3f33f86f73dd3d3ff9dd97da145b12589a047ace56",
+          "path": "fixtures/bad/momentum.bad-coefficient-omitted.jsonl"
+        },
+        {
+          "hash": "caada7f76e4341baa03d6f49ad2b508e7138c2e57261b53f11cb1975ae981dae",
+          "path": "fixtures/bad/momentum.bad-coefficient-omitted.meta.json"
+        },
+        {
+          "hash": "43ec400ebde44f687106ca95c2868a389f41a9a366bede5fd23dbcd4200ee575",
+          "path": "fixtures/bad/momentum.bad-coefficient-swapped.jsonl"
+        },
+        {
+          "hash": "a7924ef6305ae047783e54f719baefb34a918793ab62b5d029ce7c36cc198e5c",
+          "path": "fixtures/bad/momentum.bad-coefficient-swapped.meta.json"
+        },
+        {
+          "hash": "644b34c6194098e1d301366a5b8a3a565d5ce5fae945de182b7cda709efbe950",
+          "path": "fixtures/bad/momentum.bad-dampening-ignored.jsonl"
+        },
+        {
+          "hash": "3c10a501bbb1287ec21aea728d61541b1b9ee15c11b32204559344fc8471ba80",
+          "path": "fixtures/bad/momentum.bad-dampening-ignored.meta.json"
+        },
+        {
+          "hash": "f7bb7ecd6f7f2840ba08fd2ecc51fcfb189b2b2a051f969bf03dd2d47fb4cb60",
+          "path": "fixtures/bad/momentum.bad-engine-recompute-disagrees-momentum.jsonl"
+        },
+        {
+          "hash": "8b9ebae714c815cbb7f422f1d4a15e37c278d9549a8762ede421bcc8e17532ae",
+          "path": "fixtures/bad/momentum.bad-engine-recompute-disagrees-momentum.meta.json"
+        },
+        {
+          "hash": "ccaddbdc41172426152c8fe9139b44eb6a916a07db5c496fab09dce7528c2c71",
+          "path": "fixtures/bad/momentum.bad-nesterov-flag-mismatch.jsonl"
+        },
+        {
+          "hash": "f9f95177d0cfbf08594a1d61cbf0edfbd81ab1f86a044df42e818bff63857529",
+          "path": "fixtures/bad/momentum.bad-nesterov-flag-mismatch.meta.json"
+        },
+        {
+          "hash": "ee3fcd7dce73c57e186dba85ac2b0222b1c1038a3c09f1afc897e045875b6f7e",
+          "path": "fixtures/bad/momentum.bad-nesterov-formula-mismatch.jsonl"
+        },
+        {
+          "hash": "354c613ebe6849ae756e54a7dc9179eff11a29a52cedfded25413a6835992eed",
+          "path": "fixtures/bad/momentum.bad-nesterov-formula-mismatch.meta.json"
+        },
+        {
+          "hash": "774489bd0b4a5d92950ca040bffadba2ba3f91de3a47597d44a5cf0286dd3a3c",
+          "path": "fixtures/bad/multi-step-external.bad-bundle-digest-tampered.jsonl"
+        },
+        {
+          "hash": "54ce2904d58f4b452929c21fd12a47f8e4989b7aa6e4ceaaba857c5b6f6186fa",
+          "path": "fixtures/bad/multi-step-external.bad-bundle-digest-tampered.meta.json"
+        },
+        {
+          "hash": "0e4835ff8c81d5fd5129a0a8c7e972f5130c79c0ce5523a4a162c6032121858a",
+          "path": "fixtures/bad/multi-step-external.bad-chain-break-cross-step-internally-consistent.jsonl"
+        },
+        {
+          "hash": "cb9519828d2a4a636e5bfb669d8557dcdd1f9aafabc47547f245c806c8788988",
+          "path": "fixtures/bad/multi-step-external.bad-chain-break-cross-step-internally-consistent.meta.json"
+        },
+        {
+          "hash": "3c2f9087dbf4506e8add4c054bf18c546fade98f4d1ce3576e9a113b8ecbaad6",
+          "path": "fixtures/bad/multi-step-external.bad-cross-trace-splice.jsonl"
+        },
+        {
+          "hash": "cc792e0808a10963e2a08089c87f5f5c06aa1bec9ef394fd3d69dbfc4bd01087",
+          "path": "fixtures/bad/multi-step-external.bad-cross-trace-splice.meta.json"
+        },
+        {
+          "hash": "239e9c564efde6adfbad4d56d1c36fc4270b3097c41fbf6cffe88c071d2448e7",
+          "path": "fixtures/bad/multi-step-external.bad-fabricated-mid-step.jsonl"
+        },
+        {
+          "hash": "c32fdbfef9ad0230c1e7c876ce083466147a3bfdafb67137a60a406bc18d8dda",
+          "path": "fixtures/bad/multi-step-external.bad-fabricated-mid-step.meta.json"
+        },
+        {
+          "hash": "a7b27973ae30ab61a1fd0ca7dcd131ccfe50a5fb4d6f3b53954779e5b9cc7acc",
+          "path": "fixtures/bad/multi-step-external.bad-step-index-gap.jsonl"
+        },
+        {
+          "hash": "e115194c68cd371836e8e07302f7625e07264c86fd6c913d47d786948bdcc8d9",
+          "path": "fixtures/bad/multi-step-external.bad-step-index-gap.meta.json"
+        },
+        {
+          "hash": "2e30fae7b7f05d6cfdfcd2af4553670708de8371221652abc44d7f2cb9cbba70",
+          "path": "fixtures/bad/multi-step.bad-chain.jsonl"
+        },
+        {
+          "hash": "ccb102813427e35875f112452243f22ec10adcb2e88f68e7ed7dd7f290ddfb16",
+          "path": "fixtures/bad/multi-step.bad-chain.meta.json"
+        },
+        {
+          "hash": "3f2f148e86dd3ae6e45fb2637ce9e3ef92ca841d3159c8c98c6f6adf6f0fc941",
+          "path": "fixtures/bad/multi-step.bad-trace-id.jsonl"
+        },
+        {
+          "hash": "a579703f3fceec305e14cc7a2407fbcb5f896e7c4ead7e03777472850cb79911",
+          "path": "fixtures/bad/multi-step.bad-trace-id.meta.json"
+        },
+        {
+          "hash": "534ad989472aa532e345ac7715ec5433dbe0ff99c8c2139c179c4c30db6c358b",
+          "path": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.jsonl"
+        },
+        {
+          "hash": "9c29f2ca6ea12686586f8cef64c5b7ac7262be60765d53255873a114d12b5604",
+          "path": "fixtures/bad/pytorch-helper.bad-adamw-as-coupled-l2.meta.json"
+        },
+        {
+          "hash": "75ce0580d385cf97811882ee32f9b2930401516974bb9063b91bc3cef0125140",
+          "path": "fixtures/bad/pytorch-helper.bad-detach-not-applied.jsonl"
+        },
+        {
+          "hash": "c30d39d743e22f46b2d72f8d5a1c30e964dc84c382461a5877ccd3c902dade7b",
+          "path": "fixtures/bad/pytorch-helper.bad-detach-not-applied.meta.json"
+        },
+        {
+          "hash": "631447c8a4ad4f3b392d0c1cb4fc024d0cc3d013cd84e76bf374eef5b09176e8",
+          "path": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.jsonl"
+        },
+        {
+          "hash": "516bb82569fd55d1fbb488a0224098b03390ee0a67e08c46324f08c55a9b7ee0",
+          "path": "fixtures/bad/pytorch-helper.bad-forward-out-mismatch.meta.json"
+        },
+        {
+          "hash": "47aa43a9284496fdcc4dfca60bab850e22099b3eec3b687fa2eb56e20e8f56c6",
+          "path": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.jsonl"
+        },
+        {
+          "hash": "b954ddc66269b6af3f194b02cb9280b71dba012cb1bf1b2fe4d4a6822ce3b73c",
+          "path": "fixtures/bad/pytorch-helper.bad-grad-captured-after-zero-grad.meta.json"
+        },
+        {
+          "hash": "c42d67c17fdd8c2e4130f59a1fdc48d52721190170ad59810d90c72874f45ecb",
+          "path": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.jsonl"
+        },
+        {
+          "hash": "6651941c2960cf653ab3b9a565b959e6472b3665c015639b1132f1c9ad26f6b4",
+          "path": "fixtures/bad/pytorch-helper.bad-hidden-signal-misrouted.meta.json"
+        },
+        {
+          "hash": "d1cb0f6c774a967732b75c98278c210443dc393c5fee066c9a1627239065907c",
+          "path": "fixtures/bad/pytorch-helper.bad-loss-stale.jsonl"
+        },
+        {
+          "hash": "18bfdc84d30fb5f13036f060569debd266d7dab61ecb181e151b2366be5f0a71",
+          "path": "fixtures/bad/pytorch-helper.bad-loss-stale.meta.json"
+        },
+        {
+          "hash": "fe785ed0a3bd5c2875739a46bf3cafd55dc47cb76926e42a6fa78d0a3b1a2f93",
+          "path": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.jsonl"
+        },
+        {
+          "hash": "303118c1691e0a564df57e36f9575906069c2078d459b2f4004ea43f6efa4acd",
+          "path": "fixtures/bad/pytorch-helper.bad-momentum-buffer-not-sign-flipped.meta.json"
+        },
+        {
+          "hash": "cd140036e77ba09a279c9d55351686ab18668c2e4876765679a851e9ab91f484",
+          "path": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.jsonl"
+        },
+        {
+          "hash": "2f84233882a69b923e5cc7fe76c62a0ba1b75f50a1cbbb6dcd7902884d736908",
+          "path": "fixtures/bad/pytorch-helper.bad-param-ordering-swapped.meta.json"
+        },
+        {
+          "hash": "8573a0be0b58fc57f2816dc2854c9f7eac45821ebee718c2b5cdba2803b2b810",
+          "path": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.jsonl"
+        },
+        {
+          "hash": "4d2bb40dc6e7397101dee53b752c3d8ee7137afb8bfe2ae2d1466d76ee6ee55a",
+          "path": "fixtures/bad/pytorch-helper.bad-weight-after-divergence.meta.json"
+        },
+        {
+          "hash": "198285507111f868976e0a5e5c5ba80b2e9452ac2a5ee06c40105875a6e892da",
+          "path": "fixtures/bad/sgd-coupled-l2.bad-as-decoupled.jsonl"
+        },
+        {
+          "hash": "d1ba597025113e9eb3755092065608285e67fcc76f8c5a452ac34c5ab7c5685f",
+          "path": "fixtures/bad/sgd-coupled-l2.bad-as-decoupled.meta.json"
+        },
+        {
+          "hash": "273cb4357f2092c2d3ccfb08f8a3198a5e00d9dcbcefaf69e93439b6a2b35c84",
+          "path": "fixtures/bad/sgd-coupled-l2.bad-decay-dropped.jsonl"
+        },
+        {
+          "hash": "d270d0b166e469d1623637503cb2bd2b08618051ffcbffd4370c019dd716f4cd",
+          "path": "fixtures/bad/sgd-coupled-l2.bad-decay-dropped.meta.json"
+        },
+        {
+          "hash": "d60c0cbcf27125ee0262185e011b314d52fd917d2490848aff8e1422b38c56fc",
+          "path": "fixtures/bad/sgd-momentum-coupled-l2.bad-wrong-lambda.jsonl"
+        },
+        {
+          "hash": "95667c62d70a5821643f34dd522523f8e0959bd50cf06de8c80a5601ac6281a0",
+          "path": "fixtures/bad/sgd-momentum-coupled-l2.bad-wrong-lambda.meta.json"
+        },
+        {
+          "hash": "7b19b87d925bb16bd6bbcba461f9608450d58258b01fbefee954cfc1e8eb6485",
+          "path": "fixtures/bad/softmax-ce.bad-ce-per-output.jsonl"
+        },
+        {
+          "hash": "c704d77ca946566fe34dfee2fb7d34e1600a673fb010b1b5bb7e68b66c921055",
+          "path": "fixtures/bad/softmax-ce.bad-ce-per-output.meta.json"
+        },
+        {
+          "hash": "18aec5b356da8ee88dd91721f82c2fe7b05f47928eb17e5712f93b7e4a676246",
+          "path": "fixtures/bad/softmax-ce.bad-ce-total.jsonl"
+        },
+        {
+          "hash": "9fa448d60f168766cdaabf752e3fc2caeef48a4f05b4495f6d0d8bd56289bee2",
+          "path": "fixtures/bad/softmax-ce.bad-ce-total.meta.json"
+        },
+        {
+          "hash": "863f3420b44d1b5339c293efe0714ce5e9be1e8afd03b2bd4fbee004c63746e3",
+          "path": "fixtures/bad/softmax-ce.bad-collapsed-vs-dual.jsonl"
+        },
+        {
+          "hash": "98b9a84c6c2bf8af5dca78150ab5bfa305c950ec8d5380200df2481b8fafc2c6",
+          "path": "fixtures/bad/softmax-ce.bad-collapsed-vs-dual.meta.json"
+        },
+        {
+          "hash": "ef7e453cb3e0b996e860cc0e728f7706101a0e3a5157487e47fa0f469257a3e5",
+          "path": "fixtures/bad/softmax-ce.bad-dual-sum.jsonl"
+        },
+        {
+          "hash": "41e2c7f6d362fc21f689b9932812e2767beae675b00122db2fb84d4c1e8b19cb",
+          "path": "fixtures/bad/softmax-ce.bad-dual-sum.meta.json"
+        },
+        {
+          "hash": "096a736290e1ae0fb2387c91821f7e9d35847cfcf453bcfc5b2a6af58a629550",
+          "path": "fixtures/bad/softmax-ce.bad-dual-term.jsonl"
+        },
+        {
+          "hash": "f4ea9e00d9782f08311ffa36a35716516287a58a083baaeeed6209eacc1183c2",
+          "path": "fixtures/bad/softmax-ce.bad-dual-term.meta.json"
+        },
+        {
+          "hash": "1775f3da2ab442cadb618854481aa66cde48776b4072d685e5ba855dbc6b55f4",
+          "path": "fixtures/bad/softmax-ce.bad-forward-unit-dropped.jsonl"
+        },
+        {
+          "hash": "fd0dd65319c401f0b613e66a72047c44b91a316c3577613367a35702c7975a2b",
+          "path": "fixtures/bad/softmax-ce.bad-forward-unit-dropped.meta.json"
+        },
+        {
+          "hash": "3e025868444e8425df1e000e3f368fe2114972d9aaf9484886ad2e520a60c86a",
+          "path": "fixtures/bad/softmax-ce.bad-prob-bound.jsonl"
+        },
+        {
+          "hash": "47a563209e518d823b0535bbe2127e37439198fe87b98ed0c7a820fed6e24355",
+          "path": "fixtures/bad/softmax-ce.bad-prob-bound.meta.json"
+        },
+        {
+          "hash": "e1eb77300ae7a112e0de854bc0eae6754fa9a8a07eb087c28f3f3fbbb50053d0",
+          "path": "fixtures/bad/softmax-ce.bad-softmax-sum.jsonl"
+        },
+        {
+          "hash": "7b9693e40a57638a2d71c6c5288bed034225110c6d3a2e2dab7dc36272e32b83",
+          "path": "fixtures/bad/softmax-ce.bad-softmax-sum.meta.json"
+        },
+        {
+          "hash": "2e78b78931adb61a3af9d1b4c0411aba9f15f2873dc82b4296ac759461c7c5f0",
+          "path": "fixtures/bad/tensorflow.bad-variable-list-order.jsonl"
+        },
+        {
+          "hash": "d20ef50e8c075bdc1201ba783d28d6c20f17d851e908b360c76e17c30115c40b",
+          "path": "fixtures/bad/tensorflow.bad-variable-list-order.meta.json"
+        },
+        {
+          "hash": "c16fdd9ece0373555a823b8f2d73237fa4bc241a3f21b65fc5d39bc73dd6e45a",
+          "path": "fixtures/bad/xor.bad-bias-gradient.jsonl"
+        },
+        {
+          "hash": "f8b6b280ee8d623069722f8296a5101a27922dd2238b84087bf20f84c0ffe9a6",
+          "path": "fixtures/bad/xor.bad-bias-gradient.meta.json"
+        },
+        {
+          "hash": "dc5617b001012e82d21c9e9ebe8b6815b942a2acab626ce1bd68c487ed828028",
+          "path": "fixtures/bad/xor.bad-bias-mode-mismatch.jsonl"
+        },
+        {
+          "hash": "79b1600c005317c5e60f177e2b8b1c5215ee8fd388ab78a64c8b777011602b46",
+          "path": "fixtures/bad/xor.bad-bias-mode-mismatch.meta.json"
+        },
+        {
+          "hash": "bb16f0dfc1141e5a45be2dd790e7d20e215669105db5f25372406186d9757848",
+          "path": "fixtures/bad/xor.bad-bias-params-after.jsonl"
+        },
+        {
+          "hash": "040d1a4eae9d8ff4ed0f762544fbc488edc6c1595e741c0c40d2117372707b8d",
+          "path": "fixtures/bad/xor.bad-bias-params-after.meta.json"
+        },
+        {
+          "hash": "386111d69cd7f3189f9a26b31ccc1b5f050d23d2ae92f6e5f347cb16bf51e041",
+          "path": "fixtures/bad/xor.bad-bias-provenance.jsonl"
+        },
+        {
+          "hash": "02601e547b3530f31199d9740cfffb5c1310d299072990b8a06876458fd569c3",
+          "path": "fixtures/bad/xor.bad-bias-provenance.meta.json"
+        },
+        {
+          "hash": "31824ee9c137389eeebf3346fda64e09a608cf4bfe200968dd2fdb85e113809a",
+          "path": "fixtures/bad/xor.bad-bias-sharing-mismatch.jsonl"
+        },
+        {
+          "hash": "97e3f5d90ca513496e8377e7f070a8fef00fe1cfecaf8f6fe2c23da26ffeabcf",
+          "path": "fixtures/bad/xor.bad-bias-sharing-mismatch.meta.json"
+        },
+        {
+          "hash": "32738aad95b895ff4ff6ff7526c4806d685a591586e95f61123b8fdf0e2518b7",
+          "path": "fixtures/bad/xor.bad-bias-update-value.jsonl"
+        },
+        {
+          "hash": "1d447ca807ce306131f812ace02c0d8f93a91b9d59ed3a3840897e1d8c37a242",
+          "path": "fixtures/bad/xor.bad-bias-update-value.meta.json"
+        },
+        {
+          "hash": "0f76cb976c7f3fd5b87ea19ff568f2f678d14384a67be86afab6ffc06aecfd77",
+          "path": "fixtures/bad/xor.bad-bias-weight-after.jsonl"
+        },
+        {
+          "hash": "8c8b9f1a98faeee62f27a228cc1de08d65309c8e5230289593f3571fbb88f672",
+          "path": "fixtures/bad/xor.bad-bias-weight-after.meta.json"
+        },
+        {
+          "hash": "f1452bd8798e8d035bf842e9c305613905a6e554ff134a647638ecf399f3482f",
+          "path": "fixtures/bad/xor.bad-kind-vs-role.jsonl"
+        },
+        {
+          "hash": "895f0f14742c9711b197630ef578498796927fe554043942e56341461aa34757",
+          "path": "fixtures/bad/xor.bad-kind-vs-role.meta.json"
+        },
+        {
+          "hash": "c9e6462326335e702f954ea2ade9fd5347833d68858fce86cbb9b3fe4ab6bc4b",
+          "path": "fixtures/bad/xor.bad-topology-size.jsonl"
+        },
+        {
+          "hash": "ed0cddbead31c95cf370a88d0dd90876b42841214750c00102dc09b01c9ffe44",
+          "path": "fixtures/bad/xor.bad-topology-size.meta.json"
+        },
+        {
+          "hash": "168d71f37c455e1167bcff897788a5dad595494131ccc6fed310c9e7ee54afb7",
+          "path": "fixtures/external/adam.reddi-2018-pathology.note.json"
+        },
+        {
+          "hash": "d30cbe5772c826c501eada3eabe00e5897384c620a6b5a4167aba5e104dc1c7a",
+          "path": "fixtures/external/external.rule14-only-bias-divergence.jsonl"
+        },
+        {
+          "hash": "874cf33b2645ff32f0b23a6d1df8fbcbfa36a6a19a35fb2b0734b73ab31b4ff1",
+          "path": "fixtures/external/jax.sgd-live.sidecar.jsonl"
+        },
+        {
+          "hash": "ae13417e968bdfcdb29d86ccfecb69b5874cd7089c958e0a4979674ae9328f08",
+          "path": "fixtures/external/jax.softmax-ce.golden.jsonl"
+        },
+        {
+          "hash": "71393f08fdfe6dcff07b9856eb8af9830ac97431812121329885b9240f725790",
+          "path": "fixtures/external/jax.softmax-ce.sidecar.jsonl"
+        },
+        {
+          "hash": "ad43632bab67967916c407de03b69024e73a9841ff2aadd1a75e92a19e61c9ea",
+          "path": "fixtures/external/pytorch.adam.golden.jsonl"
+        },
+        {
+          "hash": "322cb805f4b2080dab6700a91ac6cce885b7494f6ce0ecacb15fa24a4470e6fb",
+          "path": "fixtures/external/pytorch.adam.multi-step.golden.jsonl"
+        },
+        {
+          "hash": "d48f85636eb33aebb587068b4cc54041dc8613b902a442ad64d28c6ee2109827",
+          "path": "fixtures/external/pytorch.adam.multi-step.sidecar.jsonl"
+        },
+        {
+          "hash": "c0e7d33d67cba1055e00ff69288411d23cc75379e713b4592d0c71b73a4d6103",
+          "path": "fixtures/external/pytorch.adam.sidecar.jsonl"
+        },
+        {
+          "hash": "bc2a3e919433500153853bd8843d3b2f676759f32ef6ccb459ac9214708815d8",
+          "path": "fixtures/external/pytorch.adamw.golden.jsonl"
+        },
+        {
+          "hash": "1d4ab7ccd4d1f18fe53f5d365ffa258e26dcca8466e3329c342490e6059e79c9",
+          "path": "fixtures/external/pytorch.adamw.sidecar.jsonl"
+        },
+        {
+          "hash": "9119555b91928c238f87ac9715bca60632fe040385d927777b77d8fec2e5f074",
+          "path": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl"
+        },
+        {
+          "hash": "6c56977fe5e6041d66c05bf86d21fa60d29a1ccef746222a3cf71dec6fedcfea",
+          "path": "fixtures/external/pytorch.helper-emitted.sgd-coupled-l2.sidecar.jsonl"
+        },
+        {
+          "hash": "1d714d959ca7e8e97a08d38e1b49d8b3dd72c6e32e0f5e45ce6868c2f53af3bb",
+          "path": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl"
+        },
+        {
+          "hash": "6796f957af049302fa374627d93ee60dd4dd097bed4e84758b8f23745a8e9222",
+          "path": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl"
+        },
+        {
+          "hash": "c8b7c3be6a2f0d3287597afbff2d2bc1ad5929d8aa4a6d28f8b279931d1c2cb4",
+          "path": "fixtures/external/pytorch.sgd-coupled-l2.golden.jsonl"
+        },
+        {
+          "hash": "78a86e58a30ff799eb3ca644ca4900630c032b8cb453625c8c244f3c4b972103",
+          "path": "fixtures/external/pytorch.sgd-momentum.dampening.golden.jsonl"
+        },
+        {
+          "hash": "533550c2519bc7d62b3ac1762f0865193d8f531b18240cf45e2b9c021a6b8f56",
+          "path": "fixtures/external/pytorch.sgd-momentum.dampening.sidecar.jsonl"
+        },
+        {
+          "hash": "324ab54709dadc077a293f97348e434ac6d1a58fa5ae9d962249925aa518cd92",
+          "path": "fixtures/external/pytorch.sgd-momentum.golden.jsonl"
+        },
+        {
+          "hash": "175f943cf4f095124c6eb3953a66e25be207b51f57d4e65081e7d0318dad900b",
+          "path": "fixtures/external/pytorch.sgd-momentum.multi-step.golden.jsonl"
+        },
+        {
+          "hash": "6fb21131bcb90950b304ad3ef50894779ba9ac12551efd990d84e600108ad5bd",
+          "path": "fixtures/external/pytorch.sgd-momentum.multi-step.sidecar.jsonl"
+        },
+        {
+          "hash": "c5449ea5397c4aae47bfb33dff64592ab662bb9704f6531e836c86fc04040127",
+          "path": "fixtures/external/pytorch.sgd-momentum.nesterov.golden.jsonl"
+        },
+        {
+          "hash": "9044ff4a4e391de7f7f6f2cc9ab2c32e6b02f81b4ebdb230ede50f7f5748cfdc",
+          "path": "fixtures/external/pytorch.sgd-momentum.nesterov.multi-step.golden.jsonl"
+        },
+        {
+          "hash": "ac06c86aa7c5ccd85cd36df2419a7969b24acf4249ff1ea9b9b4362ef1911c92",
+          "path": "fixtures/external/pytorch.sgd-momentum.nesterov.multi-step.sidecar.jsonl"
+        },
+        {
+          "hash": "23a397e3452eeaaeeac9cab471438101c503fa1fc3ffab5d2717bf7efb9d7a1f",
+          "path": "fixtures/external/pytorch.sgd-momentum.nesterov.sidecar.jsonl"
+        },
+        {
+          "hash": "0f0aaec48debfb9cb8ff973b6913de2f53bca5cfcab83b8459dccdc580687340",
+          "path": "fixtures/external/pytorch.sgd-momentum.sidecar.jsonl"
+        },
+        {
+          "hash": "30a39c73775b6f113357534b2a0365db9663d8e42641a8f7e1ec75431ff084cf",
+          "path": "fixtures/external/pytorch.softmax-ce.batched.golden.jsonl"
+        },
+        {
+          "hash": "f84f16909d5baaf85e8b73100d9b795174fbcf79b0ca4216bcb5e74fd64f9295",
+          "path": "fixtures/external/pytorch.softmax-ce.batched.sidecar.jsonl"
+        },
+        {
+          "hash": "0a117835dbccfd76bd743cf1edd9b7e74bc5fc1aa4277493863d60535e03304d",
+          "path": "fixtures/external/pytorch.softmax-ce.golden.jsonl"
+        },
+        {
+          "hash": "39da4f4922b27565c36d7c8aff29721970c8a2dbc117223fdb7a0711b6e4df97",
+          "path": "fixtures/external/pytorch.softmax-ce.multi-step-batched.golden.jsonl"
+        },
+        {
+          "hash": "3170ba25599cfb023ca77b2d9456f175ca1a067c3357e54740ed255fc5290a54",
+          "path": "fixtures/external/pytorch.softmax-ce.multi-step-batched.sidecar.jsonl"
+        },
+        {
+          "hash": "d4ab12fc555c828de208df603249a1429aec520f42ac3a414e5558bb3a57ec90",
+          "path": "fixtures/external/pytorch.softmax-ce.multi-step.golden.jsonl"
+        },
+        {
+          "hash": "cfd5b8d2914486830bb3ec586636a4112579cbd5cb81beb06b06ca03bed49f8f",
+          "path": "fixtures/external/pytorch.softmax-ce.multi-step.sidecar.jsonl"
+        },
+        {
+          "hash": "c91ce8a9d22a451d55be69badd87b1a1f68362584fea54111d769db47ede5028",
+          "path": "fixtures/external/pytorch.softmax-ce.sidecar.jsonl"
+        },
+        {
+          "hash": "04bbb39f04824b8677d3c0b9f57be4105a037d249593e9397b35bc9c3bb460da",
+          "path": "fixtures/external/tensorflow.softmax-ce.golden.jsonl"
+        },
+        {
+          "hash": "86fd918f493862df1685d32c3bda08ad22b66fb7db268d6d5cf04ea5facde723",
+          "path": "fixtures/external/tensorflow.softmax-ce.sidecar.jsonl"
+        },
+        {
+          "hash": "e40b943faffb50785c93e6c228343454d96a573f953dba25b20042f6b6772531",
+          "path": "fixtures/formatter.policy.golden.json"
+        },
+        {
+          "hash": "9c272af724db08dcb5a17c185f25f5365c70112acb7baa4db28a749d664cde43",
+          "path": "fixtures/hero-classifier.golden.jsonl"
+        },
+        {
+          "hash": "b9dfd36d9e42ca4eac4d629b73b4d1313bcaa4b988b42a961757bd614c619b3a",
+          "path": "fixtures/hero-classifier.multi-step.jsonl"
+        },
+        {
+          "hash": "fe0ca041e7089636c81704e0a170e8e94c81fcc8e28ba9ae15ae2a5fae9d9c03",
+          "path": "fixtures/iris.golden.jsonl"
+        },
+        {
+          "hash": "dca9959dc8542ddba60d593d9b028f116fffbfecf1765e6f7bebfb378aeaa0e9",
+          "path": "fixtures/iris.published.json"
+        },
+        {
+          "hash": "e781a6d214acc29ec113f40664b2994fa3d50b4d60663115f7d7ac227954b71a",
+          "path": "fixtures/mazur.golden.jsonl"
+        },
+        {
+          "hash": "c0be22f088b1ecaeed1e8871e65b5c38c79bcf8c2084d7e5160aa79064d853ab",
+          "path": "fixtures/mazur.published.json"
+        },
+        {
+          "hash": "94978b42294d179d92424e99fc774ea3c54253b0f627571e487430ea36213ccc",
+          "path": "fixtures/sgd-coupled-l2.golden.jsonl"
+        },
+        {
+          "hash": "a082dea2316f26238337afbd1b9cfe650ec1807dfcf8a85fc4a44d669da882f1",
+          "path": "fixtures/sgd-momentum-coupled-l2.golden.jsonl"
+        },
+        {
+          "hash": "9471a05d8f081495a3ca45fa8d7c3ad4ccd2c2653720a40508d762b881031a95",
+          "path": "fixtures/sgd-momentum-coupled-l2.multi-step.jsonl"
+        },
+        {
+          "hash": "b3fd51be145eb2408195d5fceeb2e585dee67d7c80b69427e1ced43dcc1b3b4e",
+          "path": "fixtures/softmax-ce.golden.jsonl"
+        },
+        {
+          "hash": "0c12fc65a9458845fa50ee526226698966e4c9487c115949e4766a0652dcd4ae",
+          "path": "fixtures/templates/formatter.runtime-node.template.json"
+        },
+        {
+          "hash": "11e6c8305f726b113c91b9e2da6a26ad9f73bdea59b936c8ee907fdda3577013",
+          "path": "fixtures/xor-per-neuron-bias.golden.jsonl"
+        },
+        {
+          "hash": "30dd3169437eedc84fc8dfba14a4b07f3985a0772c5ef573561d1eb34fcd4394",
+          "path": "fixtures/xor-per-neuron-bias.published.json"
+        },
+        {
+          "hash": "5544b82eabc0e02867badf6c8ede14492f21402ea84072dc738acf42f23e0f30",
+          "path": "fixtures/xor.golden.jsonl"
+        },
+        {
+          "hash": "276aaa53efd71bf5c7035e9cc7d53e50e0a644f5a3450b11ea81ce58aacc1404",
+          "path": "fixtures/xor.multi-step.jsonl"
+        },
+        {
+          "hash": "44c7a6003243eee0c423635c274e31cd96278de69081202243294f81924cac27",
+          "path": "fixtures/xor.published.json"
+        }
+      ],
+      "globs": [
+        "fixtures/**"
+      ],
+      "importConfidence": "full",
+      "name": "fixtures",
+      "origin": "mixed",
+      "role": "config",
+      "testedBy": 0,
+      "unresolvedSites": 0
+    },
+    {
+      "dynamicReads": 0,
+      "dynamicSpawns": 0,
+      "dynamicSpawnsInTests": 0,
+      "dynamicWrites": 0,
+      "entryPoints": [],
+      "externals": 0,
+      "files": [
+        {
+          "hash": "8947d8d14a99e1546146150b3c7562261c1c6bd655933d7c47568e6c5c275df2",
+          "path": ".gitattributes"
+        },
+        {
+          "hash": "98d36a9b1ab11c370993cf89e841e3a1053a9517351cda5cfdfac4ad34437c21",
+          "path": ".gitignore"
+        },
+        {
+          "hash": "0775c6feb7638122e8b68d611cd709bf270f7b5adb5d0d2baa9afab8a6c0fc42",
+          "path": ".nvmrc"
+        },
+        {
+          "hash": "efb4c97e21228f4c66a94ae5723f97aaa2a6be2e9e3f561c7426003d7a83805c",
+          "path": "CHANGELOG.md"
+        },
+        {
+          "hash": "e5e6b5853c4b3a77bc824ab4b8b519fe39dcc377672412a027bcf602582e2d2b",
+          "path": "CONTRIBUTING.md"
+        },
+        {
+          "hash": "367e5141e4f5884e5791c4021f33a9faa958840a5decf44e1b273a87aad1c459",
+          "path": "LICENSE"
+        },
+        {
+          "hash": "1a2f039f56f6d4e3150f6f694d58a0b4af9f7e918c322f864cb865396e0d2e9c",
+          "path": "README.es.md"
+        },
+        {
+          "hash": "4f5cdc04d4435bd4cf1652e6f0c4031f0cbd461a40f6d7af155301c78af564fb",
+          "path": "README.fr.md"
+        },
+        {
+          "hash": "1a7623a703f83cb8f3b9e02a7b4220e19acb6ee4c45bd1de1cc9e5dda59c791b",
+          "path": "README.hi.md"
+        },
+        {
+          "hash": "3c16c9203233a3f7663c400efb46a0c2e34dc0cb938cf4c56817124360ef5c36",
+          "path": "README.it.md"
+        },
+        {
+          "hash": "0d41c569b8cfd5f33c3b67013ff2a4e4f7e6cf3f0084a3878c9ec0d08f72735c",
+          "path": "README.ja.md"
+        },
+        {
+          "hash": "0de81315c0ffa3f0f1f049dc2ff0001e93084412eb8da4ca411716522dfdbce7",
+          "path": "README.md"
+        },
+        {
+          "hash": "4b3998abc6ea3ff84609bb292a784c0fc4b9ad4f144b634588c43523b943c220",
+          "path": "README.pt-BR.md"
+        },
+        {
+          "hash": "7d1aebca9af7190a125aa203cc36ff15a02d1cd01eb115c7c20d35ce91f83433",
+          "path": "README.zh.md"
+        },
+        {
+          "hash": "964436ea8bec7c7ec3f07446757e88164f896730d7c7fad7b59d7b4ed9db96a8",
+          "path": "SCORECARD.md"
+        },
+        {
+          "hash": "60c732166317dd546ca3c4bec599d6ba66b030649afbb8c94b7996cf090883e4",
+          "path": "SECURITY.md"
+        },
+        {
+          "hash": "d5a524421deb2ff311fa511126ff37c5b64f60b314ebd56c26ddcab4101faf8e",
+          "path": "SHIP_GATE.md"
+        },
+        {
+          "hash": "d7c3fd9fa518964e230e8c1efd149f5935574f09c6dded076d8a9d4ec0aa7fb3",
+          "path": "package.json"
+        },
+        {
+          "hash": "d5b6723cadf883329fcac0d8d65ee2cc0f69c7de31c45a324ae1ce2c4004e18f",
+          "path": "pnpm-lock.yaml"
+        },
+        {
+          "hash": "8513c64906399031c7ba6d29a3be77d9aa759c947457bea2967b6fad6d08adf5",
+          "path": "tsconfig.build.json"
+        },
+        {
+          "hash": "c85d89639a4ac6acfd4e7e38ba2bfafde1fcb324f431d72c55860bfdfd189663",
+          "path": "tsconfig.json"
+        }
+      ],
+      "globs": [
+        "*"
+      ],
+      "importConfidence": "full",
+      "name": "root",
+      "origin": "authored",
+      "role": "config",
+      "testedBy": 0,
+      "unresolvedSites": 0
+    },
+    {
+      "dynamicReads": 0,
+      "dynamicSpawns": 0,
+      "dynamicSpawnsInTests": 0,
+      "dynamicWrites": 0,
+      "entryPoints": [],
+      "externals": 0,
+      "files": [
+        {
+          "hash": "355c0fca8f82783f4d18831472da12cc8f4222c110977af87bbaddf4bb50d9f1",
+          "path": "schemas/framework-trace.v0.1.0.json"
+        },
+        {
+          "hash": "fe37b22cc39310f8fb5bcac6f67af3e9ed182537cfd8a522949b50d93b19357b",
+          "path": "schemas/framework-trace.v0.2.0.json"
+        },
+        {
+          "hash": "b03e1ea44c0835f83acc87e5db807a4f7c63b49687dc1652c2ec77afa0a8bc13",
+          "path": "schemas/framework-trace.v0.3.0.json"
+        },
+        {
+          "hash": "f882370768f8e2db6a096c08fd56c28ab716b6f76194984f46349949f1f8301d",
+          "path": "schemas/framework-trace.v0.4.0.json"
+        },
+        {
+          "hash": "1b551714995bfc468eec59d1a6273e8565ddb5a788731fc5c8b3f94586ee78f6",
+          "path": "schemas/framework-trace.v0.5.0.json"
+        },
+        {
+          "hash": "d642825e63d7044d31a126dfaf5b4dcb1dd1d9f56205e67352d21dbbaad0b507",
+          "path": "schemas/framework-trace.v0.6.0.json"
+        },
+        {
+          "hash": "ed2089bb64cd184f767e7f663aa3c2eff3d8ea72de0ec25ec063d3ebaff8270d",
+          "path": "schemas/framework-trace.v0.7.0.json"
+        },
+        {
+          "hash": "f21695f79c8d0bf7c53d1dd2d95cce607e4a7dd8ea918c64a985fe0695368f44",
+          "path": "schemas/framework-trace.v0.8.0.json"
+        },
+        {
+          "hash": "fce9e01fb2976ec2fe8f5c8557dd9293e410c38a8b1de98f91b4926babbadcde",
+          "path": "schemas/receipt.v0.1.0.json"
+        },
+        {
+          "hash": "a8cdc27d8c735e59426a1a79e010586d89040ecc795906b1577fc6fe9310e74c",
+          "path": "schemas/receipt.v0.2.0.json"
+        },
+        {
+          "hash": "f6708496da23939bf0aed58f1c816c589d3749b6e08a4036cf28fa221cb3f9f1",
+          "path": "schemas/receipt.v0.3.0.json"
+        },
+        {
+          "hash": "5680f78b3c615b198acd29d3c3867711bb920eaac61852dd0cf455936afd54f1",
+          "path": "schemas/receipt.v0.4.0.json"
+        },
+        {
+          "hash": "6f87d5488f37a1c9520f55309cf8540b6c0969113bf2aad7b43d44894b9e99b1",
+          "path": "schemas/receipt.v0.5.0.json"
+        },
+        {
+          "hash": "451666af64581e4d1ad17dcde34879aae8f55c079241f2be31af3346c4d736ab",
+          "path": "schemas/receipt.v0.6.0.json"
+        },
+        {
+          "hash": "598d6a50c8db8314b94f1cab13ef5cd4b93362e830f727a138eba439e03e4ffd",
+          "path": "schemas/receipt.v0.7.0.json"
+        },
+        {
+          "hash": "bae24b69a6e283f5ac156056c94407eb5f13d04936c18385fac490e869a17529",
+          "path": "schemas/receipt.v0.8.0.json"
+        },
+        {
+          "hash": "149c266ad1f9792fb5921fb82196eb5bee389d7c3989590ca315223e0307f41c",
+          "path": "schemas/topology-input.v0.4.0.json"
+        }
+      ],
+      "globs": [
+        "schemas/**"
+      ],
+      "importConfidence": "full",
+      "name": "schemas",
+      "origin": "authored",
+      "role": "config",
+      "testedBy": 0,
+      "unresolvedSites": 0
+    },
+    {
+      "dynamicReads": 7,
+      "dynamicSpawns": 3,
+      "dynamicSpawnsInTests": 0,
+      "dynamicWrites": 16,
+      "entryPoints": [],
+      "externalNames": [
+        "jax"
+      ],
+      "externals": 2,
+      "files": [
+        {
+          "hash": "01ce73c4b76415ac020014e758e1798197764b386920dbc3267db34bf6a4a955",
+          "path": "scripts/build-pytorch-helper-fixtures.mjs"
+        },
+        {
+          "hash": "b37f1791a2b46b94ae3043f1e3abca56e69c7c7f53d1595381c519cd084e9e52",
+          "path": "scripts/emit-coupled-l2-observer-golden.mjs"
+        },
+        {
+          "hash": "49643d045c5f4f4db2cb2b37410bf9f09e78179fbd8a9f25f6525835fe9d9c61",
+          "path": "scripts/extract/jax.py"
+        },
+        {
+          "hash": "cac0a021bdc90323b64f0649a5439688ed4e63d8a4d9fbe4af3b5a5a5d9b610d",
+          "path": "scripts/extract/pytorch.py"
+        },
+        {
+          "hash": "a393acd647426b365a428864e7aa687da2a6202b8a603bb00f51f441912d1d4e",
+          "path": "scripts/extract/requirements-cpu.txt"
+        },
+        {
+          "hash": "26f3cb4fa5952060da7bd76f5843903ab3502b8393949308f6df07283c26e15a",
+          "path": "scripts/extract/requirements-jax-cpu.txt"
+        },
+        {
+          "hash": "7e461e59201a675ab70d2c34aa3a69f8ae85978930a619150cac9de69be3642b",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts"
+          ],
+          "path": "scripts/generate-adam-bad-fixtures.ts"
+        },
+        {
+          "hash": "dde1ad1498acfd4c5cbac4bd1ef1fae98b59820b6da09ecda1a2713726b368f7",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts"
+          ],
+          "path": "scripts/generate-batch-bad-fixtures.ts"
+        },
+        {
+          "hash": "5183650e8466554049b57aef461093c7a47bacefa69fc371a3e9371f63688f06",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts",
+            "src/hash.ts"
+          ],
+          "path": "scripts/generate-external-bad-fixtures.ts"
+        },
+        {
+          "hash": "e30c5f6bbc045dd52b278917847fbd29fbfec435c840bdfa5ace623cad5973f2",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts",
+            "src/topology.ts"
+          ],
+          "path": "scripts/generate-hero-classifier-fixtures.ts"
+        },
+        {
+          "hash": "dc1d4ac4ff7de3b83b60b69d859fd744e01ae40ea643a68b4bbd82ccc9b513ac",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts"
+          ],
+          "path": "scripts/generate-jax-bad-fixtures.ts"
+        },
+        {
+          "hash": "98d2de19d0cdd9c5eaef1774a5f3cb3503d78dd25dff5f237bd2653670355fca",
+          "importsFiles": [
+            "src/general-engine.ts",
+            "src/import-jax.ts",
+            "src/topology.ts"
+          ],
+          "path": "scripts/generate-jax-softmax-ce-fixtures.ts"
+        },
+        {
+          "hash": "f0af1b2b4c181604ccfbd88c1bb61f7c5f6c8d247fbe98084cb8717f3a302c16",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts"
+          ],
+          "path": "scripts/generate-momentum-bad-fixtures.ts"
+        },
+        {
+          "hash": "1908399e684e270801fc8cef11bb4dd0a77f1eae2a527905ad0348d1e8877cf1",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts"
+          ],
+          "path": "scripts/generate-multi-step-external-bad-fixtures.ts"
+        },
+        {
+          "hash": "b1a150a5ecd0d40b21a4042ea97c49578d312c95bfa6f7115dc3f15e58d5989b",
+          "importsFiles": [
+            "src/general-engine.ts",
+            "src/import-pytorch.ts",
+            "src/topology.ts"
+          ],
+          "path": "scripts/generate-pytorch-adam-fixtures.ts"
+        },
+        {
+          "hash": "74e8d816038d85a42439a913b2f636f7db46656a3249e63f2cc7a7522dc05493",
+          "importsFiles": [
+            "src/general-engine.ts",
+            "src/import-pytorch.ts",
+            "src/topology.ts"
+          ],
+          "path": "scripts/generate-pytorch-batched-softmax-ce-fixtures.ts"
+        },
+        {
+          "exports": [
+            "main"
+          ],
+          "hash": "10f79d196511d94ead430206d3d82d90a495db08425cfe2031daea9c56658d06",
+          "path": "scripts/generate-pytorch-coupled-l2-helper-goldens.py"
+        },
+        {
+          "exports": [
+            "main"
+          ],
+          "hash": "2d0afa1d693e234fd3902b35f0cdca381f0cbfd7e3906bcc28536be01ba11446",
+          "path": "scripts/generate-pytorch-helper-goldens.py"
+        },
+        {
+          "hash": "976de6949699047244541e9eb28d8926f0a9d009125d0ac9a1a8ed82be319508",
+          "importsFiles": [
+            "src/general-engine.ts",
+            "src/import-pytorch.ts",
+            "src/topology.ts"
+          ],
+          "path": "scripts/generate-pytorch-momentum-fixtures.ts"
+        },
+        {
+          "hash": "ff24fd95ceb3daedd535e416901a817842b05e9e59ee80003cbf2ade958b4cb3",
+          "importsFiles": [
+            "src/general-engine.ts",
+            "src/import-pytorch.ts",
+            "src/topology.ts"
+          ],
+          "path": "scripts/generate-pytorch-multi-step-softmax-ce-fixtures.ts"
+        },
+        {
+          "hash": "8ab75424fa33336cf319fc62ad5c2094efe513466b4a40870bf8515897da750f",
+          "importsFiles": [
+            "src/general-engine.ts",
+            "src/import-pytorch.ts",
+            "src/mazur.ts"
+          ],
+          "path": "scripts/generate-pytorch-softmax-ce-fixtures.ts"
+        },
+        {
+          "hash": "b8286ce0734be497f9cdcadcd7613e904a6b9adde8c6001b6a4f53057486a288",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts"
+          ],
+          "path": "scripts/generate-sgd-coupled-l2-fixtures.ts"
+        },
+        {
+          "hash": "10c12ad1dc0a92782dc0b67a5ef019532fd3606eafba813187fd432beab10c53",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts"
+          ],
+          "path": "scripts/generate-softmax-ce-bad-fixtures.ts"
+        },
+        {
+          "hash": "fe2e8791983e3b47f6a823ebf08e76ecc807041785032c705865e80a6fa2106a",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts"
+          ],
+          "path": "scripts/generate-tensorflow-bad-fixtures.ts"
+        },
+        {
+          "hash": "1087e30683c2398b525d3a2a151ff714895601581eba93f6670af7a5b01e2ee9",
+          "importsFiles": [
+            "src/general-engine.ts",
+            "src/import-tensorflow.ts",
+            "src/topology.ts"
+          ],
+          "path": "scripts/generate-tensorflow-softmax-ce-fixtures.ts"
+        },
+        {
+          "hash": "8d38e8f2197ee84170895ba0ce2cda1ecf0c00d3de8f52dad6cf63877a821dda",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts",
+            "src/mazur.ts"
+          ],
+          "path": "scripts/generate-xor-multi-step-golden.ts"
+        },
+        {
+          "hash": "4ce4f30091698b560ed238f0cc2f8f4dcbd1e969ffe7f919913a3d02a8f5349e",
+          "path": "scripts/pack-install-smoke.mjs"
+        }
+      ],
+      "globs": [
+        "scripts/**"
+      ],
+      "importConfidence": "full",
+      "name": "scripts",
+      "origin": "authored",
+      "role": "code",
+      "testedBy": 0,
+      "unresolvedSites": 3
+    },
+    {
+      "dynamicReads": 0,
+      "dynamicSpawns": 0,
+      "dynamicSpawnsInTests": 0,
+      "dynamicWrites": 0,
+      "entryPoints": [],
+      "externals": 0,
+      "files": [
+        {
+          "hash": "3e2e563868961dfe91f4a5b663ceffcd47311f7403e698e36b35721b0aa9db71",
+          "path": "site/astro.config.mjs"
+        },
+        {
+          "hash": "af5d4f54dca60686724d306eb58759fb25b6f5ba4d66559ab84a968112a184e5",
+          "path": "site/package-lock.json"
+        },
+        {
+          "hash": "ede5fe47605b55555e8d3ed7b2eb904e0c9b03a975348882ae0a870ef5b98bb7",
+          "path": "site/package.json"
+        },
+        {
+          "hash": "ee756dfba4122d2acc94a39b2555d9f200fff56a87a8c0b10f9cd01df26a8b62",
+          "path": "site/src/content.config.ts"
+        },
+        {
+          "hash": "aca35274ee6a5ec3a12bd7dec2845195ed3cebd751c91f07510dd898fb6917ba",
+          "path": "site/src/content/docs/handbook/architecture.md"
+        },
+        {
+          "hash": "7d25d5b5ae813b9930788d4fe5d458b4bbb27ce54a333c0c7dd8010f61b6c158",
+          "path": "site/src/content/docs/handbook/getting-started.md"
+        },
+        {
+          "hash": "09ea2201ec2fd943ead6b4d731c309fa418d39bc6f303bcf9b7c9bfc2de35ce9",
+          "path": "site/src/content/docs/handbook/index.md"
+        },
+        {
+          "hash": "a686e15e89714608430b191a514cdd1b211d41837d32d3972532128cadf9441a",
+          "path": "site/src/content/docs/handbook/reference.md"
+        },
+        {
+          "hash": "128d41f53b7e02d920399dd6df2b8699b49255001c0d8f02be26770dfa606cc5",
+          "path": "site/src/content/docs/handbook/security.md"
+        },
+        {
+          "hash": "584d5490a7ef842badc69180a113bf8057c9d0b4b41fc7cab0ba85128a2b0e97",
+          "path": "site/src/content/docs/handbook/usage.md"
+        },
+        {
+          "hash": "391533713539035d3c92282579d43de0f137067867fdb502d7eaea3c74601d2a",
+          "path": "site/src/pages/index.astro"
+        },
+        {
+          "hash": "85b7201f834b006510bafd0fbc19e4bc2dd8101e8dfec29c23f577c24988a423",
+          "path": "site/src/site-config.ts"
+        },
+        {
+          "hash": "29ee8df91833e694bdba973126b34a6177de4cf01dab6d9ef7d3126e8e2b67fb",
+          "path": "site/src/styles/global.css"
+        },
+        {
+          "hash": "caf3bea3424477e9528b80490e442ff4fad4ccc7562df9457497382c5bd62339",
+          "path": "site/src/styles/starlight-custom.css"
+        },
+        {
+          "hash": "b5b0a5b04a14cddd7713c5e1c82e86c79c17c2f86b170e26e9b170b3d5e01cd9",
+          "path": "site/tsconfig.json"
+        }
+      ],
+      "globs": [
+        "site/**"
+      ],
+      "importConfidence": "full",
+      "name": "site",
+      "origin": "authored",
+      "role": "site",
+      "testedBy": 0,
+      "unresolvedSites": 0
+    },
+    {
+      "dynamicReads": 9,
+      "dynamicSpawns": 0,
+      "dynamicSpawnsInTests": 0,
+      "dynamicWrites": 4,
+      "entryPoints": [
+        "src/index.ts"
+      ],
+      "externals": 0,
+      "files": [
+        {
+          "exports": [
+            "activate",
+            "activationDerivativeFromOut",
+            "identity",
+            "identityDerivativeFromOut",
+            "relu",
+            "reluDerivativeFromOut",
+            "sigmoid",
+            "sigmoidDerivativeFromOut",
+            "softmaxVector"
+          ],
+          "hash": "bada08b0958f3c82a73c119ae1e7ca2ead89074808812e0d4465977102dcbd41",
+          "path": "src/activations.ts"
+        },
+        {
+          "hash": "76373c4947f1954959305bdb6a40a954ae11ae0c88ffc880489d4b5a387ca054",
+          "importsFiles": [
+            "package.json",
+            "src/index.ts"
+          ],
+          "path": "src/bin/bp.ts"
+        },
+        {
+          "exports": [
+            "emitGeneralReceipt",
+            "emitMazurReceipt",
+            "emitReceipts"
+          ],
+          "hash": "cde1a001a63609234ea1cb793d77f03227e1ae9e6f04929a9184dbbea61a027e",
+          "importsFiles": [
+            "src/engine.ts",
+            "src/format.ts",
+            "src/general-engine.ts",
+            "src/runtime-format.ts"
+          ],
+          "path": "src/emit.ts"
+        },
+        {
+          "exports": [
+            "runMazurStep",
+            "sigmoid",
+            "sigmoidDerivativeFromOut"
+          ],
+          "hash": "0d1d3997191ebb1a03a6e58a303f156c316bcdcd0848446de2d1c7d90abf1b39",
+          "importsFiles": [
+            "src/mazur.ts"
+          ],
+          "path": "src/engine.ts"
+        },
+        {
+          "exports": [
+            "extractEngineInput",
+            "extractGeneralEngineInput"
+          ],
+          "hash": "0e4ea6a2394663b600703342aa375f97a09a8dbfd742c2f873d65671d9e027bf",
+          "importsFiles": [
+            "src/engine.ts",
+            "src/general-engine.ts",
+            "src/mazur.ts",
+            "src/topology.ts"
+          ],
+          "path": "src/extract.ts"
+        },
+        {
+          "exports": [
+            "formatDecimalStringForFixture"
+          ],
+          "hash": "a35e4bbfbb1997e4cd0a1eb5fbbc2ad7d6a1a1b1e1abd20e11857d470159b5eb",
+          "path": "src/format.ts"
+        },
+        {
+          "exports": [
+            "runBatchedGeneralStep",
+            "runGeneralStep"
+          ],
+          "hash": "ca4a441dff1605bce02f0382d647e3bcfdde820e640e1b6c09dd5e51499124d7",
+          "importsFiles": [
+            "src/activations.ts",
+            "src/engine.ts",
+            "src/topology.ts"
+          ],
+          "path": "src/general-engine.ts"
+        },
+        {
+          "exports": [
+            "hashReceipt"
+          ],
+          "hash": "0ab0e9435245d593c39421b637303ca66e309a7dc3e578e7bc7b57036f49df52",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/engine.ts",
+            "src/general-engine.ts"
+          ],
+          "path": "src/hash.ts"
+        },
+        {
+          "exports": [
+            "importJaxSidecar",
+            "importJaxSidecarStream"
+          ],
+          "hash": "bdc26aaf2c00bfcf5aad1c30f37af17f20d7d23eca7f95e9c1410580d76ca5e9",
+          "importsFiles": [
+            "src/import-observer.ts"
+          ],
+          "path": "src/import-jax.ts"
+        },
+        {
+          "exports": [
+            "buildObserverReceiptFromSidecar",
+            "buildObserverReceiptStreamFromSidecar"
+          ],
+          "hash": "08b50f59b7ee7eb8a83f5ca890e137b2c65c85ccca0b8e9bc9a2ab94a586a91b",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts",
+            "src/reconcile.ts",
+            "src/topology.ts",
+            "src/validate.ts"
+          ],
+          "path": "src/import-observer.ts"
+        },
+        {
+          "exports": [
+            "importPytorchSidecar",
+            "importPytorchSidecarStream"
+          ],
+          "hash": "66911498a3b70033dc58622a18c0b1087334b06dac70f5dda5f205aeb85f9333",
+          "importsFiles": [
+            "src/import-observer.ts"
+          ],
+          "path": "src/import-pytorch.ts"
+        },
+        {
+          "exports": [
+            "importTensorflowSidecar",
+            "importTensorflowSidecarStream"
+          ],
+          "hash": "03de25453569cad589c6cbff9579b5df8a2a439cf87b1b55ad611719f93928db",
+          "importsFiles": [
+            "src/import-observer.ts"
+          ],
+          "path": "src/import-tensorflow.ts"
+        },
+        {
+          "hash": "d5fb7ab02c76b566bfee4d4301db288555665c3b3145b421fd47d1d8db79eb6e",
+          "importsFiles": [
+            "src/activations.ts",
+            "src/emit.ts",
+            "src/engine.ts",
+            "src/extract.ts",
+            "src/format.ts",
+            "src/general-engine.ts",
+            "src/hash.ts",
+            "src/import-jax.ts",
+            "src/import-observer.ts",
+            "src/import-pytorch.ts",
+            "src/import-tensorflow.ts",
+            "src/mazur.ts",
+            "src/parse-input.ts",
+            "src/parse.ts",
+            "src/reconcile.ts",
+            "src/runtime-format.ts",
+            "src/schema-loader.ts",
+            "src/topology.ts",
+            "src/validate.ts",
+            "src/verify-engine.ts"
+          ],
+          "path": "src/index.ts"
+        },
+        {
+          "hash": "0e95dce87333bff752621065947b07dc3ee38038878952d727ae14cb01383bb3",
+          "importsFiles": [
+            "src/general-engine.ts",
+            "src/topology.ts"
+          ],
+          "path": "src/mazur.ts"
+        },
+        {
+          "exports": [
+            "parseTopologyInput",
+            "stripBom"
+          ],
+          "hash": "9434c89503017374112afd0975840a5a41f23b9e3358d11a7787ca9bae19bd4f",
+          "importsFiles": [
+            "src/general-engine.ts",
+            "src/schema-loader.ts",
+            "src/validate.ts"
+          ],
+          "path": "src/parse-input.ts"
+        },
+        {
+          "exports": [
+            "parseMazurReceipt",
+            "parseReceipt",
+            "parseReceiptJsonl"
+          ],
+          "hash": "7221d906de2ecf98a66d7725ba6bcd636e450bdbd06ef939af91c00f504c5418",
+          "importsFiles": [
+            "src/engine.ts",
+            "src/parse-input.ts",
+            "src/schema-loader.ts",
+            "src/validate.ts"
+          ],
+          "path": "src/parse.ts"
+        },
+        {
+          "exports": [
+            "applyToleranceCheck",
+            "checkRule10",
+            "checkRule9",
+            "clampTolerancePolicy",
+            "isValidTolerancePolicy",
+            "multiplyFactorsLeftToRight",
+            "multiplyFactorsRightToLeft",
+            "normalizeTolerance",
+            "numericCeilingForReceipt",
+            "reconcileMultiStep",
+            "reconcileReceipt",
+            "resolvePath",
+            "sumInOrder"
+          ],
+          "hash": "52fa9795a41e4e51912db4e638fa4e12ab80f3a93f7d20caec7aacbb8e5974dd",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/engine.ts",
+            "src/general-engine.ts",
+            "src/hash.ts",
+            "src/topology.ts"
+          ],
+          "path": "src/reconcile.ts"
+        },
+        {
+          "exports": [
+            "formatNumberForEngine",
+            "scientificToPlain"
+          ],
+          "hash": "7d4647ffdedd8d383aa8f2e09dc2be018baa1f8e77bc7d4fc607bbff8ecd1b0e",
+          "importsFiles": [
+            "src/format.ts"
+          ],
+          "path": "src/runtime-format.ts"
+        },
+        {
+          "exports": [
+            "getFrameworkTraceSchema",
+            "getInputSchema",
+            "getReceiptSchema"
+          ],
+          "hash": "9e5c2da5698d740d046c5813e5d7b7197eac5fd97ee6c13f815f63cbbb4a8a2b",
+          "path": "src/schema-loader.ts"
+        },
+        {
+          "hash": "506219256a899d45b15a0fbc8841f78f8c4c9a64b62a61e06c6a0a4bf412ce2d",
+          "parseError": true,
+          "path": "src/topology.ts",
+          "unreadSyntax": "nul-character"
+        },
+        {
+          "exports": [
+            "validateFrameworkTraceSidecar",
+            "validateFrameworkTraceSidecarOrThrow",
+            "validateReceiptOrThrow",
+            "validateReceiptSchema",
+            "validateTopologyInput",
+            "validateTopologyInputOrThrow"
+          ],
+          "hash": "4cd97f7e5685e5f23fcc8eb0e8431cce25644150b1bdad39aebbb5df2f85039f",
+          "importsFiles": [
+            "src/engine.ts",
+            "src/general-engine.ts",
+            "src/schema-loader.ts"
+          ],
+          "path": "src/validate.ts"
+        },
+        {
+          "exports": [
+            "verifyEngineReproduces",
+            "verifyGeneralEngineReproduces"
+          ],
+          "hash": "46f408bddad1153490fecd2bdafc64916053fff5b51197f5ed6af6156d2e0326",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/engine.ts",
+            "src/extract.ts",
+            "src/general-engine.ts",
+            "src/mazur.ts"
+          ],
+          "path": "src/verify-engine.ts"
+        }
+      ],
+      "globs": [
+        "src/**"
+      ],
+      "importConfidence": "full",
+      "name": "src",
+      "origin": "authored",
+      "role": "code",
+      "testedBy": 83,
+      "unresolvedSites": 0
+    },
+    {
+      "dynamicReads": 0,
+      "dynamicSpawns": 35,
+      "dynamicSpawnsInTests": 35,
+      "dynamicWrites": 0,
+      "entryPoints": [],
+      "externals": 0,
+      "files": [
+        {
+          "exports": [
+            "detectMultiStep"
+          ],
+          "hash": "ce56b6dcd12247bf05b5ecb7eabc3d5fdc44d6996adcd274125fff6e4617772a",
+          "path": "test/_fixture-utils.ts"
+        },
+        {
+          "hash": "94f44321993d38a6669a7d6cac914314dcdf8c6413cd9bd71cea16d14efaa016",
+          "importsFiles": [
+            "src/activations.ts"
+          ],
+          "path": "test/activations.test.ts"
+        },
+        {
+          "hash": "2a4b0cf04accbb4679463b1cdbd5d5bbb4b944f9c746f7c906912909f9d9223b",
+          "path": "test/bp.cli.help-version.test.ts"
+        },
+        {
+          "hash": "2a447c2923f1091da7c3ef5495871c0dc5636f4907b6caee5de529e9e26ef6ea",
+          "path": "test/bp.color.test.ts"
+        },
+        {
+          "hash": "e19e648ceb9a3e895828699d0a78543d4a38b4fe860a2de66cf933bdd3664513",
+          "path": "test/bp.examples-jax.cli.test.ts"
+        },
+        {
+          "hash": "6cf10a46252bd23e901d6f4113d83800503e633c32e7086d324e5a0797df4392",
+          "path": "test/bp.examples-pytorch.cli.test.ts"
+        },
+        {
+          "hash": "edf6a161390b6e09b64ac426f32dd9b1e77199aeec979f5ccb4cc94cc91e0f02",
+          "importsFiles": [
+            "src/mazur.ts"
+          ],
+          "path": "test/bp.generate-from-config.cli.test.ts"
+        },
+        {
+          "hash": "01df352a50a902dfb96c02ab5c91242b40208d20213797db5b2b99dab10edf98",
+          "path": "test/bp.generate-iris.cli.test.ts"
+        },
+        {
+          "hash": "b9eafb71147bc7e199aab95b03ebfc54cdf1326df5ad60fd4450bb99c4571807",
+          "path": "test/bp.generate-mazur.cli.test.ts"
+        },
+        {
+          "hash": "ea8368132833225b1c4832bba252e1649e916ea93cd0d3daab700bddf99af38f",
+          "path": "test/bp.generate-xor.cli.test.ts"
+        },
+        {
+          "hash": "5b71f21b61802f63336f1c38c864cc3319be19a3e5d5a6151cbbd0d68655f657",
+          "path": "test/bp.help-consistency.cli.test.ts"
+        },
+        {
+          "hash": "ee48edc3624904211c6f2d75de27543a882d1b23bf0091b26e7ebf7322b6c917",
+          "path": "test/bp.rule-coverage.cli.test.ts"
+        },
+        {
+          "hash": "9d66e15fe19d0826f203af7ccd1c998a6fcbd1e7d6235454c2a6a7333cbe7f90",
+          "path": "test/bp.scaffold-topology.cli.test.ts"
+        },
+        {
+          "hash": "5573fe4d316e8f5505bdb72735bda2ebfe03ce7f72e578c819958c174f5ee21b",
+          "path": "test/bp.stdin.test.ts"
+        },
+        {
+          "hash": "22d4281d28d6700030227271c7f86d52e7d8bcd81d14933287781fbce7d1dc61",
+          "path": "test/bp.unknown-flag.cli.test.ts"
+        },
+        {
+          "hash": "754f8e844471faf62774b09e62d27da0304cfbff2765e0cd264f6574813631b4",
+          "importsFiles": [
+            "src/mazur.ts"
+          ],
+          "path": "test/bp.validate-input.cli.test.ts"
+        },
+        {
+          "hash": "42947de69d1cddf19c94e39b0616559c8f5a0e642b6285518c921880dd0109b2",
+          "path": "test/bp.validate.cli.test.ts"
+        },
+        {
+          "hash": "dd072bceb7f584bed3bf81ebc7ddae8141798b0eadcabffa3ce70771c5093c5f",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/bp.verify-general.cli.test.ts"
+        },
+        {
+          "hash": "1b1de5ea68f3464e93d7d9726ed430e521cafa9f4b2ef4d5a1d7f6f16f4d3a95",
+          "path": "test/bp.verify-mazur.cli.test.ts"
+        },
+        {
+          "hash": "b4aa522bf6e7c036bea2a1adc9ab659dcce4c03d593a7fd9b02f93a4d97ed112",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/bp.verify-multi.cli.test.ts"
+        },
+        {
+          "hash": "ae8cc09c34424a4117e68ad3777d53332b89b21ef3e30bb0e7566a737a98f249",
+          "path": "test/cli.error-envelope.test.ts"
+        },
+        {
+          "hash": "d5aa809b4a3116fb2c845b6a8c6512035cc832990f4b21d22dd723eaf8a4a0fc",
+          "path": "test/cli.multi-step-import-pipe.test.ts"
+        },
+        {
+          "hash": "fede4d36fd47e6e0e48fa00a5570b0db2644335ca734c2c3126089e9eea6b9e5",
+          "path": "test/determinism.math-exp-canary.test.ts"
+        },
+        {
+          "hash": "7d78f8269abb63b6a7ff30504478efb41c639d526ab71a7f6e8cf0dee59ab302",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/engine.ts",
+            "src/format.ts",
+            "src/general-engine.ts"
+          ],
+          "path": "test/emit-multi.test.ts"
+        },
+        {
+          "hash": "e7e6ebe1cc10e6f2e19faf5de76adcfbb100e30a0f3f94adb14c6c0775182629",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/engine.ts",
+            "src/general-engine.ts",
+            "src/hash.ts"
+          ],
+          "path": "test/emit.optional-fields.test.ts"
+        },
+        {
+          "hash": "167d6e99c2ea82c9e5cccaffd83a015bc3508ed63c813f47dfd861a56d9bc843",
+          "importsFiles": [
+            "src/engine.ts",
+            "src/mazur.ts"
+          ],
+          "path": "test/engine.invalid-input.test.ts"
+        },
+        {
+          "hash": "11002057d005d874a4d65e6407788fc2b1e21c57a16f946b2de4d628ca2cc304",
+          "importsFiles": [
+            "src/engine.ts",
+            "src/format.ts",
+            "src/index.ts",
+            "src/mazur.ts",
+            "src/runtime-format.ts"
+          ],
+          "path": "test/error-messages.test.ts"
+        },
+        {
+          "hash": "cbeb5b7991c4f7f6c280d4f1ddf87fc26e4dc7cc363eacff0c430555c294062d",
+          "path": "test/exports-drift.test.ts"
+        },
+        {
+          "hash": "fdb79b06b7923c9daac5dee0bc711da4a8659a0f89160f0ae57672e43ca48359",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/engine.ts",
+            "src/extract.ts"
+          ],
+          "path": "test/extract.test.ts"
+        },
+        {
+          "hash": "ce9c8b09222ab3e594510313318372fa256eab0ccc5f31c62f7b81277f3e883e",
+          "importsFiles": [
+            "src/format.ts",
+            "src/runtime-format.ts"
+          ],
+          "path": "test/format.policy.test.ts"
+        },
+        {
+          "hash": "590f0c3a777b09e0b531fb96a85540795ef1e53818240c117c0e59697be7be0f",
+          "importsFiles": [
+            "src/format.ts",
+            "src/runtime-format.ts"
+          ],
+          "path": "test/format.property.test.ts"
+        },
+        {
+          "hash": "0ca7c56bec90b1ad509581d61f211805ba869cfdc035e5135b60571b475fadb9",
+          "importsFiles": [
+            "src/engine.ts",
+            "src/general-engine.ts",
+            "src/mazur.ts"
+          ],
+          "path": "test/general-engine.test.ts"
+        },
+        {
+          "hash": "9f528ea035c22bff0025e00ecdf739455e1f15054545b6760c0f63aaf0c1ab76",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/engine.ts",
+            "src/general-engine.ts",
+            "src/hash.ts"
+          ],
+          "path": "test/hash.general-receipt.test.ts"
+        },
+        {
+          "hash": "928d43e9882e2ad40ef055aeb9ddfc3883b42dc62c23ac1beebb6ee523136633",
+          "importsFiles": [
+            "src/engine.ts",
+            "src/hash.ts"
+          ],
+          "path": "test/hash.test.ts"
+        },
+        {
+          "hash": "b86a6917951acd56ae7219620c91c728ca7b97bcfd766239283dbb91caed7d2a",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts",
+            "src/reconcile.ts",
+            "src/topology.ts",
+            "src/verify-engine.ts"
+          ],
+          "path": "test/hero-classifier.engine.test.ts"
+        },
+        {
+          "hash": "2ee8cb88548087933a13fba1fdbecc91da9a3399493d417893cdcb484eaf3ed0",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/hybrid-tolerance.test.ts"
+        },
+        {
+          "entry": "resolveJaxPython",
+          "entryRule": 1,
+          "hash": "bb981e9653192517edff5e71fec093e4eeca83b8a974dfbb191516c4b20000c0",
+          "importsFiles": [
+            "src/import-jax.ts",
+            "src/reconcile.ts"
+          ],
+          "path": "test/import-jax-helper.jax-e2e.test.ts",
+          "sequences": []
+        },
+        {
+          "hash": "20c8c4df56926319216c643fdb9ca03486849e36272211f126c50e210b1dbc82",
+          "importsFiles": [
+            "src/import-jax.ts",
+            "src/import-pytorch.ts",
+            "src/reconcile.ts",
+            "src/validate.ts"
+          ],
+          "path": "test/import-jax.test.ts"
+        },
+        {
+          "hash": "0caa97cff918d91387a8866d16fdb620e06c0ed708c448210a847bf4043be086",
+          "importsFiles": [
+            "src/general-engine.ts",
+            "src/import-pytorch.ts",
+            "src/parse.ts",
+            "src/reconcile.ts"
+          ],
+          "path": "test/import-pytorch-adam.test.ts"
+        },
+        {
+          "hash": "cf96e895972d340498a12f86c97608e6a2602e968b9f9db987609558e5c0827c",
+          "importsFiles": [
+            "src/general-engine.ts",
+            "src/import-pytorch.ts",
+            "src/reconcile.ts",
+            "src/validate.ts"
+          ],
+          "path": "test/import-pytorch-batched.test.ts"
+        },
+        {
+          "hash": "53b6a86288ce368122afcc8b6eb2afbdfd96f7c072c99923da8358684c12fca8",
+          "importsFiles": [
+            "src/import-pytorch.ts",
+            "src/reconcile.ts",
+            "src/validate.ts"
+          ],
+          "path": "test/import-pytorch-helper.test.ts"
+        },
+        {
+          "entry": "resolveTorchPython",
+          "entryRule": 1,
+          "hash": "8de372930146ef494264dd99b17799c1610f0e6879f2c61ba0e8d8bd4ff06cb6",
+          "importsFiles": [
+            "src/import-pytorch.ts",
+            "src/reconcile.ts"
+          ],
+          "path": "test/import-pytorch-helper.torch-e2e.test.ts",
+          "sequences": []
+        },
+        {
+          "hash": "abe95d54e5c70dccb507665eba6dd8486b0cf349130ea2e3fb20914ac9b73084",
+          "importsFiles": [
+            "src/general-engine.ts",
+            "src/import-pytorch.ts",
+            "src/parse.ts",
+            "src/reconcile.ts"
+          ],
+          "path": "test/import-pytorch-momentum.test.ts"
+        },
+        {
+          "hash": "aaebf3022db5ed53f95a9bbb209181496ca804353e12d2164e90788f6188322c",
+          "importsFiles": [
+            "src/import-jax.ts",
+            "src/import-pytorch.ts",
+            "src/import-tensorflow.ts",
+            "src/reconcile.ts",
+            "src/validate.ts"
+          ],
+          "path": "test/import-pytorch-multi-step.test.ts"
+        },
+        {
+          "hash": "11ce5ade09db36d2f88853a542f14acc100d3db303b299c6ce5cb2d222f3bf81",
+          "importsFiles": [
+            "src/import-pytorch.ts",
+            "src/reconcile.ts",
+            "src/validate.ts"
+          ],
+          "path": "test/import-pytorch.test.ts"
+        },
+        {
+          "hash": "e934c6184b323f72684526fadb400640a2d74ac09d6a2a1ca37307479ce8410b",
+          "importsFiles": [
+            "src/import-jax.ts",
+            "src/import-pytorch.ts",
+            "src/import-tensorflow.ts",
+            "src/reconcile.ts",
+            "src/validate.ts"
+          ],
+          "path": "test/import-tensorflow.test.ts"
+        },
+        {
+          "hash": "2478da9534e9e828ce698937afd70e3f349bf5dc2c2bab4e492ae119cb2aa48c",
+          "importsFiles": [
+            "src/import-pytorch.ts"
+          ],
+          "path": "test/import.humanization.test.ts"
+        },
+        {
+          "hash": "9cd705e20cdeb5e5f79bac563afb6d4b9426c4dd235923615ebc6794a9d89b91",
+          "importsFiles": [
+            "src/import-jax.ts",
+            "src/import-observer.ts",
+            "src/import-pytorch.ts",
+            "src/import-tensorflow.ts"
+          ],
+          "path": "test/import.sidecar-bounds.test.ts"
+        },
+        {
+          "hash": "a9d43ce859214a99e7f6d95cc00d8c35813f9d28e97becae8bcaefb834cd9659",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts",
+            "src/mazur.ts",
+            "src/reconcile.ts",
+            "src/validate.ts"
+          ],
+          "path": "test/iris.engine.test.ts"
+        },
+        {
+          "hash": "953618fe67c8d58aa588ed7fe3b11c3e56f3686e3b99bd745208b57805ac5e03",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/engine.ts",
+            "src/mazur.ts",
+            "src/reconcile.ts"
+          ],
+          "path": "test/mazur.engine.test.ts"
+        },
+        {
+          "hash": "c3ba1649ef2188fb8e419d2f07fdc005f0bc8ba53954558df3ce916837b49af8",
+          "importsFiles": [
+            "src/general-engine.ts",
+            "src/mazur.ts",
+            "src/reconcile.ts"
+          ],
+          "path": "test/multi-step.test.ts"
+        },
+        {
+          "hash": "bf889764e803486a419a753dbd14f588612ac610222de1eb4a26db7832fc1236",
+          "path": "test/pack-install-smoke.presence.test.ts"
+        },
+        {
+          "hash": "b9f1adb16a9b55a4d70566bbb0d02e51c06fe3aaea978a60e0056d25489f2e0d",
+          "importsFiles": [
+            "src/mazur.ts",
+            "src/parse-input.ts",
+            "src/parse.ts"
+          ],
+          "path": "test/parse.test.ts"
+        },
+        {
+          "hash": "95acce151892c9df38ab9e66f68ac99f7264d0c977b59f0666a551b54aa4d7d6",
+          "importsFiles": [
+            "src/general-engine.ts",
+            "src/mazur.ts"
+          ],
+          "path": "test/per-neuron-bias.engine.test.ts"
+        },
+        {
+          "hash": "2f449850a0795323fed9ad5a934bf55df399531499cf171e507148e227d7eacb",
+          "path": "test/published-claims.test.ts"
+        },
+        {
+          "hash": "ba98a894620c32d44156dbfa5d698e178d6dfc51cd95231b675f0abe34e2ac3a",
+          "importsFiles": [
+            "src/parse.ts",
+            "src/reconcile.ts",
+            "test/_fixture-utils.ts"
+          ],
+          "path": "test/reconcile.bad-adam.test.ts"
+        },
+        {
+          "hash": "13f0665de94eba23fbd6690517cd89dcb7e2606a72fc2b8a2482e8c1ffd3a93c",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-backprop-sum.test.ts"
+        },
+        {
+          "hash": "8d7e5f2bc0d52fb93c5ff066191fb759d5ab82cdb0864b7b2de893e3f6ee3bee",
+          "importsFiles": [
+            "src/reconcile.ts",
+            "src/validate.ts"
+          ],
+          "path": "test/reconcile.bad-batch.test.ts"
+        },
+        {
+          "hash": "657a4fba92e3de17cee53f7f828baf92d1edc3c511a8c7d0c647f1e186c7ab8e",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-bias-gradient.test.ts"
+        },
+        {
+          "hash": "623c9376d773654643ac38b6c74ff916ff5720e74072e37b1e0656a0eb610cff",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-bias-mode-mismatch.test.ts"
+        },
+        {
+          "hash": "d012e6248b9c79abd4e82d0fb9bc03453c7a8de17b23c11901170e49d487b6af",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-bias-params-after.test.ts"
+        },
+        {
+          "hash": "b57a2b261ba86f9301ecf16400ac3455a244be437a54985697919bc4d6aa3901",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-bias-provenance.test.ts"
+        },
+        {
+          "hash": "ad57b27d4e5537f3496a7a8cfc3749973a7f3287803c0f97d2ec11d84383bb27",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-bias-sharing-mismatch.test.ts"
+        },
+        {
+          "hash": "7c9af08d90bfea96346aa48cb44f21781a5f8e4036e48669427deada528d8bb2",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-bias-update-value.test.ts"
+        },
+        {
+          "hash": "ee6e16a4a4aeaaecb3c9472766ed5f539bf504347392cc10b95015233c9ce898",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-bias-weight-after.test.ts"
+        },
+        {
+          "hash": "d2f34cf413ad074d78b0542a764aaf0d29bc912a43f89993c814966200bfb0e0",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-ce-per-output.test.ts"
+        },
+        {
+          "hash": "c2df23879131d7087365650e1528c81ca59edf4acedf89ae177e739fba7b0f5a",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-contribution.test.ts"
+        },
+        {
+          "hash": "55f32008c2e216225123c378d9e890c5336d61e6caf33cad163300991662fd27",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-dual-form.test.ts"
+        },
+        {
+          "hash": "b59abbf78c2b8c1003809c7d3c02be52022738cb9884fa826c2fffe7892271b2",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-external.test.ts"
+        },
+        {
+          "hash": "7f65633d4ce5af3471da275d423ddd68ad9bb173f057532e83d2b91e0ba7f221",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-forward-unit-dropped.test.ts"
+        },
+        {
+          "hash": "358018c90b7df69a0c494ffa68bc8abaa9fdc30240168f9dc5e7395246d270cb",
+          "path": "test/reconcile.bad-gradient.cli.test.ts"
+        },
+        {
+          "hash": "02afba90327ff22068ccac1dd090df7ef8738659665e0ca138bba0171663aeb8",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-gradient.test.ts"
+        },
+        {
+          "hash": "9222c287c810d81647cb32b06b7a26621b3cd40d098a39b355fb02e3db48284f",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-hidden-signal.test.ts"
+        },
+        {
+          "hash": "e10b2f90f974418306e8fe7464f99487102f999b93590af5c658a0c4e803313f",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-jax.test.ts"
+        },
+        {
+          "hash": "e33fc1b89d6e7107ef1a8abc73b5a96b9a25d0e00a0e86a061dc2c1c30c7b9ab",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-kind-vs-role.test.ts"
+        },
+        {
+          "hash": "6a681d2bf52773b46902c16a2fcbbb9f32a619ba22e811c343db689d62dee67e",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-loss-total.test.ts"
+        },
+        {
+          "hash": "a70361c2c6c2c668787191c4c6e999481b768f414d9ab539336d471119089c4f",
+          "importsFiles": [
+            "src/parse.ts",
+            "src/reconcile.ts",
+            "test/_fixture-utils.ts"
+          ],
+          "path": "test/reconcile.bad-momentum.test.ts"
+        },
+        {
+          "hash": "4eabd46ed51fbda754f43938a1a7babd00262a29d5864472a9da9100ad53ede7",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-multi-step-external.test.ts"
+        },
+        {
+          "hash": "3074dc8b76e2acdff2633afbd06e29d20e0dbea06717ae61a97c40b9541043a1",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-output-signal.test.ts"
+        },
+        {
+          "hash": "210b995048bc51a0ba695b909e871a0627ebab39bd0290259dde94b1f7464a2c",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-params-after.test.ts"
+        },
+        {
+          "hash": "0c56152629d05f51abb2e54272d7977cda0cf119796eae5ef581eb9f04726937",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-per-sample-omission.test.ts"
+        },
+        {
+          "hash": "e0a765c2c2f35bb4103d33adbde6933b557409920c89ed9b4dc673086752acbe",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-prob-bound.test.ts"
+        },
+        {
+          "hash": "ca331e54c25694b0e42d1e693676531623ff5f04a2064e848137ae655d14b72b",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-provenance.test.ts"
+        },
+        {
+          "hash": "d13a189567bb0d1d5fe26c43e7ffe2e4ae678092b1a80870d9e327c555326d5e",
+          "importsFiles": [
+            "src/import-pytorch.ts",
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-pytorch-helper.test.ts"
+        },
+        {
+          "hash": "456c828a9cb2f885b8299e9d0eece5e47c9e5ddc7d77ae50ff5599ee41bb7eba",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-softmax-sum.test.ts"
+        },
+        {
+          "hash": "44f052df44c6306da24f21e02f9e6a2b95fb5f1505f37b37943307cd92b5d9a3",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-tensorflow.test.ts"
+        },
+        {
+          "hash": "d78f40660a8c11dcb1de41cdddf320c115fd651bce2a9e184301a47709c915f6",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-topology-size.test.ts"
+        },
+        {
+          "hash": "ed240f372d39289a8eb85ab5f0761e70814fc8a7574cec0d1ddbf82fb6101354",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-update-value.test.ts"
+        },
+        {
+          "hash": "844ea349d12cb8aef82168892e894358ca10d7fb585c7cfe4dd452fc1473f540",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.bad-weight-after.test.ts"
+        },
+        {
+          "hash": "610bf0be031dd447a99e419b2186152bf0a274c68d9381330d001a26e91aa9d6",
+          "importsFiles": [
+            "src/parse.ts",
+            "src/reconcile.ts",
+            "test/_fixture-utils.ts"
+          ],
+          "path": "test/reconcile.doctrine.test.ts"
+        },
+        {
+          "hash": "e38a8392349cfebe306366914d124182e53f09e80f05a779242c6d4e6b8ed551",
+          "path": "test/reconcile.good.cli.test.ts"
+        },
+        {
+          "hash": "39e89e23c0c3702053753b7ddfc955c2a144891174301cab32e0a97b0ba430c4",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.nan-poisoning.test.ts"
+        },
+        {
+          "hash": "5dba897d3acdfee8506e16b6d7d792324c6d09690eca647de41a142a584214e8",
+          "importsFiles": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/reconcile.rule14-post-update.test.ts"
+        },
+        {
+          "hash": "502e3ce9148f61c61724d3b0b931b5dbf50956faa8fb10d98011c34d7a80bda8",
+          "importsFiles": [
+            "src/format.ts",
+            "src/runtime-format.ts"
+          ],
+          "path": "test/runtime-format.test.ts"
+        },
+        {
+          "hash": "6b8f7209acaeddce66ca485b32247e27214713e0685ac85d65e2ae538d8fb8f8",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/engine.ts",
+            "src/mazur.ts"
+          ],
+          "path": "test/schema-emit-consistency.test.ts"
+        },
+        {
+          "hash": "22da62c098e319c7ac07bd83880db546a26a5ee7a9a9809164e7b3f1bb602346",
+          "importsFiles": [
+            "src/schema-loader.ts"
+          ],
+          "path": "test/schema-loader.test.ts"
+        },
+        {
+          "hash": "1074c7dff5f898ed2d8e8b15e848ddd5bb82cfce01d761eef71f4ef7d47da7a8",
+          "importsFiles": [
+            "src/mazur.ts",
+            "src/schema-loader.ts",
+            "src/validate.ts"
+          ],
+          "path": "test/schema-tolerance-ceiling.test.ts"
+        },
+        {
+          "hash": "c0bbeb90cb2bea60c949e983fd211841694e1ea30ad2761b05c9dbb52c8e2b68",
+          "importsFiles": [
+            "src/mazur.ts"
+          ],
+          "path": "test/schema.input-schema.test.ts"
+        },
+        {
+          "hash": "765627a13552ee59acecef8acbd3bb756fef699efb2411592690277c8bfa58d3",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts",
+            "src/reconcile.ts"
+          ],
+          "path": "test/sgd-coupled-l2.engine.test.ts"
+        },
+        {
+          "hash": "e929a7dc67213e459939279df86f595c5d30a3348085b60a3589fe65bed5b10e",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts",
+            "src/mazur.ts"
+          ],
+          "path": "test/softmax-ce.engine.test.ts"
+        },
+        {
+          "hash": "3b26a7c3bbf259278cf7b8007b813b86a0ad7d78061548df25722369a95b63df",
+          "importsFiles": [
+            "src/mazur.ts",
+            "src/topology.ts"
+          ],
+          "path": "test/topology.min-size.test.ts"
+        },
+        {
+          "hash": "e13f3dba4b6ff74773676623b78b4599f2b91efe38a664638cd2270f21fbf46b",
+          "importsFiles": [
+            "src/mazur.ts",
+            "src/topology.ts"
+          ],
+          "path": "test/topology.test.ts"
+        },
+        {
+          "hash": "7a51fe466aace9124c2fb126f368866f37f46a8cb92758a1ecb042e96a89cbc0",
+          "importsFiles": [
+            "src/validate.ts"
+          ],
+          "path": "test/validate.multi-version.test.ts"
+        },
+        {
+          "hash": "848569ac478d9344f45bef98a095ded196bc18eddcf405454586752d259c6de3",
+          "importsFiles": [
+            "src/schema-loader.ts",
+            "src/validate.ts"
+          ],
+          "path": "test/validate.test.ts"
+        },
+        {
+          "hash": "5b8385005bdd2e4f92f73841d84c0f9b399ae9a1bb8fd977d4cfc5f2892451b5",
+          "importsFiles": [
+            "src/engine.ts",
+            "src/mazur.ts",
+            "src/verify-engine.ts"
+          ],
+          "path": "test/verify-engine.test.ts"
+        },
+        {
+          "hash": "a303d6fb406974f6f429d3cd00079aa08a3fad92f7abe97aab79ec0d453e9eae",
+          "importsFiles": [
+            "src/emit.ts",
+            "src/general-engine.ts",
+            "src/mazur.ts",
+            "src/reconcile.ts",
+            "src/validate.ts"
+          ],
+          "path": "test/xor.engine.test.ts"
+        }
+      ],
+      "globs": [
+        "test/**"
+      ],
+      "importConfidence": "full",
+      "name": "test",
+      "origin": "authored",
+      "role": "test",
+      "testedBy": 0,
+      "unresolvedSites": 0
+    }
+  ],
+  "doors": [
+    {
+      "checksCount": 1,
+      "commands": [
+        {
+          "job": "test",
+          "step": "3",
+          "text": "pnpm install --frozen-lockfile"
+        },
+        {
+          "job": "test",
+          "step": "4",
+          "text": "pnpm typecheck"
+        },
+        {
+          "job": "test",
+          "step": "5",
+          "text": "pnpm build"
+        },
+        {
+          "job": "test",
+          "step": "6",
+          "text": "pnpm test"
+        },
+        {
+          "job": "byte-equal",
+          "step": "3",
+          "text": "pnpm install --frozen-lockfile"
+        },
+        {
+          "job": "byte-equal",
+          "step": "4",
+          "text": "pnpm build"
+        },
+        {
+          "job": "byte-equal",
+          "step": "5",
+          "text": "pnpm test"
+        },
+        {
+          "job": "byte-equal",
+          "step": "verify mazur.generated.jsonl matches golden",
+          "text": "if [ -f tmp/mazur.generated.jsonl ]; then\n  diff fixtures/mazur.golden.jsonl tmp/mazur.generated.jsonl\nelse\n  echo \"FAIL: determinism gate cannot run — golden not produced (tmp/mazur.generated.jsonl missing after pnpm test). A gate that cannot go RED is not a gate.\" >&2\n  exit 1\nfi\n"
+        },
+        {
+          "job": "audit",
+          "step": "3",
+          "text": "pnpm install --frozen-lockfile"
+        },
+        {
+          "job": "audit",
+          "step": "dependency audit (prod — blocking)",
+          "text": "pnpm audit --prod --audit-level=moderate"
+        },
+        {
+          "job": "audit",
+          "step": "dependency audit (full tree incl. devDeps — visible, non-blocking)",
+          "text": "pnpm audit --audit-level=moderate || true"
+        },
+        {
+          "job": "torch-e2e",
+          "step": "install CPU torch (pinned)",
+          "text": "python -m pip install --upgrade pip && python -m pip install -r scripts/extract/requirements-cpu.txt --index-url https://download.pytorch.org/whl/cpu"
+        },
+        {
+          "job": "torch-e2e",
+          "step": "5",
+          "text": "pnpm install --frozen-lockfile"
+        },
+        {
+          "job": "torch-e2e",
+          "step": "6",
+          "text": "pnpm build"
+        },
+        {
+          "job": "torch-e2e",
+          "step": "torch-gated live-helper end-to-end test",
+          "text": "node --import tsx --test test/import-pytorch-helper.torch-e2e.test.ts"
+        },
+        {
+          "job": "jax-e2e",
+          "step": "install CPU jax (pinned)",
+          "text": "python -m pip install --upgrade pip && python -m pip install -r scripts/extract/requirements-jax-cpu.txt"
+        },
+        {
+          "job": "jax-e2e",
+          "step": "5",
+          "text": "pnpm install --frozen-lockfile"
+        },
+        {
+          "job": "jax-e2e",
+          "step": "6",
+          "text": "pnpm build"
+        },
+        {
+          "job": "jax-e2e",
+          "step": "jax-gated live-helper end-to-end test",
+          "text": "node --import tsx --test test/import-jax-helper.jax-e2e.test.ts"
+        }
+      ],
+      "elsewhere": [],
+      "file": ".github/workflows/ci.yml",
+      "landings": [],
+      "mentions": [
+        {
+          "job": "torch-e2e",
+          "path": "scripts/extract/requirements-cpu.txt"
+        },
+        {
+          "job": "jax-e2e",
+          "path": "scripts/extract/requirements-jax-cpu.txt"
+        }
+      ],
+      "name": "ci",
+      "permissions": [],
+      "pushes": false,
+      "reach": [
+        {
+          "boundary": "fixtures",
+          "depth": 0,
+          "files": 1
+        },
+        {
+          "boundary": "test",
+          "depth": 0,
+          "files": 2
+        },
+        {
+          "boundary": "src",
+          "depth": 1,
+          "enters": {
+            "file": "src/import-jax.ts",
+            "from": "test/import-jax-helper.jax-e2e.test.ts"
+          },
+          "files": 15
+        }
+      ],
+      "readers": [],
+      "runs": [
+        {
+          "job": "byte-equal",
+          "path": "fixtures/mazur.golden.jsonl",
+          "runKind": "checks"
+        },
+        {
+          "job": "jax-e2e",
+          "path": "test/import-jax-helper.jax-e2e.test.ts",
+          "runKind": "executes"
+        },
+        {
+          "job": "torch-e2e",
+          "path": "test/import-pytorch-helper.torch-e2e.test.ts",
+          "runKind": "executes"
+        }
+      ],
+      "runsCount": 3,
+      "secrets": [],
+      "sends": {
+        "deploysPages": false,
+        "dispatchesTo": [],
+        "opensIssues": false,
+        "opensIssuesOnFailure": false,
+        "opensPullRequests": false,
+        "publishes": false,
+        "publishesTo": [],
+        "releases": false
+      },
+      "stages": [],
+      "triggers": [
+        {
+          "branches": [
+            "main"
+          ],
+          "event": "pull_request"
+        },
+        {
+          "branches": [
+            "main"
+          ],
+          "event": "push"
+        },
+        {
+          "event": "workflow_dispatch"
+        }
+      ],
+      "uses": [
+        "actions/checkout",
+        "actions/setup-node",
+        "actions/setup-python",
+        "dorny/paths-filter",
+        "pnpm/action-setup"
+      ],
+      "usesWorkflowToken": false
+    },
+    {
+      "checksCount": 0,
+      "commands": [],
+      "elsewhere": [],
+      "file": ".github/workflows/codeql.yml",
+      "landings": [],
+      "mentions": [],
+      "name": "codeql",
+      "permissions": [
+        "actions:read",
+        "contents:read",
+        "security-events:write"
+      ],
+      "pushes": false,
+      "reach": [],
+      "readers": [],
+      "runs": [],
+      "runsCount": 0,
+      "secrets": [],
+      "sends": {
+        "deploysPages": false,
+        "dispatchesTo": [],
+        "opensIssues": false,
+        "opensIssuesOnFailure": false,
+        "opensPullRequests": false,
+        "publishes": false,
+        "publishesTo": [],
+        "releases": false
+      },
+      "stages": [],
+      "triggers": [
+        {
+          "branches": [
+            "main"
+          ],
+          "event": "pull_request"
+        },
+        {
+          "branches": [
+            "main"
+          ],
+          "event": "push"
+        },
+        {
+          "cron": "0 6 * * 1",
+          "event": "schedule"
+        }
+      ],
+      "uses": [
+        "actions/checkout",
+        "github/codeql-action/analyze",
+        "github/codeql-action/init"
+      ],
+      "usesWorkflowToken": false
+    },
+    {
+      "checksCount": 0,
+      "commands": [
+        {
+          "job": "pack-smoke",
+          "step": "3",
+          "text": "pnpm install --frozen-lockfile"
+        },
+        {
+          "job": "pack-smoke",
+          "step": "4",
+          "text": "pnpm build"
+        },
+        {
+          "job": "pack-smoke",
+          "step": "pack-install-smoke",
+          "text": "pnpm pack-smoke"
+        }
+      ],
+      "elsewhere": [],
+      "file": ".github/workflows/pack-smoke.yml",
+      "landings": [],
+      "mentions": [],
+      "name": "pack-smoke",
+      "permissions": [],
+      "pushes": false,
+      "reach": [],
+      "readers": [],
+      "runs": [],
+      "runsCount": 0,
+      "secrets": [],
+      "sends": {
+        "deploysPages": false,
+        "dispatchesTo": [],
+        "opensIssues": false,
+        "opensIssuesOnFailure": false,
+        "opensPullRequests": false,
+        "publishes": false,
+        "publishesTo": [],
+        "releases": false
+      },
+      "stages": [],
+      "triggers": [
+        {
+          "branches": [
+            "main"
+          ],
+          "event": "pull_request"
+        },
+        {
+          "branches": [
+            "main"
+          ],
+          "event": "push"
+        }
+      ],
+      "uses": [
+        "actions/checkout",
+        "actions/setup-node",
+        "pnpm/action-setup"
+      ],
+      "usesWorkflowToken": false
+    },
+    {
+      "checksCount": 0,
+      "commands": [
+        {
+          "job": "build",
+          "step": "Install site dependencies",
+          "text": "npm ci"
+        },
+        {
+          "job": "build",
+          "step": "Build site",
+          "text": "npm run build"
+        }
+      ],
+      "elsewhere": [],
+      "file": ".github/workflows/pages.yml",
+      "landings": [],
+      "mentions": [],
+      "name": "Deploy site to GitHub Pages",
+      "permissions": [
+        "contents:read",
+        "id-token:write",
+        "pages:write"
+      ],
+      "pushes": false,
+      "reach": [
+        {
+          "boundary": "site",
+          "depth": 0,
+          "files": 3
+        }
+      ],
+      "readers": [],
+      "runs": [
+        {
+          "job": "build",
+          "matched": true,
+          "path": "site/astro.config.mjs",
+          "runKind": "executes",
+          "via": "astro build"
+        },
+        {
+          "directory": true,
+          "job": "build",
+          "matched": true,
+          "path": "site/src/",
+          "runKind": "executes",
+          "via": "astro build"
+        }
+      ],
+      "runsCount": 2,
+      "secrets": [],
+      "sends": {
+        "deploysPages": true,
+        "dispatchesTo": [],
+        "opensIssues": false,
+        "opensIssuesOnFailure": false,
+        "opensPullRequests": false,
+        "publishes": false,
+        "publishesTo": [],
+        "releases": false
+      },
+      "stages": [],
+      "triggers": [
+        {
+          "branches": [
+            "main"
+          ],
+          "event": "push",
+          "paths": [
+            ".github/workflows/pages.yml",
+            "site/**"
+          ]
+        },
+        {
+          "event": "workflow_dispatch"
+        }
+      ],
+      "uses": [
+        "actions/checkout",
+        "actions/deploy-pages",
+        "actions/setup-node",
+        "actions/upload-pages-artifact"
+      ],
+      "usesWorkflowToken": false
+    },
+    {
+      "checksCount": 0,
+      "commands": [
+        {
+          "job": "verify",
+          "step": "Install dependencies",
+          "text": "pnpm install --frozen-lockfile"
+        },
+        {
+          "job": "verify",
+          "step": "Verify gate",
+          "text": "pnpm verify"
+        },
+        {
+          "job": "verify",
+          "step": "Pack-install smoke",
+          "text": "pnpm pack-smoke"
+        },
+        {
+          "job": "ship",
+          "step": "Install dependencies",
+          "text": "pnpm install --frozen-lockfile"
+        },
+        {
+          "job": "ship",
+          "step": "Build",
+          "text": "pnpm build"
+        },
+        {
+          "job": "ship",
+          "step": "Tag-vs-package.json version equality",
+          "text": "TAG_REF=\"${GITHUB_REF_NAME}\"\nTAG_VERSION=\"${TAG_REF#v}\"\nPKG_VERSION=$(node -p \"require('./package.json').version\")\necho \"tag_ref=$TAG_REF\"\necho \"tag_version=$TAG_VERSION\"\necho \"pkg_version=$PKG_VERSION\"\nif [ \"$TAG_VERSION\" != \"$PKG_VERSION\" ]; then\n  echo \"::error::Tag $TAG_REF does not match package.json version $PKG_VERSION (expected v$PKG_VERSION)\"\n  exit 1\nfi\necho \"version=$PKG_VERSION\" >> \"$GITHUB_OUTPUT\"\n"
+        },
+        {
+          "job": "ship",
+          "step": "Upgrade npm for OIDC trusted publishing (>= 11.5.1)",
+          "text": "npm install -g npm@latest"
+        },
+        {
+          "job": "ship",
+          "step": "Publish to npm with Sigstore provenance",
+          "text": "npm publish --provenance --access public"
+        },
+        {
+          "job": "ship",
+          "step": "Extract CHANGELOG entry",
+          "text": "VERSION=\"${{ steps.version-check.outputs.version }}\"\nBODY=$(awk -v v=\"$VERSION\" '\n  $0 ~ \"^## \\\\[\" v \"\\\\]\" { found=1; next }\n  found && /^## \\[/      { exit }\n  found                  { print }\n' CHANGELOG.md)\nif [ -z \"$BODY\" ]; then\n  BODY=\"See CHANGELOG.md for v$VERSION details.\"\nfi\necho \"$BODY\" > /tmp/release-notes.md\necho \"notes_file=/tmp/release-notes.md\" >> \"$GITHUB_OUTPUT\"\necho \"--- extracted release notes ---\"\ncat /tmp/release-notes.md\necho \"--- end ---\"\n"
+        },
+        {
+          "job": "ship",
+          "step": "Create GitHub release",
+          "text": "gh release create \"$GITHUB_REF_NAME\" \\\n  --title \"$GITHUB_REF_NAME\" \\\n  --notes-file \"${{ steps.changelog.outputs.notes_file }}\" \\\n  --verify-tag\n"
+        }
+      ],
+      "elsewhere": [],
+      "file": ".github/workflows/release.yml",
+      "landings": [],
+      "mentions": [
+        {
+          "job": "ship",
+          "path": "CHANGELOG.md"
+        },
+        {
+          "job": "ship",
+          "path": "package.json"
+        }
+      ],
+      "name": "Release",
+      "permissions": [
+        "contents:read",
+        "contents:write",
+        "id-token:write"
+      ],
+      "pushes": false,
+      "reach": [],
+      "readers": [],
+      "runs": [],
+      "runsCount": 0,
+      "secrets": [
+        "GITHUB_TOKEN"
+      ],
+      "sends": {
+        "deploysPages": false,
+        "dispatchesTo": [],
+        "opensIssues": false,
+        "opensIssuesOnFailure": false,
+        "opensPullRequests": false,
+        "publishes": true,
+        "publishesTo": [
+          "npm"
+        ],
+        "releases": true
+      },
+      "stages": [],
+      "triggers": [
+        {
+          "event": "push",
+          "tags": [
+            "v*"
+          ]
+        },
+        {
+          "event": "workflow_dispatch"
+        }
+      ],
+      "uses": [
+        "actions/checkout",
+        "actions/setup-node",
+        "pnpm/action-setup"
+      ],
+      "usesWorkflowToken": true
+    }
+  ],
+  "edges": [
+    {
+      "from": "scripts",
+      "kind": "file",
+      "to": "src"
+    },
+    {
+      "from": "src",
+      "kind": "file",
+      "to": "root"
+    },
+    {
+      "from": "test",
+      "fromTests": true,
+      "kind": "file",
+      "to": "src"
+    }
+  ],
+  "generatedFrom": {
+    "commit": "26eeaa36a136c4b586cf226038803b430f5c52b4",
+    "tracked": 449
+  },
+  "landings": [
+    {
+      "readers": [
+        {
+          "by": ".github/workflows/release.yml"
+        }
+      ],
+      "target": "CHANGELOG.md",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/build-pytorch-helper-fixtures.mjs",
+          "call": "literal",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/bad",
+      "writers": [
+        {
+          "by": "scripts/generate-adam-bad-fixtures.ts",
+          "confidence": "ast"
+        },
+        {
+          "by": "scripts/generate-batch-bad-fixtures.ts",
+          "confidence": "ast"
+        },
+        {
+          "by": "scripts/generate-external-bad-fixtures.ts",
+          "confidence": "ast"
+        },
+        {
+          "by": "scripts/generate-momentum-bad-fixtures.ts",
+          "confidence": "ast"
+        },
+        {
+          "by": "scripts/generate-multi-step-external-bad-fixtures.ts",
+          "confidence": "ast"
+        },
+        {
+          "by": "scripts/generate-sgd-coupled-l2-fixtures.ts",
+          "confidence": "ast"
+        },
+        {
+          "by": "scripts/generate-softmax-ce-bad-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/bad/jax.bad-pytree-flatten-order.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-jax-bad-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-momentum-bad-fixtures.ts",
+          "call": "existsSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/bad/momentum.bad-formula-mismatch.jsonl",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-momentum-bad-fixtures.ts",
+          "call": "existsSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/bad/momentum.bad-formula-mismatch.meta.json",
+      "writers": []
+    },
+    {
+      "readers": [],
+      "target": "fixtures/bad/tensorflow.bad-variable-list-order.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-tensorflow-bad-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/build-pytorch-helper-fixtures.mjs",
+          "call": "literal",
+          "confidence": "ast"
+        },
+        {
+          "by": "scripts/generate-pytorch-coupled-l2-helper-goldens.py",
+          "call": "literal",
+          "confidence": "ast"
+        },
+        {
+          "by": "scripts/generate-pytorch-helper-goldens.py",
+          "call": "literal",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external",
+      "writers": []
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/adam.reddi-2018-pathology.note.json",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-adam-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-jax-bad-fixtures.ts",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/jax.softmax-ce.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-jax-softmax-ce-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/jax.softmax-ce.sidecar.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-jax-softmax-ce-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-adam-bad-fixtures.ts",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/pytorch.adam.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-adam-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-adam-bad-fixtures.ts",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/pytorch.adam.multi-step.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-adam-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/pytorch.adam.multi-step.sidecar.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-adam-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/pytorch.adam.sidecar.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-adam-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-adam-bad-fixtures.ts",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/pytorch.adamw.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-adam-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/pytorch.adamw.sidecar.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-adam-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/build-pytorch-helper-fixtures.mjs",
+          "call": "literal",
+          "confidence": "ast"
+        },
+        {
+          "by": "scripts/generate-pytorch-helper-goldens.py",
+          "call": "literal",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/emit-coupled-l2-observer-golden.mjs",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/pytorch.helper-emitted.sgd-coupled-l2.sidecar.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-coupled-l2-helper-goldens.py",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/build-pytorch-helper-fixtures.mjs",
+          "call": "literal",
+          "confidence": "ast"
+        },
+        {
+          "by": "scripts/generate-pytorch-helper-goldens.py",
+          "call": "literal",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/build-pytorch-helper-fixtures.mjs",
+          "call": "literal",
+          "confidence": "ast"
+        },
+        {
+          "by": "scripts/generate-pytorch-helper-goldens.py",
+          "call": "literal",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
+      "writers": []
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/pytorch.sgd-coupled-l2.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/emit-coupled-l2-observer-golden.mjs",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/pytorch.sgd-momentum.dampening.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-momentum-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/pytorch.sgd-momentum.dampening.sidecar.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-momentum-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-momentum-bad-fixtures.ts",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/pytorch.sgd-momentum.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-momentum-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-momentum-bad-fixtures.ts",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/pytorch.sgd-momentum.multi-step.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-momentum-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/pytorch.sgd-momentum.multi-step.sidecar.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-momentum-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-momentum-bad-fixtures.ts",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/pytorch.sgd-momentum.nesterov.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-momentum-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-momentum-bad-fixtures.ts",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/pytorch.sgd-momentum.nesterov.multi-step.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-momentum-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/pytorch.sgd-momentum.nesterov.multi-step.sidecar.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-momentum-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/pytorch.sgd-momentum.nesterov.sidecar.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-momentum-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/pytorch.sgd-momentum.sidecar.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-momentum-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-batch-bad-fixtures.ts",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/pytorch.softmax-ce.batched.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-batched-softmax-ce-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/pytorch.softmax-ce.batched.sidecar.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-batched-softmax-ce-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-external-bad-fixtures.ts",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/pytorch.softmax-ce.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-softmax-ce-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/pytorch.softmax-ce.multi-step-batched.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-batched-softmax-ce-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/pytorch.softmax-ce.multi-step-batched.sidecar.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-batched-softmax-ce-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-multi-step-external-bad-fixtures.ts",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/pytorch.softmax-ce.multi-step.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-multi-step-softmax-ce-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-multi-step-external-bad-fixtures.ts",
+          "call": "literal",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/pytorch.softmax-ce.multi-step.sidecar.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-multi-step-softmax-ce-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/pytorch.softmax-ce.sidecar.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-softmax-ce-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-tensorflow-bad-fixtures.ts",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/external/tensorflow.softmax-ce.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-tensorflow-softmax-ce-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/external/tensorflow.softmax-ce.sidecar.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-tensorflow-softmax-ce-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/hero-classifier.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-hero-classifier-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/hero-classifier.multi-step.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-hero-classifier-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "src/bin/bp.ts",
+          "call": "literal",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/iris.golden.jsonl",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "src/bin/bp.ts",
+          "call": "literal",
+          "confidence": "ast"
+        },
+        {
+          "by": "src/bin/bp.ts",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/mazur.golden.jsonl",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "src/bin/bp.ts",
+          "call": "literal",
+          "confidence": "ast"
+        },
+        {
+          "by": "src/bin/bp.ts",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/mazur.published.json",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-sgd-coupled-l2-fixtures.ts",
+          "call": "literal",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/sgd-coupled-l2.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-sgd-coupled-l2-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-sgd-coupled-l2-fixtures.ts",
+          "call": "literal",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/sgd-momentum-coupled-l2.golden.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-sgd-coupled-l2-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/sgd-momentum-coupled-l2.multi-step.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-sgd-coupled-l2-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/generate-softmax-ce-bad-fixtures.ts",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/softmax-ce.golden.jsonl",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "src/bin/bp.ts",
+          "call": "literal",
+          "confidence": "ast"
+        }
+      ],
+      "target": "fixtures/xor.golden.jsonl",
+      "writers": []
+    },
+    {
+      "readers": [],
+      "target": "fixtures/xor.multi-step.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-xor-multi-step-golden.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": ".github/workflows/release.yml"
+        },
+        {
+          "by": "scripts/pack-install-smoke.mjs",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "package.json",
+      "writers": [
+        {
+          "by": "scripts/pack-install-smoke.mjs",
+          "confidence": "weak",
+          "stamps": true
+        }
+      ]
+    },
+    {
+      "readers": [
+        {
+          "by": "src/schema-loader.ts",
+          "call": "readFileSync",
+          "confidence": "ast"
+        }
+      ],
+      "target": "schemas",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "docs/authoring.md",
+          "call": "raw-url",
+          "confidence": "text",
+          "ref": "main",
+          "repo": "mcp-tool-shop-org/backprop-trace"
+        },
+        {
+          "by": "docs/schema.md",
+          "call": "raw-url",
+          "confidence": "text",
+          "ref": "main",
+          "repo": "mcp-tool-shop-org/backprop-trace"
+        }
+      ],
+      "target": "schemas/topology-input.v0.4.0.json",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "examples/pytorch/extract_step.py",
+          "call": "literal",
+          "confidence": "ast"
+        },
+        {
+          "by": "scripts/generate-pytorch-coupled-l2-helper-goldens.py",
+          "call": "literal",
+          "confidence": "ast"
+        },
+        {
+          "by": "scripts/generate-pytorch-helper-goldens.py",
+          "call": "literal",
+          "confidence": "ast"
+        }
+      ],
+      "target": "scripts/extract",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/extract/jax.py",
+          "call": "read_bytes",
+          "confidence": "ast"
+        },
+        {
+          "by": "src/bin/bp.ts",
+          "call": "literal",
+          "confidence": "ast"
+        }
+      ],
+      "target": "scripts/extract/jax.py",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "scripts/extract/pytorch.py",
+          "call": "read_bytes",
+          "confidence": "ast"
+        },
+        {
+          "by": "src/bin/bp.ts",
+          "call": "literal",
+          "confidence": "ast"
+        }
+      ],
+      "target": "scripts/extract/pytorch.py",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": ".github/workflows/ci.yml"
+        }
+      ],
+      "target": "scripts/extract/requirements-cpu.txt",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": ".github/workflows/ci.yml"
+        }
+      ],
+      "target": "scripts/extract/requirements-jax-cpu.txt",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "site/astro.config.mjs",
+          "call": "content-collection",
+          "confidence": "ast"
+        }
+      ],
+      "target": "site/src/content/docs",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "site/astro.config.mjs",
+          "call": "autogenerate",
+          "confidence": "ast"
+        }
+      ],
+      "target": "site/src/content/docs/handbook",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "tsconfig.build.json",
+          "call": "literal",
+          "confidence": "text"
+        }
+      ],
+      "target": "tsconfig.json",
+      "writers": []
+    }
+  ],
+  "overlaps": [],
+  "submodules": [],
+  "symlinks": [],
+  "testFiles": 106,
+  "unassigned": []
+}
