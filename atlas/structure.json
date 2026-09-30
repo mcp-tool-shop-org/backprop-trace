@@ -25,7 +25,7 @@
           "path": ".github/pull_request_template.md"
         },
         {
-          "hash": "e060958e5a73d5b50f0877b5b08d368540631bcd18b1b9fb22e7b0afa4ab2c57",
+          "hash": "a0f5bbafd164913b3fe059c7ec7e30e20a5f73f4efa7c04bee9da8a85928f6c0",
           "path": ".github/workflows/ci.yml"
         },
         {
@@ -136,7 +136,17 @@
           "exports": [
             "main"
           ],
+          "failurePaths": [
+            {
+              "in": "main",
+              "kind": "except",
+              "line": 58
+            }
+          ],
           "hash": "1bfb60785c8699da76c6e58f93ba92001e433427f4bb3793cd1948d7871640cb",
+          "importsFiles": [
+            "scripts/extract/pytorch.py"
+          ],
           "path": "examples/pytorch/extract_step.py"
         }
       ],
@@ -148,7 +158,7 @@
       "origin": "authored",
       "role": "code",
       "testedBy": 0,
-      "unresolvedSites": 1
+      "unresolvedSites": 0
     },
     {
       "dynamicReads": 0,
@@ -1122,11 +1132,15 @@
           "path": "SHIP_GATE.md"
         },
         {
+          "hash": "59ca3f6a5be96b80fee73bebf2b778211208d17cd3fb82e2134608dff0729c76",
+          "path": "codecov.yml"
+        },
+        {
           "hash": "d7c3fd9fa518964e230e8c1efd149f5935574f09c6dded076d8a9d4ec0aa7fb3",
           "path": "package.json"
         },
         {
-          "hash": "d5b6723cadf883329fcac0d8d65ee2cc0f69c7de31c45a324ae1ce2c4004e18f",
+          "hash": "aad57c9a9f63579355311570309c5937d7c7b4f6483aedc2585a8fbaac441f04",
           "path": "pnpm-lock.yaml"
         },
         {
@@ -1145,7 +1159,8 @@
       "name": "root",
       "origin": "authored",
       "role": "config",
-      "testedBy": 0,
+      "testedBy": 1,
+      "testedByScript": true,
       "unresolvedSites": 0
     },
     {
@@ -1236,17 +1251,43 @@
       "unresolvedSites": 0
     },
     {
-      "dynamicReads": 7,
-      "dynamicSpawns": 3,
+      "dynamicReads": 6,
+      "dynamicSpawns": 1,
       "dynamicSpawnsInTests": 0,
-      "dynamicWrites": 16,
+      "dynamicWrites": 11,
       "entryPoints": [],
       "externalNames": [
         "jax"
       ],
-      "externals": 2,
+      "externals": 1,
       "files": [
         {
+          "failurePaths": [
+            {
+              "in": "readJSONLLine",
+              "kind": "throw",
+              "line": 49
+            },
+            {
+              "in": "mutate",
+              "kind": "throw",
+              "line": 147
+            },
+            {
+              "in": "mutate",
+              "kind": "throw",
+              "line": 186
+            },
+            {
+              "in": "mutate",
+              "kind": "throw",
+              "line": 201
+            },
+            {
+              "kind": "throw",
+              "line": 297
+            }
+          ],
           "hash": "01ce73c4b76415ac020014e758e1798197764b386920dbc3267db34bf6a4a955",
           "path": "scripts/build-pytorch-helper-fixtures.mjs"
         },
@@ -1258,10 +1299,257 @@
           "path": "scripts/emit-coupled-l2-observer-golden.mjs"
         },
         {
+          "failurePaths": [
+            {
+              "kind": "except",
+              "line": 157
+            },
+            {
+              "in": "_compute_self_source_hash",
+              "kind": "except",
+              "line": 198
+            },
+            {
+              "in": "_assert_x64_enabled",
+              "kind": "raise",
+              "line": 215
+            },
+            {
+              "in": "_assert_cpu_only",
+              "kind": "except",
+              "line": 235
+            },
+            {
+              "in": "_assert_cpu_only",
+              "kind": "raise",
+              "line": 239
+            },
+            {
+              "in": "_infer_topology",
+              "kind": "raise",
+              "line": 265
+            },
+            {
+              "in": "_infer_topology",
+              "kind": "raise",
+              "line": 273
+            },
+            {
+              "in": "_infer_topology",
+              "kind": "raise",
+              "line": 279
+            },
+            {
+              "in": "_infer_topology",
+              "kind": "raise",
+              "line": 285
+            },
+            {
+              "in": "_infer_topology",
+              "kind": "raise",
+              "line": 298
+            },
+            {
+              "in": "_normalize_for_json",
+              "kind": "raise",
+              "line": 411
+            },
+            {
+              "in": "_normalize_for_json",
+              "kind": "raise",
+              "line": 413
+            },
+            {
+              "in": "_loss_value",
+              "kind": "raise",
+              "line": 458
+            },
+            {
+              "in": "__init__",
+              "kind": "raise",
+              "line": 556
+            },
+            {
+              "in": "__init__",
+              "kind": "raise",
+              "line": 563
+            },
+            {
+              "in": "__init__",
+              "kind": "except",
+              "line": 596
+            },
+            {
+              "in": "_capture_jaxpr_digest",
+              "kind": "except",
+              "line": 619
+            },
+            {
+              "in": "close",
+              "kind": "except",
+              "line": 626
+            },
+            {
+              "in": "step",
+              "kind": "raise",
+              "line": 654
+            },
+            {
+              "in": "step",
+              "kind": "raise",
+              "line": 666
+            },
+            {
+              "in": "_build_optimizer_block",
+              "kind": "raise",
+              "line": 828
+            },
+            {
+              "in": "_build_optimizer_factors",
+              "kind": "raise",
+              "line": 1071
+            }
+          ],
           "hash": "49643d045c5f4f4db2cb2b37410bf9f09e78179fbd8a9f25f6525835fe9d9c61",
           "path": "scripts/extract/jax.py"
         },
         {
+          "failurePaths": [
+            {
+              "kind": "except",
+              "line": 162
+            },
+            {
+              "in": "_compute_self_source_hash",
+              "kind": "except",
+              "line": 210
+            },
+            {
+              "in": "_infer_topology",
+              "kind": "raise",
+              "line": 229
+            },
+            {
+              "in": "_infer_topology",
+              "kind": "raise",
+              "line": 238
+            },
+            {
+              "in": "_act_kind",
+              "kind": "except",
+              "line": 248
+            },
+            {
+              "in": "_infer_topology",
+              "kind": "raise",
+              "line": 266
+            },
+            {
+              "in": "_infer_topology",
+              "kind": "raise",
+              "line": 271
+            },
+            {
+              "in": "_snapshot_per_parameter_state",
+              "kind": "raise",
+              "line": 561
+            },
+            {
+              "in": "_assert_supported_optimizer_flags",
+              "kind": "raise",
+              "line": 609
+            },
+            {
+              "in": "_assert_supported_optimizer_flags",
+              "kind": "raise",
+              "line": 620
+            },
+            {
+              "in": "_detect_optimizer_family",
+              "kind": "raise",
+              "line": 654
+            },
+            {
+              "in": "_detect_optimizer_family",
+              "kind": "raise",
+              "line": 681
+            },
+            {
+              "in": "_detect_optimizer_family",
+              "kind": "raise",
+              "line": 701
+            },
+            {
+              "in": "_detect_optimizer_family",
+              "kind": "raise",
+              "line": 714
+            },
+            {
+              "in": "_build_optimizer_block",
+              "kind": "raise",
+              "line": 801
+            },
+            {
+              "in": "_assert_no_amp",
+              "kind": "raise",
+              "line": 815
+            },
+            {
+              "in": "_assert_cpu_only",
+              "kind": "raise",
+              "line": 828
+            },
+            {
+              "in": "_normalize_for_json",
+              "kind": "raise",
+              "line": 847
+            },
+            {
+              "in": "_normalize_for_json",
+              "kind": "raise",
+              "line": 849
+            },
+            {
+              "in": "__init__",
+              "kind": "raise",
+              "line": 923
+            },
+            {
+              "in": "__init__",
+              "kind": "except",
+              "line": 965
+            },
+            {
+              "in": "close",
+              "kind": "except",
+              "line": 976
+            },
+            {
+              "in": "step",
+              "kind": "raise",
+              "line": 1005
+            },
+            {
+              "in": "_after_step",
+              "kind": "raise",
+              "line": 1039
+            },
+            {
+              "in": "_compute_observables",
+              "kind": "raise",
+              "line": 1210
+            },
+            {
+              "in": "_derive_gradient_for_param",
+              "kind": "raise",
+              "line": 1495
+            },
+            {
+              "in": "_build_optimizer_factors",
+              "kind": "raise",
+              "line": 1575
+            }
+          ],
           "hash": "cac0a021bdc90323b64f0649a5439688ed4e63d8a4d9fbe4af3b5a5a5d9b610d",
           "path": "scripts/extract/pytorch.py"
         },
@@ -1290,7 +1578,24 @@
           "path": "scripts/generate-batch-bad-fixtures.ts"
         },
         {
+          "failurePaths": [
+            {
+              "in": "mutate",
+              "kind": "throw",
+              "line": 156
+            },
+            {
+              "in": "mutate",
+              "kind": "throw",
+              "line": 204
+            }
+          ],
           "hash": "5183650e8466554049b57aef461093c7a47bacefa69fc371a3e9371f63688f06",
+          "importOrder": [
+            "src/emit.ts",
+            "src/hash.ts",
+            "src/general-engine.ts"
+          ],
           "importsFiles": [
             "src/emit.ts",
             "src/general-engine.ts",
@@ -1300,6 +1605,11 @@
         },
         {
           "hash": "e30c5f6bbc045dd52b278917847fbd29fbfec435c840bdfa5ace623cad5973f2",
+          "importOrder": [
+            "src/general-engine.ts",
+            "src/emit.ts",
+            "src/topology.ts"
+          ],
           "importsFiles": [
             "src/emit.ts",
             "src/general-engine.ts",
@@ -1334,6 +1644,10 @@
         },
         {
           "hash": "1908399e684e270801fc8cef11bb4dd0a77f1eae2a527905ad0348d1e8877cf1",
+          "importOrder": [
+            "src/general-engine.ts",
+            "src/emit.ts"
+          ],
           "importsFiles": [
             "src/emit.ts",
             "src/general-engine.ts"
@@ -1363,6 +1677,9 @@
             "main"
           ],
           "hash": "10f79d196511d94ead430206d3d82d90a495db08425cfe2031daea9c56658d06",
+          "importsFiles": [
+            "scripts/extract/pytorch.py"
+          ],
           "path": "scripts/generate-pytorch-coupled-l2-helper-goldens.py"
         },
         {
@@ -1370,6 +1687,9 @@
             "main"
           ],
           "hash": "2d0afa1d693e234fd3902b35f0cdca381f0cbfd7e3906bcc28536be01ba11446",
+          "importsFiles": [
+            "scripts/extract/pytorch.py"
+          ],
           "path": "scripts/generate-pytorch-helper-goldens.py"
         },
         {
@@ -1392,6 +1712,11 @@
         },
         {
           "hash": "8ab75424fa33336cf319fc62ad5c2094efe513466b4a40870bf8515897da750f",
+          "importOrder": [
+            "src/general-engine.ts",
+            "src/mazur.ts",
+            "src/import-pytorch.ts"
+          ],
           "importsFiles": [
             "src/general-engine.ts",
             "src/import-pytorch.ts",
@@ -1434,6 +1759,11 @@
         },
         {
           "hash": "8d38e8f2197ee84170895ba0ce2cda1ecf0c00d3de8f52dad6cf63877a821dda",
+          "importOrder": [
+            "src/general-engine.ts",
+            "src/emit.ts",
+            "src/mazur.ts"
+          ],
           "importsFiles": [
             "src/emit.ts",
             "src/general-engine.ts",
@@ -1444,7 +1774,28 @@
         {
           "entry": "log",
           "entryRule": 1,
+          "failurePaths": [
+            {
+              "kind": "catch",
+              "line": 167
+            },
+            {
+              "kind": "catch",
+              "line": 261
+            },
+            {
+              "kind": "catch",
+              "line": 417
+            },
+            {
+              "kind": "catch",
+              "line": 423
+            }
+          ],
           "hash": "4ce4f30091698b560ed238f0cc2f8f4dcbd1e969ffe7f919913a3d02a8f5349e",
+          "names": [
+            "scripts/extract/pytorch.py"
+          ],
           "path": "scripts/pack-install-smoke.mjs",
           "sequences": []
         }
@@ -1455,9 +1806,27 @@
       "importConfidence": "full",
       "name": "scripts",
       "origin": "authored",
+      "outsidePlaces": [
+        {
+          "reads": 2,
+          "where": [
+            "caller"
+          ],
+          "writes": 0
+        },
+        {
+          "reads": 3,
+          "where": [
+            "temp"
+          ],
+          "writes": 2
+        }
+      ],
+      "outsideReads": 5,
+      "outsideWrites": 2,
       "role": "code",
       "testedBy": 0,
-      "unresolvedSites": 2
+      "unresolvedSites": 0
     },
     {
       "dynamicReads": 0,
@@ -1480,6 +1849,7 @@
           "path": "site/package.json"
         },
         {
+          "constantOnly": true,
           "hash": "ee756dfba4122d2acc94a39b2555d9f200fff56a87a8c0b10f9cd01df26a8b62",
           "path": "site/src/content.config.ts"
         },
@@ -1509,9 +1879,18 @@
         },
         {
           "hash": "391533713539035d3c92282579d43de0f137067867fdb502d7eaea3c74601d2a",
+          "importOrder": [
+            "site/src/styles/global.css",
+            "site/src/site-config.ts"
+          ],
+          "importsFiles": [
+            "site/src/site-config.ts",
+            "site/src/styles/global.css"
+          ],
           "path": "site/src/pages/index.astro"
         },
         {
+          "constantOnly": true,
           "hash": "85b7201f834b006510bafd0fbc19e4bc2dd8101e8dfec29c23f577c24988a423",
           "path": "site/src/site-config.ts"
         },
@@ -1539,7 +1918,7 @@
       "unresolvedSites": 0
     },
     {
-      "dynamicReads": 9,
+      "dynamicReads": 5,
       "dynamicSpawns": 0,
       "dynamicSpawnsInTests": 0,
       "dynamicWrites": 4,
@@ -1550,6 +1929,8 @@
       "externals": 0,
       "files": [
         {
+          "entry": "activate",
+          "entryRule": 3,
           "exports": [
             "activate",
             "activationDerivativeFromOut",
@@ -1561,15 +1942,171 @@
             "sigmoidDerivativeFromOut",
             "softmaxVector"
           ],
+          "failurePaths": [
+            {
+              "in": "softmaxVector",
+              "kind": "throw",
+              "line": 170
+            }
+          ],
           "hash": "bada08b0958f3c82a73c119ae1e7ca2ead89074808812e0d4465977102dcbd41",
-          "path": "src/activations.ts"
+          "path": "src/activations.ts",
+          "sequences": []
         },
         {
           "entry": "runVerifyMazur",
           "entryRule": 1,
+          "failurePaths": [
+            {
+              "in": "readReceipt",
+              "kind": "catch",
+              "line": 561
+            },
+            {
+              "in": "readReceipt",
+              "kind": "throw",
+              "line": 573
+            },
+            {
+              "in": "readMultiRecordJsonl",
+              "kind": "throw",
+              "line": 611
+            },
+            {
+              "in": "readMultiRecordJsonl",
+              "kind": "catch",
+              "line": 616
+            },
+            {
+              "in": "readMultiRecordJsonl",
+              "kind": "throw",
+              "line": 620
+            },
+            {
+              "in": "runVerifyMazur",
+              "kind": "catch",
+              "line": 2021
+            },
+            {
+              "in": "runVerifyMazur",
+              "kind": "throw",
+              "line": 2025
+            },
+            {
+              "in": "runVerifyMazur",
+              "kind": "catch",
+              "line": 2087
+            },
+            {
+              "in": "runVerifyMazur",
+              "kind": "catch",
+              "line": 2131
+            },
+            {
+              "in": "runVerifyMazur",
+              "kind": "catch",
+              "line": 2263
+            },
+            {
+              "in": "emitGenerated",
+              "kind": "catch",
+              "line": 2423
+            },
+            {
+              "in": "emitGenerated",
+              "kind": "catch",
+              "line": 2463
+            },
+            {
+              "in": "readInputConfigText",
+              "kind": "catch",
+              "line": 2564
+            },
+            {
+              "in": "runGenerateFromConfig",
+              "kind": "catch",
+              "line": 2662
+            },
+            {
+              "in": "runScaffoldTopology",
+              "kind": "catch",
+              "line": 2787
+            },
+            {
+              "in": "runImportFramework",
+              "kind": "catch",
+              "line": 2932
+            },
+            {
+              "in": "runImportFramework",
+              "kind": "catch",
+              "line": 2959
+            },
+            {
+              "in": "runImportFrameworkStream",
+              "kind": "catch",
+              "line": 3148
+            },
+            {
+              "in": "runImportFrameworkStream",
+              "kind": "catch",
+              "line": 3175
+            },
+            {
+              "in": "runVerifyGeneral",
+              "kind": "catch",
+              "line": 3305
+            },
+            {
+              "in": "runVerifyGeneral",
+              "kind": "throw",
+              "line": 3306
+            },
+            {
+              "in": "runVerifyGeneral",
+              "kind": "catch",
+              "line": 3498
+            },
+            {
+              "in": "runVerifyMulti",
+              "kind": "catch",
+              "line": 3595
+            },
+            {
+              "in": "runVerifyMulti",
+              "kind": "throw",
+              "line": 3596
+            },
+            {
+              "in": "runVerifyMulti",
+              "kind": "catch",
+              "line": 3754
+            },
+            {
+              "in": "runValidate",
+              "kind": "catch",
+              "line": 3909
+            },
+            {
+              "in": "runReconcileReceipt",
+              "kind": "catch",
+              "line": 3960
+            },
+            {
+              "kind": "catch",
+              "line": 4200
+            },
+            {
+              "kind": "catch",
+              "line": 4249
+            },
+            {
+              "kind": "catch",
+              "line": 4298
+            }
+          ],
           "hash": "76373c4947f1954959305bdb6a40a954ae11ae0c88ffc880489d4b5a387ca054",
           "importsFiles": [
-            "package.json",
             "src/index.ts"
           ],
           "path": "src/bin/bp.ts",
@@ -1605,6 +2142,7 @@
             {
               "calls": [
                 {
+                  "branch": "typeof v === \"number\"",
                   "line": 812,
                   "name": "toExponential",
                   "target": null
@@ -1618,6 +2156,7 @@
             {
               "calls": [
                 {
+                  "branch": "typeof v === \"number\"",
                   "line": 812,
                   "name": "toExponential",
                   "target": null,
@@ -1806,6 +2345,7 @@
                   }
                 },
                 {
+                  "branch": "typeof v === \"number\"",
                   "line": 812,
                   "name": "toExponential",
                   "target": null,
@@ -1826,6 +2366,88 @@
             "emitGeneralReceipt",
             "emitMazurReceipt",
             "emitReceipts"
+          ],
+          "failurePaths": [
+            {
+              "in": "S",
+              "kind": "throw",
+              "line": 60
+            },
+            {
+              "in": "requireObject",
+              "kind": "throw",
+              "line": 86
+            },
+            {
+              "in": "I",
+              "kind": "throw",
+              "line": 179
+            },
+            {
+              "in": "B",
+              "kind": "throw",
+              "line": 200
+            },
+            {
+              "in": "emitMazurReceipt",
+              "kind": "catch",
+              "line": 286
+            },
+            {
+              "in": "emitMazurReceipt",
+              "kind": "throw",
+              "line": 287
+            },
+            {
+              "in": "assertParseable",
+              "kind": "catch",
+              "line": 304
+            },
+            {
+              "in": "assertParseable",
+              "kind": "throw",
+              "line": 305
+            },
+            {
+              "in": "emitGeneralReceipt",
+              "kind": "catch",
+              "line": 686
+            },
+            {
+              "in": "emitGeneralReceipt",
+              "kind": "throw",
+              "line": 687
+            },
+            {
+              "in": "emitOrderedNumberMap",
+              "kind": "throw",
+              "line": 902
+            },
+            {
+              "in": "emitOrderedForwardMap",
+              "kind": "throw",
+              "line": 926
+            },
+            {
+              "in": "emitPerSample",
+              "kind": "throw",
+              "line": 982
+            },
+            {
+              "in": "emitOrderedSignalMap",
+              "kind": "throw",
+              "line": 1033
+            },
+            {
+              "in": "emitPostUpdateForwardGeneral",
+              "kind": "throw",
+              "line": 1057
+            },
+            {
+              "in": "emitOptimizerState",
+              "kind": "throw",
+              "line": 1209
+            }
           ],
           "hash": "cde1a001a63609234ea1cb793d77f03227e1ae9e6f04929a9184dbbea61a027e",
           "importsFiles": [
@@ -1975,7 +2597,15 @@
             {
               "calls": [
                 {
+                  "branch": "f.from !== undefined",
                   "line": 454,
+                  "name": "formatNumberForEngine",
+                  "target": {
+                    "file": "src/runtime-format.ts"
+                  }
+                },
+                {
+                  "line": 456,
                   "name": "formatNumberForEngine",
                   "target": {
                     "file": "src/runtime-format.ts"
@@ -2376,12 +3006,22 @@
             {
               "calls": [
                 {
+                  "branch": "typeof probe.buffer === \"number\" && probe.m === undefined &…",
                   "line": 1192,
                   "name": "formatNumberForEngine",
                   "target": {
                     "file": "src/runtime-format.ts"
                   },
                   "via": "emitMomentumState"
+                },
+                {
+                  "branch": "typeof probe.m === \"number\" && typeof probe.v === \"number\"",
+                  "line": 1184,
+                  "name": "formatNumberForEngine",
+                  "target": {
+                    "file": "src/runtime-format.ts"
+                  },
+                  "via": "emitAdamState"
                 }
               ],
               "exported": false,
@@ -2397,6 +3037,24 @@
                   "target": {
                     "file": "src/runtime-format.ts"
                   }
+                },
+                {
+                  "branch": "typeof probe.buffer === \"number\" && probe.m === undefined &…",
+                  "line": 1192,
+                  "name": "formatNumberForEngine",
+                  "target": {
+                    "file": "src/runtime-format.ts"
+                  },
+                  "via": "emitMomentumState"
+                },
+                {
+                  "branch": "typeof probe.m === \"number\" && typeof probe.v === \"number\"",
+                  "line": 1184,
+                  "name": "formatNumberForEngine",
+                  "target": {
+                    "file": "src/runtime-format.ts"
+                  },
+                  "via": "emitAdamState"
                 }
               ],
               "exported": false,
@@ -2408,6 +3066,31 @@
               "calls": [
                 {
                   "line": 1261,
+                  "name": "formatNumberForEngine",
+                  "target": {
+                    "file": "src/runtime-format.ts"
+                  }
+                },
+                {
+                  "branch": "typeof probe.buffer === \"number\" && probe.m === undefined &…",
+                  "line": 1192,
+                  "name": "formatNumberForEngine",
+                  "target": {
+                    "file": "src/runtime-format.ts"
+                  },
+                  "via": "emitMomentumState"
+                },
+                {
+                  "branch": "typeof probe.m === \"number\" && typeof probe.v === \"number\"",
+                  "line": 1184,
+                  "name": "formatNumberForEngine",
+                  "target": {
+                    "file": "src/runtime-format.ts"
+                  },
+                  "via": "emitAdamState"
+                },
+                {
+                  "line": 1263,
                   "name": "formatNumberForEngine",
                   "target": {
                     "file": "src/runtime-format.ts"
@@ -2427,6 +3110,38 @@
             "sigmoid",
             "sigmoidDerivativeFromOut"
           ],
+          "failurePaths": [
+            {
+              "in": "assertFiniteMazurInput",
+              "kind": "throw",
+              "line": 200
+            },
+            {
+              "in": "assertFiniteMazurInput",
+              "kind": "throw",
+              "line": 209
+            },
+            {
+              "in": "assertMazurTopology",
+              "kind": "throw",
+              "line": 226
+            },
+            {
+              "in": "assertMazurTopology",
+              "kind": "throw",
+              "line": 233
+            },
+            {
+              "in": "assertMazurTopology",
+              "kind": "throw",
+              "line": 239
+            },
+            {
+              "in": "assertMazurTopology",
+              "kind": "throw",
+              "line": 245
+            }
+          ],
           "hash": "0d1d3997191ebb1a03a6e58a303f156c316bcdcd0848446de2d1c7d90abf1b39",
           "importsFiles": [
             "src/mazur.ts"
@@ -2438,7 +3153,25 @@
             "extractEngineInput",
             "extractGeneralEngineInput"
           ],
+          "failurePaths": [
+            {
+              "in": "extractEngineInput",
+              "kind": "throw",
+              "line": 63
+            },
+            {
+              "in": "extractGeneralEngineInput",
+              "kind": "throw",
+              "line": 109
+            }
+          ],
           "hash": "0e4ea6a2394663b600703342aa375f97a09a8dbfd742c2f873d65671d9e027bf",
+          "importOrder": [
+            "src/engine.ts",
+            "src/mazur.ts",
+            "src/general-engine.ts",
+            "src/topology.ts"
+          ],
           "importsFiles": [
             "src/engine.ts",
             "src/general-engine.ts",
@@ -2451,6 +3184,28 @@
           "exports": [
             "formatDecimalStringForFixture"
           ],
+          "failurePaths": [
+            {
+              "in": "formatDecimalStringForFixture",
+              "kind": "throw",
+              "line": 132
+            },
+            {
+              "in": "formatDecimalStringForFixture",
+              "kind": "throw",
+              "line": 169
+            },
+            {
+              "in": "formatDecimalStringForFixture",
+              "kind": "throw",
+              "line": 175
+            },
+            {
+              "in": "formatDecimalStringForFixture",
+              "kind": "throw",
+              "line": 189
+            }
+          ],
           "hash": "a35e4bbfbb1997e4cd0a1eb5fbbc2ad7d6a1a1b1e1abd20e11857d470159b5eb",
           "path": "src/format.ts"
         },
@@ -2460,6 +3215,293 @@
           "exports": [
             "runBatchedGeneralStep",
             "runGeneralStep"
+          ],
+          "failurePaths": [
+            {
+              "in": "assertFiniteGeneralInput",
+              "kind": "throw",
+              "line": 629
+            },
+            {
+              "in": "assertFiniteGeneralInput",
+              "kind": "throw",
+              "line": 635
+            },
+            {
+              "in": "assertFiniteGeneralInput",
+              "kind": "throw",
+              "line": 643
+            },
+            {
+              "in": "assertFiniteGeneralInput",
+              "kind": "throw",
+              "line": 649
+            },
+            {
+              "in": "assertFiniteGeneralInput",
+              "kind": "throw",
+              "line": 658
+            },
+            {
+              "in": "assertFiniteGeneralInput",
+              "kind": "throw",
+              "line": 664
+            },
+            {
+              "in": "assertFiniteGeneralInput",
+              "kind": "throw",
+              "line": 673
+            },
+            {
+              "in": "assertFiniteGeneralInput",
+              "kind": "throw",
+              "line": 679
+            },
+            {
+              "in": "assertTargetsNormalizedForSoftmaxCE",
+              "kind": "throw",
+              "line": 718
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 746
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 761
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 767
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 782
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 793
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 803
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 812
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 823
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 831
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 839
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 852
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 860
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 880
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 892
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 900
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 912
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 919
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 933
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 938
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 944
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 949
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 954
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 959
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 967
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 975
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 983
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 997
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 1004
+            },
+            {
+              "in": "assertOptimizerConfig",
+              "kind": "throw",
+              "line": 1009
+            },
+            {
+              "in": "assertSupportedPolicy",
+              "kind": "throw",
+              "line": 1021
+            },
+            {
+              "in": "assertSupportedPolicy",
+              "kind": "throw",
+              "line": 1029
+            },
+            {
+              "in": "assertSupportedPolicy",
+              "kind": "throw",
+              "line": 1039
+            },
+            {
+              "in": "assertSupportedPolicy",
+              "kind": "throw",
+              "line": 1052
+            },
+            {
+              "in": "assertSupportedPolicy",
+              "kind": "throw",
+              "line": 1061
+            },
+            {
+              "in": "assertSupportedPolicy",
+              "kind": "throw",
+              "line": 1068
+            },
+            {
+              "in": "computeUpdateAndOptimizer",
+              "kind": "throw",
+              "line": 1270
+            },
+            {
+              "in": "computeUpdateAndOptimizer",
+              "kind": "throw",
+              "line": 1281
+            },
+            {
+              "in": "computeUpdateAndOptimizer",
+              "kind": "throw",
+              "line": 1333
+            },
+            {
+              "in": "computeUpdateAndOptimizer",
+              "kind": "throw",
+              "line": 1343
+            },
+            {
+              "in": "runBatchedGeneralStep",
+              "kind": "throw",
+              "line": 2173
+            },
+            {
+              "in": "runBatchedGeneralStep",
+              "kind": "throw",
+              "line": 2191
+            },
+            {
+              "in": "runBatchedGeneralStep",
+              "kind": "throw",
+              "line": 2206
+            },
+            {
+              "in": "runBatchedGeneralStep",
+              "kind": "throw",
+              "line": 2217
+            },
+            {
+              "in": "runBatchedGeneralStep",
+              "kind": "throw",
+              "line": 2225
+            },
+            {
+              "in": "runBatchedGeneralStep",
+              "kind": "throw",
+              "line": 2233
+            },
+            {
+              "in": "runBatchedGeneralStep",
+              "kind": "throw",
+              "line": 2241
+            },
+            {
+              "in": "runBatchedGeneralStep",
+              "kind": "throw",
+              "line": 2262
+            },
+            {
+              "in": "runBatchedGeneralStep",
+              "kind": "throw",
+              "line": 2313
+            }
           ],
           "hash": "ca4a441dff1605bce02f0382d647e3bcfdde820e640e1b6c09dd5e51499124d7",
           "importsFiles": [
@@ -2733,6 +3775,23 @@
           "exports": [
             "hashReceipt"
           ],
+          "failurePaths": [
+            {
+              "in": "assertCanonicalBytes",
+              "kind": "catch",
+              "line": 134
+            },
+            {
+              "in": "assertCanonicalBytes",
+              "kind": "throw",
+              "line": 135
+            },
+            {
+              "in": "assertCanonicalBytes",
+              "kind": "throw",
+              "line": 148
+            }
+          ],
           "hash": "0ab0e9435245d593c39421b637303ca66e309a7dc3e578e7bc7b57036f49df52",
           "importsFiles": [
             "src/emit.ts",
@@ -2874,6 +3933,158 @@
           "exports": [
             "buildObserverReceiptFromSidecar",
             "buildObserverReceiptStreamFromSidecar"
+          ],
+          "failurePaths": [
+            {
+              "in": "buildObserverReceiptFromSidecar",
+              "kind": "catch",
+              "line": 333
+            },
+            {
+              "in": "buildObserverReceiptFromSidecar",
+              "kind": "throw",
+              "line": 334
+            },
+            {
+              "in": "buildObserverReceiptFromSidecar",
+              "kind": "throw",
+              "line": 367
+            },
+            {
+              "in": "buildObserverReceiptFromSidecar",
+              "kind": "throw",
+              "line": 375
+            },
+            {
+              "in": "buildObserverReceiptFromSidecar",
+              "kind": "throw",
+              "line": 402
+            },
+            {
+              "in": "buildObserverReceiptFromSidecar",
+              "kind": "throw",
+              "line": 412
+            },
+            {
+              "in": "buildObserverReceiptFromSidecar",
+              "kind": "throw",
+              "line": 449
+            },
+            {
+              "in": "buildObserverReceiptFromSidecar",
+              "kind": "throw",
+              "line": 530
+            },
+            {
+              "in": "buildObserverReceiptFromSidecar",
+              "kind": "throw",
+              "line": 544
+            },
+            {
+              "in": "assertSidecarNotEmpty",
+              "kind": "throw",
+              "line": 988
+            },
+            {
+              "in": "assertSidecarOptimizerSupported",
+              "kind": "throw",
+              "line": 1018
+            },
+            {
+              "in": "assertSidecarCrossReferencesComplete",
+              "kind": "throw",
+              "line": 1063
+            },
+            {
+              "in": "assertSidecarCrossReferencesComplete",
+              "kind": "throw",
+              "line": 1074
+            },
+            {
+              "in": "assertSidecarWithinIngestCap",
+              "kind": "throw",
+              "line": 1242
+            },
+            {
+              "in": "reject",
+              "kind": "throw",
+              "line": 1272
+            },
+            {
+              "in": "buildObserverReceiptStreamFromSidecar",
+              "kind": "throw",
+              "line": 1701
+            },
+            {
+              "in": "buildObserverReceiptStreamFromSidecar",
+              "kind": "catch",
+              "line": 1713
+            },
+            {
+              "in": "buildObserverReceiptStreamFromSidecar",
+              "kind": "throw",
+              "line": 1714
+            },
+            {
+              "in": "buildObserverReceiptStreamFromSidecar",
+              "kind": "throw",
+              "line": 1732
+            },
+            {
+              "in": "buildObserverReceiptStreamFromSidecar",
+              "kind": "throw",
+              "line": 1755
+            },
+            {
+              "in": "buildObserverReceiptStreamFromSidecar",
+              "kind": "throw",
+              "line": 1790
+            },
+            {
+              "in": "buildObserverReceiptStreamFromSidecar",
+              "kind": "throw",
+              "line": 1798
+            },
+            {
+              "in": "buildObserverReceiptStreamFromSidecar",
+              "kind": "throw",
+              "line": 1817
+            },
+            {
+              "in": "buildObserverReceiptStreamFromSidecar",
+              "kind": "throw",
+              "line": 1826
+            },
+            {
+              "in": "buildObserverReceiptStreamFromSidecar",
+              "kind": "throw",
+              "line": 1846
+            },
+            {
+              "in": "buildObserverReceiptStreamFromSidecar",
+              "kind": "throw",
+              "line": 1855
+            },
+            {
+              "in": "buildObserverReceiptStreamFromSidecar",
+              "kind": "throw",
+              "line": 1915
+            },
+            {
+              "in": "buildObserverReceiptStreamFromSidecar",
+              "kind": "throw",
+              "line": 1928
+            },
+            {
+              "in": "buildObserverReceiptStreamFromSidecar",
+              "kind": "catch",
+              "line": 2044
+            },
+            {
+              "in": "buildObserverReceiptStreamFromSidecar",
+              "kind": "throw",
+              "line": 2050
+            }
           ],
           "hash": "08b50f59b7ee7eb8a83f5ca890e137b2c65c85ccca0b8e9bc9a2ab94a586a91b",
           "importsFiles": [
@@ -3339,6 +4550,28 @@
         },
         {
           "hash": "d5fb7ab02c76b566bfee4d4301db288555665c3b3145b421fd47d1d8db79eb6e",
+          "importOrder": [
+            "src/reconcile.ts",
+            "src/engine.ts",
+            "src/general-engine.ts",
+            "src/topology.ts",
+            "src/activations.ts",
+            "src/mazur.ts",
+            "src/emit.ts",
+            "src/validate.ts",
+            "src/parse.ts",
+            "src/parse-input.ts",
+            "src/hash.ts",
+            "src/schema-loader.ts",
+            "src/verify-engine.ts",
+            "src/extract.ts",
+            "src/runtime-format.ts",
+            "src/format.ts",
+            "src/import-pytorch.ts",
+            "src/import-jax.ts",
+            "src/import-tensorflow.ts",
+            "src/import-observer.ts"
+          ],
           "importsFiles": [
             "src/activations.ts",
             "src/emit.ts",
@@ -3361,7 +4594,8 @@
             "src/validate.ts",
             "src/verify-engine.ts"
           ],
-          "path": "src/index.ts"
+          "path": "src/index.ts",
+          "reexportsOnly": true
         },
         {
           "hash": "0e95dce87333bff752621065947b07dc3ee38038878952d727ae14cb01383bb3",
@@ -3377,6 +4611,13 @@
           "exports": [
             "parseTopologyInput",
             "stripBom"
+          ],
+          "failurePaths": [
+            {
+              "in": "parseTopologyInput",
+              "kind": "catch",
+              "line": 134
+            }
           ],
           "hash": "9434c89503017374112afd0975840a5a41f23b9e3358d11a7787ca9bae19bd4f",
           "importsFiles": [
@@ -3429,6 +4670,13 @@
             "parseMazurReceipt",
             "parseReceipt",
             "parseReceiptJsonl"
+          ],
+          "failurePaths": [
+            {
+              "in": "parseReceipt",
+              "kind": "catch",
+              "line": 127
+            }
           ],
           "hash": "7221d906de2ecf98a66d7725ba6bcd636e450bdbd06ef939af91c00f504c5418",
           "importsFiles": [
@@ -3543,6 +4791,43 @@
             "reconcileReceipt",
             "resolvePath",
             "sumInOrder"
+          ],
+          "failurePaths": [
+            {
+              "in": "reconcileReceipt",
+              "kind": "catch",
+              "line": 1510
+            },
+            {
+              "in": "checkRule14EngineRecomputeDifferential",
+              "kind": "throw",
+              "line": 4197
+            },
+            {
+              "in": "checkRule14EngineRecomputeDifferential",
+              "kind": "throw",
+              "line": 4213
+            },
+            {
+              "in": "checkRule14EngineRecomputeDifferential",
+              "kind": "catch",
+              "line": 4319
+            },
+            {
+              "in": "checkRule16AttestationBinding",
+              "kind": "catch",
+              "line": 5172
+            },
+            {
+              "in": "checkRule16AttestationBinding",
+              "kind": "catch",
+              "line": 5196
+            },
+            {
+              "in": "checkRule17BundleBinding",
+              "kind": "catch",
+              "line": 5538
+            }
           ],
           "hash": "52fa9795a41e4e51912db4e638fa4e12ab80f3a93f7d20caec7aacbb8e5974dd",
           "importsFiles": [
@@ -3963,6 +5248,33 @@
             "formatNumberForEngine",
             "scientificToPlain"
           ],
+          "failurePaths": [
+            {
+              "in": "formatNumberForEngine",
+              "kind": "throw",
+              "line": 52
+            },
+            {
+              "in": "scientificToPlain",
+              "kind": "throw",
+              "line": 118
+            },
+            {
+              "in": "scientificToPlain",
+              "kind": "throw",
+              "line": 126
+            },
+            {
+              "in": "scientificToPlain",
+              "kind": "throw",
+              "line": 139
+            },
+            {
+              "in": "scientificToPlain",
+              "kind": "throw",
+              "line": 147
+            }
+          ],
           "hash": "7d4647ffdedd8d383aa8f2e09dc2be018baa1f8e77bc7d4fc607bbff8ecd1b0e",
           "importsFiles": [
             "src/format.ts"
@@ -3997,14 +5309,248 @@
             "getInputSchema",
             "getReceiptSchema"
           ],
+          "failurePaths": [
+            {
+              "in": "getReceiptSchema",
+              "kind": "throw",
+              "line": 148
+            },
+            {
+              "in": "getInputSchema",
+              "kind": "throw",
+              "line": 219
+            },
+            {
+              "in": "getFrameworkTraceSchema",
+              "kind": "throw",
+              "line": 331
+            }
+          ],
           "hash": "9e5c2da5698d740d046c5813e5d7b7197eac5fd97ee6c13f815f63cbbb4a8a2b",
           "path": "src/schema-loader.ts"
         },
         {
+          "exports": [
+            "assertTopologyValid",
+            "findBiasForUnit",
+            "findHiddenBias",
+            "findOutputBias",
+            "findWeight"
+          ],
+          "failurePaths": [
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 194
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 203
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 216
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 222
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 228
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 239
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 248
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 258
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 264
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 281
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 287
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 293
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 300
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 306
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 312
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 320
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 334
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 347
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 363
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 369
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 377
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 383
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 414
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 421
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 436
+            },
+            {
+              "in": "assertTopologyValid",
+              "kind": "throw",
+              "line": 442
+            },
+            {
+              "in": "assertAppliesToLayer",
+              "kind": "throw",
+              "line": 458
+            },
+            {
+              "in": "assertAppliesToLayer",
+              "kind": "throw",
+              "line": 468
+            },
+            {
+              "in": "assertAppliesToLayer",
+              "kind": "throw",
+              "line": 475
+            },
+            {
+              "in": "assertAppliesToSingleUnit",
+              "kind": "throw",
+              "line": 497
+            },
+            {
+              "in": "assertAppliesToSingleUnit",
+              "kind": "throw",
+              "line": 506
+            },
+            {
+              "in": "assertPerNeuronBiasCoverage",
+              "kind": "throw",
+              "line": 537
+            },
+            {
+              "in": "assertPerNeuronBiasCoverage",
+              "kind": "throw",
+              "line": 547
+            },
+            {
+              "in": "assertUniqueWiringAndFanIn",
+              "kind": "throw",
+              "line": 595
+            },
+            {
+              "in": "assertUniqueWiringAndFanIn",
+              "kind": "throw",
+              "line": 615
+            },
+            {
+              "in": "assertUniqueWiringAndFanIn",
+              "kind": "throw",
+              "line": 628
+            },
+            {
+              "in": "findWeight",
+              "kind": "throw",
+              "line": 664
+            },
+            {
+              "in": "findHiddenBias",
+              "kind": "throw",
+              "line": 681
+            },
+            {
+              "in": "findHiddenBias",
+              "kind": "throw",
+              "line": 691
+            },
+            {
+              "in": "findOutputBias",
+              "kind": "throw",
+              "line": 708
+            },
+            {
+              "in": "findOutputBias",
+              "kind": "throw",
+              "line": 718
+            },
+            {
+              "in": "findBiasForUnit",
+              "kind": "throw",
+              "line": 752
+            }
+          ],
           "hash": "506219256a899d45b15a0fbc8841f78f8c4c9a64b62a61e06c6a0a4bf412ce2d",
-          "parseError": true,
-          "path": "src/topology.ts",
-          "unreadSyntax": "nul-character"
+          "path": "src/topology.ts"
         },
         {
           "entry": "stripInvalidKeywordAnnotations",
@@ -4016,6 +5562,38 @@
             "validateReceiptSchema",
             "validateTopologyInput",
             "validateTopologyInputOrThrow"
+          ],
+          "failurePaths": [
+            {
+              "in": "validateReceiptSchema",
+              "kind": "throw",
+              "line": 270
+            },
+            {
+              "in": "validateReceiptOrThrow",
+              "kind": "throw",
+              "line": 411
+            },
+            {
+              "in": "validateTopologyInput",
+              "kind": "throw",
+              "line": 481
+            },
+            {
+              "in": "validateTopologyInputOrThrow",
+              "kind": "throw",
+              "line": 533
+            },
+            {
+              "in": "validateFrameworkTraceSidecar",
+              "kind": "throw",
+              "line": 601
+            },
+            {
+              "in": "validateFrameworkTraceSidecarOrThrow",
+              "kind": "throw",
+              "line": 636
+            }
           ],
           "hash": "4cd97f7e5685e5f23fcc8eb0e8431cce25644150b1bdad39aebbb5df2f85039f",
           "importsFiles": [
@@ -4152,15 +5730,41 @@
       "importConfidence": "full",
       "name": "src",
       "origin": "authored",
-      "outsideReads": 10,
+      "outsidePlaces": [
+        {
+          "reads": 11,
+          "where": [
+            "caller"
+          ],
+          "writes": 0
+        },
+        {
+          "reads": 8,
+          "where": [
+            "cwd:fixtures/"
+          ],
+          "writes": 0
+        },
+        {
+          "reads": 2,
+          "where": [
+            "cwd:scripts/"
+          ],
+          "writes": 0
+        }
+      ],
+      "outsideReads": 21,
       "role": "code",
-      "testedBy": 83,
+      "testRunners": [
+        "node --test"
+      ],
+      "testedBy": 99,
       "unresolvedSites": 0
     },
     {
       "dynamicReads": 0,
-      "dynamicSpawns": 35,
-      "dynamicSpawnsInTests": 35,
+      "dynamicSpawns": 20,
+      "dynamicSpawnsInTests": 20,
       "dynamicWrites": 0,
       "entryPoints": [],
       "externals": 0,
@@ -4177,123 +5781,222 @@
           "importsFiles": [
             "src/activations.ts"
           ],
-          "path": "test/activations.test.ts"
+          "path": "test/activations.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "2a4b0cf04accbb4679463b1cdbd5d5bbb4b944f9c746f7c906912909f9d9223b",
-          "path": "test/bp.cli.help-version.test.ts"
+          "path": "test/bp.cli.help-version.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "2a447c2923f1091da7c3ef5495871c0dc5636f4907b6caee5de529e9e26ef6ea",
-          "path": "test/bp.color.test.ts"
+          "path": "test/bp.color.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "e19e648ceb9a3e895828699d0a78543d4a38b4fe860a2de66cf933bdd3664513",
-          "path": "test/bp.examples-jax.cli.test.ts"
+          "names": [
+            "scripts/extract/jax.py"
+          ],
+          "path": "test/bp.examples-jax.cli.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "6cf10a46252bd23e901d6f4113d83800503e633c32e7086d324e5a0797df4392",
-          "path": "test/bp.examples-pytorch.cli.test.ts"
+          "names": [
+            "scripts/extract/pytorch.py"
+          ],
+          "path": "test/bp.examples-pytorch.cli.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "edf6a161390b6e09b64ac426f32dd9b1e77199aeec979f5ccb4cc94cc91e0f02",
           "importsFiles": [
             "src/mazur.ts"
           ],
-          "path": "test/bp.generate-from-config.cli.test.ts"
+          "path": "test/bp.generate-from-config.cli.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "01df352a50a902dfb96c02ab5c91242b40208d20213797db5b2b99dab10edf98",
-          "path": "test/bp.generate-iris.cli.test.ts"
+          "path": "test/bp.generate-iris.cli.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "b9eafb71147bc7e199aab95b03ebfc54cdf1326df5ad60fd4450bb99c4571807",
-          "path": "test/bp.generate-mazur.cli.test.ts"
+          "path": "test/bp.generate-mazur.cli.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "ea8368132833225b1c4832bba252e1649e916ea93cd0d3daab700bddf99af38f",
-          "path": "test/bp.generate-xor.cli.test.ts"
+          "path": "test/bp.generate-xor.cli.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "5b71f21b61802f63336f1c38c864cc3319be19a3e5d5a6151cbbd0d68655f657",
-          "path": "test/bp.help-consistency.cli.test.ts"
+          "path": "test/bp.help-consistency.cli.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "ee48edc3624904211c6f2d75de27543a882d1b23bf0091b26e7ebf7322b6c917",
-          "path": "test/bp.rule-coverage.cli.test.ts"
+          "path": "test/bp.rule-coverage.cli.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "9d66e15fe19d0826f203af7ccd1c998a6fcbd1e7d6235454c2a6a7333cbe7f90",
-          "path": "test/bp.scaffold-topology.cli.test.ts"
+          "path": "test/bp.scaffold-topology.cli.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "5573fe4d316e8f5505bdb72735bda2ebfe03ce7f72e578c819958c174f5ee21b",
-          "path": "test/bp.stdin.test.ts"
+          "path": "test/bp.stdin.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "22d4281d28d6700030227271c7f86d52e7d8bcd81d14933287781fbce7d1dc61",
-          "path": "test/bp.unknown-flag.cli.test.ts"
+          "path": "test/bp.unknown-flag.cli.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "754f8e844471faf62774b09e62d27da0304cfbff2765e0cd264f6574813631b4",
           "importsFiles": [
             "src/mazur.ts"
           ],
-          "path": "test/bp.validate-input.cli.test.ts"
+          "path": "test/bp.validate-input.cli.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "42947de69d1cddf19c94e39b0616559c8f5a0e642b6285518c921880dd0109b2",
-          "path": "test/bp.validate.cli.test.ts"
+          "path": "test/bp.validate.cli.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "dd072bceb7f584bed3bf81ebc7ddae8141798b0eadcabffa3ce70771c5093c5f",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/bp.verify-general.cli.test.ts"
+          "path": "test/bp.verify-general.cli.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "1b1de5ea68f3464e93d7d9726ed430e521cafa9f4b2ef4d5a1d7f6f16f4d3a95",
-          "path": "test/bp.verify-mazur.cli.test.ts"
+          "path": "test/bp.verify-mazur.cli.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "b4aa522bf6e7c036bea2a1adc9ab659dcce4c03d593a7fd9b02f93a4d97ed112",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/bp.verify-multi.cli.test.ts"
+          "path": "test/bp.verify-multi.cli.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "ae8cc09c34424a4117e68ad3777d53332b89b21ef3e30bb0e7566a737a98f249",
-          "path": "test/cli.error-envelope.test.ts"
+          "path": "test/cli.error-envelope.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "d5aa809b4a3116fb2c845b6a8c6512035cc832990f4b21d22dd723eaf8a4a0fc",
-          "path": "test/cli.multi-step-import-pipe.test.ts"
+          "path": "test/cli.multi-step-import-pipe.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "fede4d36fd47e6e0e48fa00a5570b0db2644335ca734c2c3126089e9eea6b9e5",
-          "path": "test/determinism.math-exp-canary.test.ts"
+          "names": [
+            "scripts/generate-softmax-ce-bad-fixtures.ts"
+          ],
+          "path": "test/determinism.math-exp-canary.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "7d78f8269abb63b6a7ff30504478efb41c639d526ab71a7f6e8cf0dee59ab302",
+          "importOrder": [
+            "src/emit.ts",
+            "src/format.ts",
+            "src/engine.ts",
+            "src/general-engine.ts"
+          ],
           "importsFiles": [
             "src/emit.ts",
             "src/engine.ts",
             "src/format.ts",
             "src/general-engine.ts"
           ],
-          "path": "test/emit-multi.test.ts"
+          "path": "test/emit-multi.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "e7e6ebe1cc10e6f2e19faf5de76adcfbb100e30a0f3f94adb14c6c0775182629",
+          "importOrder": [
+            "src/emit.ts",
+            "src/hash.ts",
+            "src/engine.ts",
+            "src/general-engine.ts"
+          ],
           "importsFiles": [
             "src/emit.ts",
             "src/engine.ts",
             "src/general-engine.ts",
             "src/hash.ts"
           ],
-          "path": "test/emit.optional-fields.test.ts"
+          "path": "test/emit.optional-fields.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "167d6e99c2ea82c9e5cccaffd83a015bc3508ed63c813f47dfd861a56d9bc843",
@@ -4301,10 +6004,18 @@
             "src/engine.ts",
             "src/mazur.ts"
           ],
-          "path": "test/engine.invalid-input.test.ts"
+          "path": "test/engine.invalid-input.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "11002057d005d874a4d65e6407788fc2b1e21c57a16f946b2de4d628ca2cc304",
+          "importOrder": [
+            "src/format.ts",
+            "src/runtime-format.ts",
+            "src/engine.ts",
+            "src/mazur.ts",
+            "src/index.ts"
+          ],
           "importsFiles": [
             "src/engine.ts",
             "src/format.ts",
@@ -4312,20 +6023,34 @@
             "src/mazur.ts",
             "src/runtime-format.ts"
           ],
-          "path": "test/error-messages.test.ts"
+          "names": [
+            "src/reconcile.ts"
+          ],
+          "path": "test/error-messages.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "cbeb5b7991c4f7f6c280d4f1ddf87fc26e4dc7cc363eacff0c430555c294062d",
-          "path": "test/exports-drift.test.ts"
+          "path": "test/exports-drift.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "fdb79b06b7923c9daac5dee0bc711da4a8659a0f89160f0ae57672e43ca48359",
+          "importOrder": [
+            "src/extract.ts",
+            "src/engine.ts",
+            "src/emit.ts"
+          ],
           "importsFiles": [
             "src/emit.ts",
             "src/engine.ts",
             "src/extract.ts"
           ],
-          "path": "test/extract.test.ts"
+          "path": "test/extract.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "ce9c8b09222ab3e594510313318372fa256eab0ccc5f31c62f7b81277f3e883e",
@@ -4333,15 +6058,21 @@
             "src/format.ts",
             "src/runtime-format.ts"
           ],
-          "path": "test/format.policy.test.ts"
+          "path": "test/format.policy.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "590f0c3a777b09e0b531fb96a85540795ef1e53818240c117c0e59697be7be0f",
+          "importOrder": [
+            "src/runtime-format.ts",
+            "src/format.ts"
+          ],
           "importsFiles": [
             "src/format.ts",
             "src/runtime-format.ts"
           ],
-          "path": "test/format.property.test.ts"
+          "path": "test/format.property.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "0ca7c56bec90b1ad509581d61f211805ba869cfdc035e5135b60571b475fadb9",
@@ -4350,28 +6081,48 @@
             "src/general-engine.ts",
             "src/mazur.ts"
           ],
-          "path": "test/general-engine.test.ts"
+          "path": "test/general-engine.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "9f528ea035c22bff0025e00ecdf739455e1f15054545b6760c0f63aaf0c1ab76",
+          "importOrder": [
+            "src/hash.ts",
+            "src/emit.ts",
+            "src/general-engine.ts",
+            "src/engine.ts"
+          ],
           "importsFiles": [
             "src/emit.ts",
             "src/engine.ts",
             "src/general-engine.ts",
             "src/hash.ts"
           ],
-          "path": "test/hash.general-receipt.test.ts"
+          "path": "test/hash.general-receipt.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "928d43e9882e2ad40ef055aeb9ddfc3883b42dc62c23ac1beebb6ee523136633",
+          "importOrder": [
+            "src/hash.ts",
+            "src/engine.ts"
+          ],
           "importsFiles": [
             "src/engine.ts",
             "src/hash.ts"
           ],
-          "path": "test/hash.test.ts"
+          "path": "test/hash.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "b86a6917951acd56ae7219620c91c728ca7b97bcfd766239283dbb91caed7d2a",
+          "importOrder": [
+            "src/general-engine.ts",
+            "src/topology.ts",
+            "src/emit.ts",
+            "src/reconcile.ts",
+            "src/verify-engine.ts"
+          ],
           "importsFiles": [
             "src/emit.ts",
             "src/general-engine.ts",
@@ -4379,14 +6130,19 @@
             "src/topology.ts",
             "src/verify-engine.ts"
           ],
-          "path": "test/hero-classifier.engine.test.ts"
+          "names": [
+            "scripts/generate-hero-classifier-fixtures.ts"
+          ],
+          "path": "test/hero-classifier.engine.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "2ee8cb88548087933a13fba1fdbecc91da9a3399493d417893cdcb484eaf3ed0",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/hybrid-tolerance.test.ts"
+          "path": "test/hybrid-tolerance.test.ts",
+          "testFramework": "node --test"
         },
         {
           "entry": "resolveJaxPython",
@@ -4396,38 +6152,72 @@
             "src/import-jax.ts",
             "src/reconcile.ts"
           ],
+          "names": [
+            "scripts/extract/jax.py"
+          ],
           "path": "test/import-jax-helper.jax-e2e.test.ts",
-          "sequences": []
+          "sequences": [],
+          "testFramework": "node --test"
         },
         {
           "hash": "20c8c4df56926319216c643fdb9ca03486849e36272211f126c50e210b1dbc82",
+          "importOrder": [
+            "src/import-jax.ts",
+            "src/import-pytorch.ts",
+            "src/validate.ts",
+            "src/reconcile.ts"
+          ],
           "importsFiles": [
             "src/import-jax.ts",
             "src/import-pytorch.ts",
             "src/reconcile.ts",
             "src/validate.ts"
           ],
-          "path": "test/import-jax.test.ts"
+          "names": [
+            "scripts/generate-jax-softmax-ce-fixtures.ts"
+          ],
+          "path": "test/import-jax.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "0caa97cff918d91387a8866d16fdb620e06c0ed708c448210a847bf4043be086",
+          "importOrder": [
+            "src/general-engine.ts",
+            "src/import-pytorch.ts",
+            "src/reconcile.ts",
+            "src/parse.ts"
+          ],
           "importsFiles": [
             "src/general-engine.ts",
             "src/import-pytorch.ts",
             "src/parse.ts",
             "src/reconcile.ts"
           ],
-          "path": "test/import-pytorch-adam.test.ts"
+          "path": "test/import-pytorch-adam.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "cf96e895972d340498a12f86c97608e6a2602e968b9f9db987609558e5c0827c",
+          "importOrder": [
+            "src/import-pytorch.ts",
+            "src/validate.ts",
+            "src/reconcile.ts",
+            "src/general-engine.ts"
+          ],
           "importsFiles": [
             "src/general-engine.ts",
             "src/import-pytorch.ts",
             "src/reconcile.ts",
             "src/validate.ts"
           ],
-          "path": "test/import-pytorch-batched.test.ts"
+          "path": "test/import-pytorch-batched.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "53b6a86288ce368122afcc8b6eb2afbdfd96f7c072c99923da8358684c12fca8",
@@ -4436,7 +6226,8 @@
             "src/reconcile.ts",
             "src/validate.ts"
           ],
-          "path": "test/import-pytorch-helper.test.ts"
+          "path": "test/import-pytorch-helper.test.ts",
+          "testFramework": "node --test"
         },
         {
           "entry": "resolveTorchPython",
@@ -4447,20 +6238,35 @@
             "src/reconcile.ts"
           ],
           "path": "test/import-pytorch-helper.torch-e2e.test.ts",
-          "sequences": []
+          "sequences": [],
+          "testFramework": "node --test"
         },
         {
           "hash": "abe95d54e5c70dccb507665eba6dd8486b0cf349130ea2e3fb20914ac9b73084",
+          "importOrder": [
+            "src/general-engine.ts",
+            "src/import-pytorch.ts",
+            "src/reconcile.ts",
+            "src/parse.ts"
+          ],
           "importsFiles": [
             "src/general-engine.ts",
             "src/import-pytorch.ts",
             "src/parse.ts",
             "src/reconcile.ts"
           ],
-          "path": "test/import-pytorch-momentum.test.ts"
+          "path": "test/import-pytorch-momentum.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "aaebf3022db5ed53f95a9bbb209181496ca804353e12d2164e90788f6188322c",
+          "importOrder": [
+            "src/import-pytorch.ts",
+            "src/import-jax.ts",
+            "src/import-tensorflow.ts",
+            "src/validate.ts",
+            "src/reconcile.ts"
+          ],
           "importsFiles": [
             "src/import-jax.ts",
             "src/import-pytorch.ts",
@@ -4468,19 +6274,47 @@
             "src/reconcile.ts",
             "src/validate.ts"
           ],
-          "path": "test/import-pytorch-multi-step.test.ts"
+          "names": [
+            "scripts/generate-multi-step-external-bad-fixtures.ts",
+            "scripts/generate-pytorch-multi-step-softmax-ce-fixtures.ts"
+          ],
+          "path": "test/import-pytorch-multi-step.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "11ce5ade09db36d2f88853a542f14acc100d3db303b299c6ce5cb2d222f3bf81",
+          "importOrder": [
+            "src/import-pytorch.ts",
+            "src/validate.ts",
+            "src/reconcile.ts"
+          ],
           "importsFiles": [
             "src/import-pytorch.ts",
             "src/reconcile.ts",
             "src/validate.ts"
           ],
-          "path": "test/import-pytorch.test.ts"
+          "names": [
+            "scripts/generate-external-bad-fixtures.ts",
+            "scripts/generate-pytorch-softmax-ce-fixtures.ts"
+          ],
+          "path": "test/import-pytorch.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "e934c6184b323f72684526fadb400640a2d74ac09d6a2a1ca37307479ce8410b",
+          "importOrder": [
+            "src/import-tensorflow.ts",
+            "src/import-jax.ts",
+            "src/import-pytorch.ts",
+            "src/validate.ts",
+            "src/reconcile.ts"
+          ],
           "importsFiles": [
             "src/import-jax.ts",
             "src/import-pytorch.ts",
@@ -4488,27 +6322,49 @@
             "src/reconcile.ts",
             "src/validate.ts"
           ],
-          "path": "test/import-tensorflow.test.ts"
+          "names": [
+            "scripts/generate-tensorflow-softmax-ce-fixtures.ts"
+          ],
+          "path": "test/import-tensorflow.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "2478da9534e9e828ce698937afd70e3f349bf5dc2c2bab4e492ae119cb2aa48c",
           "importsFiles": [
             "src/import-pytorch.ts"
           ],
-          "path": "test/import.humanization.test.ts"
+          "path": "test/import.humanization.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "9cd705e20cdeb5e5f79bac563afb6d4b9426c4dd235923615ebc6794a9d89b91",
+          "importOrder": [
+            "src/import-observer.ts",
+            "src/import-pytorch.ts",
+            "src/import-jax.ts",
+            "src/import-tensorflow.ts"
+          ],
           "importsFiles": [
             "src/import-jax.ts",
             "src/import-observer.ts",
             "src/import-pytorch.ts",
             "src/import-tensorflow.ts"
           ],
-          "path": "test/import.sidecar-bounds.test.ts"
+          "path": "test/import.sidecar-bounds.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "a9d43ce859214a99e7f6d95cc00d8c35813f9d28e97becae8bcaefb834cd9659",
+          "importOrder": [
+            "src/general-engine.ts",
+            "src/mazur.ts",
+            "src/reconcile.ts",
+            "src/validate.ts",
+            "src/emit.ts"
+          ],
           "importsFiles": [
             "src/emit.ts",
             "src/general-engine.ts",
@@ -4516,39 +6372,64 @@
             "src/reconcile.ts",
             "src/validate.ts"
           ],
-          "path": "test/iris.engine.test.ts"
+          "path": "test/iris.engine.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "953618fe67c8d58aa588ed7fe3b11c3e56f3686e3b99bd745208b57805ac5e03",
+          "importOrder": [
+            "src/engine.ts",
+            "src/emit.ts",
+            "src/mazur.ts",
+            "src/reconcile.ts"
+          ],
           "importsFiles": [
             "src/emit.ts",
             "src/engine.ts",
             "src/mazur.ts",
             "src/reconcile.ts"
           ],
-          "path": "test/mazur.engine.test.ts"
+          "path": "test/mazur.engine.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "c3ba1649ef2188fb8e419d2f07fdc005f0bc8ba53954558df3ce916837b49af8",
+          "importOrder": [
+            "src/reconcile.ts",
+            "src/general-engine.ts",
+            "src/mazur.ts"
+          ],
           "importsFiles": [
             "src/general-engine.ts",
             "src/mazur.ts",
             "src/reconcile.ts"
           ],
-          "path": "test/multi-step.test.ts"
+          "path": "test/multi-step.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "bf889764e803486a419a753dbd14f588612ac610222de1eb4a26db7832fc1236",
-          "path": "test/pack-install-smoke.presence.test.ts"
+          "names": [
+            "examples/pytorch/extract_step.py",
+            "scripts/extract/pytorch.py"
+          ],
+          "path": "test/pack-install-smoke.presence.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "b9f1adb16a9b55a4d70566bbb0d02e51c06fe3aaea978a60e0056d25489f2e0d",
+          "importOrder": [
+            "src/parse.ts",
+            "src/parse-input.ts",
+            "src/mazur.ts"
+          ],
           "importsFiles": [
             "src/mazur.ts",
             "src/parse-input.ts",
             "src/parse.ts"
           ],
-          "path": "test/parse.test.ts"
+          "path": "test/parse.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "95acce151892c9df38ab9e66f68ac99f7264d0c977b59f0666a551b54aa4d7d6",
@@ -4556,27 +6437,36 @@
             "src/general-engine.ts",
             "src/mazur.ts"
           ],
-          "path": "test/per-neuron-bias.engine.test.ts"
+          "path": "test/per-neuron-bias.engine.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "2f449850a0795323fed9ad5a934bf55df399531499cf171e507148e227d7eacb",
-          "path": "test/published-claims.test.ts"
+          "path": "test/published-claims.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "ba98a894620c32d44156dbfa5d698e178d6dfc51cd95231b675f0abe34e2ac3a",
+          "importOrder": [
+            "src/reconcile.ts",
+            "src/parse.ts",
+            "test/_fixture-utils.ts"
+          ],
           "importsFiles": [
             "src/parse.ts",
             "src/reconcile.ts",
             "test/_fixture-utils.ts"
           ],
-          "path": "test/reconcile.bad-adam.test.ts"
+          "path": "test/reconcile.bad-adam.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "13f0665de94eba23fbd6690517cd89dcb7e2606a72fc2b8a2482e8c1ffd3a93c",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-backprop-sum.test.ts"
+          "path": "test/reconcile.bad-backprop-sum.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "8d7e5f2bc0d52fb93c5ff066191fb759d5ab82cdb0864b7b2de893e3f6ee3bee",
@@ -4584,352 +6474,477 @@
             "src/reconcile.ts",
             "src/validate.ts"
           ],
-          "path": "test/reconcile.bad-batch.test.ts"
+          "path": "test/reconcile.bad-batch.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "657a4fba92e3de17cee53f7f828baf92d1edc3c511a8c7d0c647f1e186c7ab8e",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-bias-gradient.test.ts"
+          "path": "test/reconcile.bad-bias-gradient.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "623c9376d773654643ac38b6c74ff916ff5720e74072e37b1e0656a0eb610cff",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-bias-mode-mismatch.test.ts"
+          "path": "test/reconcile.bad-bias-mode-mismatch.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "d012e6248b9c79abd4e82d0fb9bc03453c7a8de17b23c11901170e49d487b6af",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-bias-params-after.test.ts"
+          "path": "test/reconcile.bad-bias-params-after.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "b57a2b261ba86f9301ecf16400ac3455a244be437a54985697919bc4d6aa3901",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-bias-provenance.test.ts"
+          "path": "test/reconcile.bad-bias-provenance.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "ad57b27d4e5537f3496a7a8cfc3749973a7f3287803c0f97d2ec11d84383bb27",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-bias-sharing-mismatch.test.ts"
+          "path": "test/reconcile.bad-bias-sharing-mismatch.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "7c9af08d90bfea96346aa48cb44f21781a5f8e4036e48669427deada528d8bb2",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-bias-update-value.test.ts"
+          "path": "test/reconcile.bad-bias-update-value.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "ee6e16a4a4aeaaecb3c9472766ed5f539bf504347392cc10b95015233c9ce898",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-bias-weight-after.test.ts"
+          "path": "test/reconcile.bad-bias-weight-after.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "d2f34cf413ad074d78b0542a764aaf0d29bc912a43f89993c814966200bfb0e0",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-ce-per-output.test.ts"
+          "path": "test/reconcile.bad-ce-per-output.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "c2df23879131d7087365650e1528c81ca59edf4acedf89ae177e739fba7b0f5a",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-contribution.test.ts"
+          "path": "test/reconcile.bad-contribution.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "55f32008c2e216225123c378d9e890c5336d61e6caf33cad163300991662fd27",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-dual-form.test.ts"
+          "path": "test/reconcile.bad-dual-form.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "b59abbf78c2b8c1003809c7d3c02be52022738cb9884fa826c2fffe7892271b2",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-external.test.ts"
+          "path": "test/reconcile.bad-external.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "7f65633d4ce5af3471da275d423ddd68ad9bb173f057532e83d2b91e0ba7f221",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-forward-unit-dropped.test.ts"
+          "path": "test/reconcile.bad-forward-unit-dropped.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "358018c90b7df69a0c494ffa68bc8abaa9fdc30240168f9dc5e7395246d270cb",
-          "path": "test/reconcile.bad-gradient.cli.test.ts"
+          "path": "test/reconcile.bad-gradient.cli.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "02afba90327ff22068ccac1dd090df7ef8738659665e0ca138bba0171663aeb8",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-gradient.test.ts"
+          "path": "test/reconcile.bad-gradient.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "9222c287c810d81647cb32b06b7a26621b3cd40d098a39b355fb02e3db48284f",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-hidden-signal.test.ts"
+          "path": "test/reconcile.bad-hidden-signal.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "e10b2f90f974418306e8fe7464f99487102f999b93590af5c658a0c4e803313f",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-jax.test.ts"
+          "path": "test/reconcile.bad-jax.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "e33fc1b89d6e7107ef1a8abc73b5a96b9a25d0e00a0e86a061dc2c1c30c7b9ab",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-kind-vs-role.test.ts"
+          "path": "test/reconcile.bad-kind-vs-role.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "6a681d2bf52773b46902c16a2fcbbb9f32a619ba22e811c343db689d62dee67e",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-loss-total.test.ts"
+          "path": "test/reconcile.bad-loss-total.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "a70361c2c6c2c668787191c4c6e999481b768f414d9ab539336d471119089c4f",
+          "importOrder": [
+            "src/reconcile.ts",
+            "src/parse.ts",
+            "test/_fixture-utils.ts"
+          ],
           "importsFiles": [
             "src/parse.ts",
             "src/reconcile.ts",
             "test/_fixture-utils.ts"
           ],
-          "path": "test/reconcile.bad-momentum.test.ts"
+          "path": "test/reconcile.bad-momentum.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "4eabd46ed51fbda754f43938a1a7babd00262a29d5864472a9da9100ad53ede7",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-multi-step-external.test.ts"
+          "path": "test/reconcile.bad-multi-step-external.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "3074dc8b76e2acdff2633afbd06e29d20e0dbea06717ae61a97c40b9541043a1",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-output-signal.test.ts"
+          "path": "test/reconcile.bad-output-signal.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "210b995048bc51a0ba695b909e871a0627ebab39bd0290259dde94b1f7464a2c",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-params-after.test.ts"
+          "path": "test/reconcile.bad-params-after.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "0c56152629d05f51abb2e54272d7977cda0cf119796eae5ef581eb9f04726937",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-per-sample-omission.test.ts"
+          "path": "test/reconcile.bad-per-sample-omission.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "e0a765c2c2f35bb4103d33adbde6933b557409920c89ed9b4dc673086752acbe",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-prob-bound.test.ts"
+          "path": "test/reconcile.bad-prob-bound.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "ca331e54c25694b0e42d1e693676531623ff5f04a2064e848137ae655d14b72b",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-provenance.test.ts"
+          "path": "test/reconcile.bad-provenance.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "d13a189567bb0d1d5fe26c43e7ffe2e4ae678092b1a80870d9e327c555326d5e",
+          "importOrder": [
+            "src/reconcile.ts",
+            "src/import-pytorch.ts"
+          ],
           "importsFiles": [
             "src/import-pytorch.ts",
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-pytorch-helper.test.ts"
+          "names": [
+            "scripts/build-pytorch-helper-fixtures.mjs"
+          ],
+          "path": "test/reconcile.bad-pytorch-helper.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "456c828a9cb2f885b8299e9d0eece5e47c9e5ddc7d77ae50ff5599ee41bb7eba",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-softmax-sum.test.ts"
+          "path": "test/reconcile.bad-softmax-sum.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "44f052df44c6306da24f21e02f9e6a2b95fb5f1505f37b37943307cd92b5d9a3",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-tensorflow.test.ts"
+          "path": "test/reconcile.bad-tensorflow.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "d78f40660a8c11dcb1de41cdddf320c115fd651bce2a9e184301a47709c915f6",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-topology-size.test.ts"
+          "path": "test/reconcile.bad-topology-size.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "ed240f372d39289a8eb85ab5f0761e70814fc8a7574cec0d1ddbf82fb6101354",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-update-value.test.ts"
+          "path": "test/reconcile.bad-update-value.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "844ea349d12cb8aef82168892e894358ca10d7fb585c7cfe4dd452fc1473f540",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.bad-weight-after.test.ts"
+          "path": "test/reconcile.bad-weight-after.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "610bf0be031dd447a99e419b2186152bf0a274c68d9381330d001a26e91aa9d6",
+          "importOrder": [
+            "src/reconcile.ts",
+            "src/parse.ts",
+            "test/_fixture-utils.ts"
+          ],
           "importsFiles": [
             "src/parse.ts",
             "src/reconcile.ts",
             "test/_fixture-utils.ts"
           ],
-          "path": "test/reconcile.doctrine.test.ts"
+          "names": [
+            "src/bin/bp.ts"
+          ],
+          "path": "test/reconcile.doctrine.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "e38a8392349cfebe306366914d124182e53f09e80f05a779242c6d4e6b8ed551",
-          "path": "test/reconcile.good.cli.test.ts"
+          "path": "test/reconcile.good.cli.test.ts",
+          "spawns": [
+            "src/bin/bp.ts"
+          ],
+          "testFramework": "node --test"
         },
         {
           "hash": "39e89e23c0c3702053753b7ddfc955c2a144891174301cab32e0a97b0ba430c4",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.nan-poisoning.test.ts"
+          "path": "test/reconcile.nan-poisoning.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "5dba897d3acdfee8506e16b6d7d792324c6d09690eca647de41a142a584214e8",
           "importsFiles": [
             "src/reconcile.ts"
           ],
-          "path": "test/reconcile.rule14-post-update.test.ts"
+          "path": "test/reconcile.rule14-post-update.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "502e3ce9148f61c61724d3b0b931b5dbf50956faa8fb10d98011c34d7a80bda8",
+          "importOrder": [
+            "src/runtime-format.ts",
+            "src/format.ts"
+          ],
           "importsFiles": [
             "src/format.ts",
             "src/runtime-format.ts"
           ],
-          "path": "test/runtime-format.test.ts"
+          "path": "test/runtime-format.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "6b8f7209acaeddce66ca485b32247e27214713e0685ac85d65e2ae538d8fb8f8",
+          "importOrder": [
+            "src/engine.ts",
+            "src/emit.ts",
+            "src/mazur.ts"
+          ],
           "importsFiles": [
             "src/emit.ts",
             "src/engine.ts",
             "src/mazur.ts"
           ],
-          "path": "test/schema-emit-consistency.test.ts"
+          "path": "test/schema-emit-consistency.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "22da62c098e319c7ac07bd83880db546a26a5ee7a9a9809164e7b3f1bb602346",
           "importsFiles": [
             "src/schema-loader.ts"
           ],
-          "path": "test/schema-loader.test.ts"
+          "path": "test/schema-loader.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "1074c7dff5f898ed2d8e8b15e848ddd5bb82cfce01d761eef71f4ef7d47da7a8",
+          "importOrder": [
+            "src/validate.ts",
+            "src/schema-loader.ts",
+            "src/mazur.ts"
+          ],
           "importsFiles": [
             "src/mazur.ts",
             "src/schema-loader.ts",
             "src/validate.ts"
           ],
-          "path": "test/schema-tolerance-ceiling.test.ts"
+          "path": "test/schema-tolerance-ceiling.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "c0bbeb90cb2bea60c949e983fd211841694e1ea30ad2761b05c9dbb52c8e2b68",
           "importsFiles": [
             "src/mazur.ts"
           ],
-          "path": "test/schema.input-schema.test.ts"
+          "path": "test/schema.input-schema.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "765627a13552ee59acecef8acbd3bb756fef699efb2411592690277c8bfa58d3",
+          "importOrder": [
+            "src/general-engine.ts",
+            "src/emit.ts",
+            "src/reconcile.ts"
+          ],
           "importsFiles": [
             "src/emit.ts",
             "src/general-engine.ts",
             "src/reconcile.ts"
           ],
-          "path": "test/sgd-coupled-l2.engine.test.ts"
+          "path": "test/sgd-coupled-l2.engine.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "e929a7dc67213e459939279df86f595c5d30a3348085b60a3589fe65bed5b10e",
+          "importOrder": [
+            "src/general-engine.ts",
+            "src/emit.ts",
+            "src/mazur.ts"
+          ],
           "importsFiles": [
             "src/emit.ts",
             "src/general-engine.ts",
             "src/mazur.ts"
           ],
-          "path": "test/softmax-ce.engine.test.ts"
+          "names": [
+            "scripts/generate-softmax-ce-bad-fixtures.ts"
+          ],
+          "path": "test/softmax-ce.engine.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "3b26a7c3bbf259278cf7b8007b813b86a0ad7d78061548df25722369a95b63df",
+          "importOrder": [
+            "src/topology.ts",
+            "src/mazur.ts"
+          ],
           "importsFiles": [
             "src/mazur.ts",
             "src/topology.ts"
           ],
-          "path": "test/topology.min-size.test.ts"
+          "path": "test/topology.min-size.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "e13f3dba4b6ff74773676623b78b4599f2b91efe38a664638cd2270f21fbf46b",
+          "importOrder": [
+            "src/topology.ts",
+            "src/mazur.ts"
+          ],
           "importsFiles": [
             "src/mazur.ts",
             "src/topology.ts"
           ],
-          "path": "test/topology.test.ts"
+          "path": "test/topology.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "7a51fe466aace9124c2fb126f368866f37f46a8cb92758a1ecb042e96a89cbc0",
           "importsFiles": [
             "src/validate.ts"
           ],
-          "path": "test/validate.multi-version.test.ts"
+          "path": "test/validate.multi-version.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "848569ac478d9344f45bef98a095ded196bc18eddcf405454586752d259c6de3",
+          "importOrder": [
+            "src/validate.ts",
+            "src/schema-loader.ts"
+          ],
           "importsFiles": [
             "src/schema-loader.ts",
             "src/validate.ts"
           ],
-          "path": "test/validate.test.ts"
+          "path": "test/validate.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "5b8385005bdd2e4f92f73841d84c0f9b399ae9a1bb8fd977d4cfc5f2892451b5",
+          "importOrder": [
+            "src/verify-engine.ts",
+            "src/mazur.ts",
+            "src/engine.ts"
+          ],
           "importsFiles": [
             "src/engine.ts",
             "src/mazur.ts",
             "src/verify-engine.ts"
           ],
-          "path": "test/verify-engine.test.ts"
+          "path": "test/verify-engine.test.ts",
+          "testFramework": "node --test"
         },
         {
           "hash": "a303d6fb406974f6f429d3cd00079aa08a3fad92f7abe97aab79ec0d453e9eae",
+          "importOrder": [
+            "src/general-engine.ts",
+            "src/mazur.ts",
+            "src/reconcile.ts",
+            "src/validate.ts",
+            "src/emit.ts"
+          ],
           "importsFiles": [
             "src/emit.ts",
             "src/general-engine.ts",
@@ -4937,7 +6952,8 @@
             "src/reconcile.ts",
             "src/validate.ts"
           ],
-          "path": "test/xor.engine.test.ts"
+          "path": "test/xor.engine.test.ts",
+          "testFramework": "node --test"
         }
       ],
       "globs": [
@@ -4947,113 +6963,186 @@
       "name": "test",
       "origin": "authored",
       "role": "test",
+      "testRunners": [
+        "node --test"
+      ],
       "testedBy": 0,
       "unresolvedSites": 0
     }
   ],
   "doors": [
     {
-      "checksCount": 3,
+      "checksCount": 2,
       "commands": [
         {
+          "dir": "",
           "job": "test",
-          "step": "Atlas check",
-          "text": "npx --yes @dogfood-lab/atlas@1.16.0 check"
+          "programs": [
+            "npx"
+          ],
+          "step": "Atlas check"
         },
         {
+          "dir": "",
           "job": "test",
-          "step": "4",
-          "text": "pnpm install --frozen-lockfile"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "4"
         },
         {
+          "dir": "",
           "job": "test",
-          "step": "5",
-          "text": "pnpm typecheck"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "5"
         },
         {
+          "dir": "",
           "job": "test",
-          "step": "6",
-          "text": "pnpm build"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "6"
         },
         {
+          "dir": "",
           "job": "test",
-          "step": "7",
-          "text": "pnpm test"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "7"
         },
         {
+          "dir": "",
+          "job": "test",
+          "programs": [
+            "npx"
+          ],
+          "step": "Coverage report for Codecov"
+        },
+        {
+          "dir": "",
           "job": "byte-equal",
-          "step": "3",
-          "text": "pnpm install --frozen-lockfile"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "3"
         },
         {
+          "dir": "",
           "job": "byte-equal",
-          "step": "4",
-          "text": "pnpm build"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "4"
         },
         {
+          "dir": "",
           "job": "byte-equal",
-          "step": "5",
-          "text": "pnpm test"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "5"
         },
         {
+          "dir": "",
           "job": "byte-equal",
-          "step": "verify mazur.generated.jsonl matches golden",
-          "text": "if [ -f tmp/mazur.generated.jsonl ]; then\n  diff fixtures/mazur.golden.jsonl tmp/mazur.generated.jsonl\nelse\n  echo \"FAIL: determinism gate cannot run — golden not produced (tmp/mazur.generated.jsonl missing after pnpm test). A gate that cannot go RED is not a gate.\" >&2\n  exit 1\nfi\n"
+          "programs": [
+            "2",
+            "diff",
+            "echo"
+          ],
+          "step": "verify mazur.generated.jsonl matches golden"
         },
         {
+          "dir": "",
           "job": "audit",
-          "step": "3",
-          "text": "pnpm install --frozen-lockfile"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "3"
         },
         {
+          "dir": "",
           "job": "audit",
-          "step": "dependency audit (prod — blocking)",
-          "text": "pnpm audit --prod --audit-level=moderate"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "dependency audit (prod — blocking)"
         },
         {
+          "dir": "",
           "job": "audit",
-          "step": "dependency audit (full tree incl. devDeps — visible, non-blocking)",
-          "text": "pnpm audit --audit-level=moderate || true"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "dependency audit (full tree incl. devDeps — visible, non-blocking)"
         },
         {
+          "dir": "",
           "job": "torch-e2e",
-          "step": "install CPU torch (pinned)",
-          "text": "python -m pip install --upgrade pip && python -m pip install -r scripts/extract/requirements-cpu.txt --index-url https://download.pytorch.org/whl/cpu"
+          "programs": [
+            "python"
+          ],
+          "step": "install CPU torch (pinned)"
         },
         {
+          "dir": "",
           "job": "torch-e2e",
-          "step": "5",
-          "text": "pnpm install --frozen-lockfile"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "5"
         },
         {
+          "dir": "",
           "job": "torch-e2e",
-          "step": "6",
-          "text": "pnpm build"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "6"
         },
         {
+          "dir": "",
           "job": "torch-e2e",
-          "step": "torch-gated live-helper end-to-end test",
-          "text": "node --import tsx --test test/import-pytorch-helper.torch-e2e.test.ts"
+          "programs": [
+            "node"
+          ],
+          "step": "torch-gated live-helper end-to-end test"
         },
         {
+          "dir": "",
           "job": "jax-e2e",
-          "step": "install CPU jax (pinned)",
-          "text": "python -m pip install --upgrade pip && python -m pip install -r scripts/extract/requirements-jax-cpu.txt"
+          "programs": [
+            "python"
+          ],
+          "step": "install CPU jax (pinned)"
         },
         {
+          "dir": "",
           "job": "jax-e2e",
-          "step": "5",
-          "text": "pnpm install --frozen-lockfile"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "5"
         },
         {
+          "dir": "",
           "job": "jax-e2e",
-          "step": "6",
-          "text": "pnpm build"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "6"
         },
         {
+          "dir": "",
           "job": "jax-e2e",
-          "step": "jax-gated live-helper end-to-end test",
-          "text": "node --import tsx --test test/import-jax-helper.jax-e2e.test.ts"
+          "programs": [
+            "node"
+          ],
+          "step": "jax-gated live-helper end-to-end test"
         }
       ],
       "conditional": [
@@ -5062,6 +7151,211 @@
       ],
       "elsewhere": [],
       "file": ".github/workflows/ci.yml",
+      "jobs": [
+        {
+          "basis": "declared",
+          "name": "changes",
+          "runsOn": [
+            {
+              "labels": [
+                "ubuntu-latest"
+              ],
+              "platform": {
+                "cpu": "x64",
+                "libc": "glibc",
+                "os": "linux"
+              }
+            }
+          ]
+        },
+        {
+          "basis": "declared",
+          "name": "test",
+          "runsOn": [
+            {
+              "labels": [
+                "ubuntu-latest"
+              ],
+              "platform": {
+                "cpu": "x64",
+                "libc": "glibc",
+                "os": "linux"
+              }
+            }
+          ],
+          "setup": [
+            {
+              "ranges": [
+                {
+                  "from": "22.x",
+                  "range": ">=22.0.0 <23.0.0-0"
+                }
+              ],
+              "step": "2",
+              "uses": "actions/setup-node",
+              "version": "${{ matrix.node }}"
+            }
+          ]
+        },
+        {
+          "basis": "declared",
+          "name": "codecov",
+          "runsOn": [
+            {
+              "labels": [
+                "ubuntu-latest"
+              ],
+              "platform": {
+                "cpu": "x64",
+                "libc": "glibc",
+                "os": "linux"
+              }
+            }
+          ]
+        },
+        {
+          "basis": "declared",
+          "name": "byte-equal",
+          "runsOn": [
+            {
+              "labels": [
+                "ubuntu-latest"
+              ],
+              "platform": {
+                "cpu": "x64",
+                "libc": "glibc",
+                "os": "linux"
+              }
+            }
+          ],
+          "setup": [
+            {
+              "ranges": [
+                {
+                  "from": "22.x",
+                  "range": ">=22.0.0 <23.0.0-0"
+                },
+                {
+                  "from": "22.21.1",
+                  "range": "22.21.1"
+                }
+              ],
+              "step": "2",
+              "uses": "actions/setup-node",
+              "version": "${{ matrix.node }}"
+            }
+          ]
+        },
+        {
+          "basis": "declared",
+          "name": "audit",
+          "runsOn": [
+            {
+              "labels": [
+                "ubuntu-latest"
+              ],
+              "platform": {
+                "cpu": "x64",
+                "libc": "glibc",
+                "os": "linux"
+              }
+            }
+          ],
+          "setup": [
+            {
+              "ranges": [
+                {
+                  "from": "22.x",
+                  "range": ">=22.0.0 <23.0.0-0"
+                }
+              ],
+              "step": "2",
+              "uses": "actions/setup-node",
+              "version": "22.x"
+            }
+          ]
+        },
+        {
+          "basis": "declared",
+          "name": "torch-e2e",
+          "runsOn": [
+            {
+              "labels": [
+                "ubuntu-latest"
+              ],
+              "platform": {
+                "cpu": "x64",
+                "libc": "glibc",
+                "os": "linux"
+              }
+            }
+          ],
+          "setup": [
+            {
+              "ranges": [
+                {
+                  "from": "22.x",
+                  "range": ">=22.0.0 <23.0.0-0"
+                }
+              ],
+              "step": "2",
+              "uses": "actions/setup-node",
+              "version": "22.x"
+            },
+            {
+              "ranges": [
+                {
+                  "from": "3.12",
+                  "range": ">=3.12.0 <3.13.0-0"
+                }
+              ],
+              "step": "3",
+              "uses": "actions/setup-python",
+              "version": "3.12"
+            }
+          ]
+        },
+        {
+          "basis": "declared",
+          "name": "jax-e2e",
+          "runsOn": [
+            {
+              "labels": [
+                "ubuntu-latest"
+              ],
+              "platform": {
+                "cpu": "x64",
+                "libc": "glibc",
+                "os": "linux"
+              }
+            }
+          ],
+          "setup": [
+            {
+              "ranges": [
+                {
+                  "from": "22.x",
+                  "range": ">=22.0.0 <23.0.0-0"
+                }
+              ],
+              "step": "2",
+              "uses": "actions/setup-node",
+              "version": "22.x"
+            },
+            {
+              "ranges": [
+                {
+                  "from": "3.12",
+                  "range": ">=3.12.0 <3.13.0-0"
+                }
+              ],
+              "step": "3",
+              "uses": "actions/setup-python",
+              "version": "3.12"
+            }
+          ]
+        }
+      ],
       "landings": [],
       "mentions": [
         {
@@ -5090,7 +7384,10 @@
         }
       ],
       "name": "ci",
-      "permissions": [],
+      "permissions": [
+        "contents:read",
+        "id-token:write"
+      ],
       "pushes": false,
       "reach": [
         {
@@ -5117,35 +7414,39 @@
           "runKind": "checks"
         },
         {
+          "built": true,
           "directory": true,
           "job": "byte-equal",
           "matched": true,
           "path": "src/",
-          "runKind": "checks",
+          "runKind": "executes",
           "via": "tsc tsconfig.build.json"
         },
         {
+          "built": true,
           "directory": true,
           "job": "jax-e2e",
           "matched": true,
           "path": "src/",
-          "runKind": "checks",
+          "runKind": "executes",
           "via": "tsc tsconfig.build.json"
         },
         {
+          "built": true,
           "directory": true,
           "job": "test",
           "matched": true,
           "path": "src/",
-          "runKind": "checks",
+          "runKind": "executes",
           "via": "tsc tsconfig.build.json"
         },
         {
+          "built": true,
           "directory": true,
           "job": "torch-e2e",
           "matched": true,
           "path": "src/",
-          "runKind": "checks",
+          "runKind": "executes",
           "via": "tsc tsconfig.build.json"
         },
         {
@@ -6440,6 +8741,40 @@
         "releases": false
       },
       "stages": [],
+      "tests": [
+        {
+          "coverage": true,
+          "files": 105,
+          "job": "test",
+          "junit": true,
+          "runner": "node --test",
+          "step": "7",
+          "through": [
+            "pnpm test"
+          ]
+        },
+        {
+          "files": 105,
+          "job": "byte-equal",
+          "runner": "node --test",
+          "step": "5",
+          "through": [
+            "pnpm test"
+          ]
+        },
+        {
+          "files": 1,
+          "job": "torch-e2e",
+          "runner": "node --test",
+          "step": "torch-gated live-helper end-to-end test"
+        },
+        {
+          "files": 1,
+          "job": "jax-e2e",
+          "runner": "node --test",
+          "step": "jax-gated live-helper end-to-end test"
+        }
+      ],
       "triggers": [
         {
           "branches": [
@@ -6459,8 +8794,11 @@
       ],
       "uses": [
         "actions/checkout",
+        "actions/download-artifact",
         "actions/setup-node",
         "actions/setup-python",
+        "actions/upload-artifact",
+        "codecov/codecov-action",
         "dorny/paths-filter",
         "pnpm/action-setup"
       ],
@@ -6471,6 +8809,24 @@
       "commands": [],
       "elsewhere": [],
       "file": ".github/workflows/codeql.yml",
+      "jobs": [
+        {
+          "basis": "declared",
+          "name": "analyze",
+          "runsOn": [
+            {
+              "labels": [
+                "ubuntu-latest"
+              ],
+              "platform": {
+                "cpu": "x64",
+                "libc": "glibc",
+                "os": "linux"
+              }
+            }
+          ]
+        }
+      ],
       "landings": [],
       "mentions": [],
       "name": "codeql",
@@ -6522,26 +8878,75 @@
       "usesWorkflowToken": false
     },
     {
-      "checksCount": 1,
+      "checksCount": 0,
       "commands": [
         {
+          "dir": "",
           "job": "pack-smoke",
-          "step": "3",
-          "text": "pnpm install --frozen-lockfile"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "3"
         },
         {
+          "dir": "",
           "job": "pack-smoke",
-          "step": "4",
-          "text": "pnpm build"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "4"
         },
         {
+          "dir": "",
           "job": "pack-smoke",
-          "step": "pack-install-smoke",
-          "text": "pnpm pack-smoke"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "pack-install-smoke"
         }
       ],
       "elsewhere": [],
       "file": ".github/workflows/pack-smoke.yml",
+      "jobs": [
+        {
+          "basis": "declared",
+          "name": "pack-smoke",
+          "runsOn": [
+            {
+              "labels": [
+                "ubuntu-latest"
+              ],
+              "platform": {
+                "cpu": "x64",
+                "libc": "glibc",
+                "os": "linux"
+              }
+            },
+            {
+              "labels": [
+                "windows-latest"
+              ],
+              "platform": {
+                "cpu": "x64",
+                "os": "win32"
+              }
+            }
+          ],
+          "setup": [
+            {
+              "ranges": [
+                {
+                  "from": "22.x",
+                  "range": ">=22.0.0 <23.0.0-0"
+                }
+              ],
+              "step": "2",
+              "uses": "actions/setup-node",
+              "version": "22.x"
+            }
+          ]
+        }
+      ],
       "landings": [],
       "mentions": [
         {
@@ -6572,11 +8977,12 @@
           "runKind": "executes"
         },
         {
+          "built": true,
           "directory": true,
           "job": "pack-smoke",
           "matched": true,
           "path": "src/",
-          "runKind": "checks",
+          "runKind": "executes",
           "via": "tsc tsconfig.build.json"
         }
       ],
@@ -6618,18 +9024,74 @@
       "checksCount": 0,
       "commands": [
         {
+          "dir": "site",
           "job": "build",
-          "step": "Install site dependencies",
-          "text": "npm ci"
+          "programs": [
+            "npm"
+          ],
+          "step": "Install site dependencies"
         },
         {
+          "dir": "site",
           "job": "build",
-          "step": "Build site",
-          "text": "npm run build"
+          "programs": [
+            "npm"
+          ],
+          "step": "Build site"
         }
       ],
       "elsewhere": [],
       "file": ".github/workflows/pages.yml",
+      "jobs": [
+        {
+          "basis": "declared",
+          "name": "build",
+          "runsOn": [
+            {
+              "labels": [
+                "ubuntu-latest"
+              ],
+              "platform": {
+                "cpu": "x64",
+                "libc": "glibc",
+                "os": "linux"
+              }
+            }
+          ],
+          "setup": [
+            {
+              "ranges": [
+                {
+                  "from": "22.x",
+                  "range": ">=22.0.0 <23.0.0-0"
+                }
+              ],
+              "step": "1",
+              "uses": "actions/setup-node",
+              "version": "22.x"
+            }
+          ]
+        },
+        {
+          "basis": "declared",
+          "environment": {
+            "name": "github-pages"
+          },
+          "name": "deploy",
+          "runsOn": [
+            {
+              "labels": [
+                "ubuntu-latest"
+              ],
+              "platform": {
+                "cpu": "x64",
+                "libc": "glibc",
+                "os": "linux"
+              }
+            }
+          ]
+        }
+      ],
       "landings": [],
       "mentions": [],
       "name": "Deploy site to GitHub Pages",
@@ -6643,7 +9105,7 @@
         {
           "boundary": "site",
           "depth": 0,
-          "files": 3
+          "files": 5
         }
       ],
       "readers": [],
@@ -6701,61 +9163,154 @@
       "usesWorkflowToken": false
     },
     {
-      "checksCount": 2,
+      "checksCount": 1,
       "commands": [
         {
+          "dir": "",
           "job": "verify",
-          "step": "Install dependencies",
-          "text": "pnpm install --frozen-lockfile"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "Install dependencies"
         },
         {
+          "dir": "",
           "job": "verify",
-          "step": "Verify gate",
-          "text": "pnpm verify"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "Verify gate"
         },
         {
+          "dir": "",
           "job": "verify",
-          "step": "Pack-install smoke",
-          "text": "pnpm pack-smoke"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "Pack-install smoke"
         },
         {
+          "dir": "",
           "job": "ship",
-          "step": "Install dependencies",
-          "text": "pnpm install --frozen-lockfile"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "Install dependencies"
         },
         {
+          "dir": "",
           "job": "ship",
-          "step": "Build",
-          "text": "pnpm build"
+          "programs": [
+            "pnpm"
+          ],
+          "step": "Build"
         },
         {
+          "dir": "",
           "job": "ship",
-          "step": "Tag-vs-package.json version equality",
-          "text": "TAG_REF=\"${GITHUB_REF_NAME}\"\nTAG_VERSION=\"${TAG_REF#v}\"\nPKG_VERSION=$(node -p \"require('./package.json').version\")\necho \"tag_ref=$TAG_REF\"\necho \"tag_version=$TAG_VERSION\"\necho \"pkg_version=$PKG_VERSION\"\nif [ \"$TAG_VERSION\" != \"$PKG_VERSION\" ]; then\n  echo \"::error::Tag $TAG_REF does not match package.json version $PKG_VERSION (expected v$PKG_VERSION)\"\n  exit 1\nfi\necho \"version=$PKG_VERSION\" >> \"$GITHUB_OUTPUT\"\n"
+          "programs": [
+            "echo",
+            "node"
+          ],
+          "step": "Tag-vs-package.json version equality"
         },
         {
+          "dir": "",
           "job": "ship",
-          "step": "Upgrade npm for OIDC trusted publishing (>= 11.5.1)",
-          "text": "npm install -g npm@latest"
+          "programs": [
+            "npm"
+          ],
+          "step": "Upgrade npm for OIDC trusted publishing (>= 11.5.1)"
         },
         {
+          "dir": "",
           "job": "ship",
-          "step": "Publish to npm with Sigstore provenance",
-          "text": "npm publish --provenance --access public"
+          "programs": [
+            "npm"
+          ],
+          "step": "Publish to npm with Sigstore provenance"
         },
         {
+          "dir": "",
           "job": "ship",
-          "step": "Extract CHANGELOG entry",
-          "text": "VERSION=\"${{ steps.version-check.outputs.version }}\"\nBODY=$(awk -v v=\"$VERSION\" '\n  $0 ~ \"^## \\\\[\" v \"\\\\]\" { found=1; next }\n  found && /^## \\[/      { exit }\n  found                  { print }\n' CHANGELOG.md)\nif [ -z \"$BODY\" ]; then\n  BODY=\"See CHANGELOG.md for v$VERSION details.\"\nfi\necho \"$BODY\" > /tmp/release-notes.md\necho \"notes_file=/tmp/release-notes.md\" >> \"$GITHUB_OUTPUT\"\necho \"--- extracted release notes ---\"\ncat /tmp/release-notes.md\necho \"--- end ---\"\n"
+          "programs": [
+            "awk",
+            "cat",
+            "echo"
+          ],
+          "step": "Extract CHANGELOG entry"
         },
         {
+          "dir": "",
           "job": "ship",
-          "step": "Create GitHub release",
-          "text": "gh release create \"$GITHUB_REF_NAME\" \\\n  --title \"$GITHUB_REF_NAME\" \\\n  --notes-file \"${{ steps.changelog.outputs.notes_file }}\" \\\n  --verify-tag\n"
+          "programs": [
+            "gh"
+          ],
+          "step": "Create GitHub release"
         }
       ],
       "elsewhere": [],
       "file": ".github/workflows/release.yml",
+      "jobs": [
+        {
+          "basis": "declared",
+          "name": "verify",
+          "runsOn": [
+            {
+              "labels": [
+                "ubuntu-latest"
+              ],
+              "platform": {
+                "cpu": "x64",
+                "libc": "glibc",
+                "os": "linux"
+              }
+            }
+          ],
+          "setup": [
+            {
+              "ranges": [
+                {
+                  "from": "22.x",
+                  "range": ">=22.0.0 <23.0.0-0"
+                }
+              ],
+              "step": "2",
+              "uses": "actions/setup-node",
+              "version": "22.x"
+            }
+          ]
+        },
+        {
+          "basis": "declared",
+          "name": "ship",
+          "runsOn": [
+            {
+              "labels": [
+                "ubuntu-latest"
+              ],
+              "platform": {
+                "cpu": "x64",
+                "libc": "glibc",
+                "os": "linux"
+              }
+            }
+          ],
+          "setup": [
+            {
+              "ranges": [
+                {
+                  "from": "22.x",
+                  "range": ">=22.0.0 <23.0.0-0"
+                }
+              ],
+              "step": "2",
+              "uses": "actions/setup-node",
+              "version": "22.x"
+            }
+          ]
+        }
+      ],
       "landings": [],
       "mentions": [
         {
@@ -6807,19 +9362,21 @@
           "runKind": "executes"
         },
         {
+          "built": true,
           "directory": true,
           "job": "ship",
           "matched": true,
           "path": "src/",
-          "runKind": "checks",
+          "runKind": "executes",
           "via": "tsc tsconfig.build.json"
         },
         {
+          "built": true,
           "directory": true,
           "job": "verify",
           "matched": true,
           "path": "src/",
-          "runKind": "checks",
+          "runKind": "executes",
           "via": "tsc tsconfig.build.json"
         },
         {
@@ -7471,6 +10028,13 @@
         "opensIssues": false,
         "opensIssuesOnFailure": false,
         "opensPullRequests": false,
+        "packages": [
+          {
+            "dir": "",
+            "name": "@mcptoolshop/backprop-trace",
+            "registry": "npm"
+          }
+        ],
         "publishes": true,
         "publishesTo": [
           "npm"
@@ -7478,6 +10042,18 @@
         "releases": true
       },
       "stages": [],
+      "tests": [
+        {
+          "files": 105,
+          "job": "verify",
+          "runner": "node --test",
+          "step": "Verify gate",
+          "through": [
+            "pnpm run verify",
+            "pnpm test"
+          ]
+        }
+      ],
       "triggers": [
         {
           "event": "push",
@@ -7737,6 +10313,11 @@
   ],
   "edges": [
     {
+      "from": "examples",
+      "kind": "file",
+      "to": "scripts"
+    },
+    {
       "from": "scripts",
       "kind": "file",
       "to": "src"
@@ -7748,15 +10329,17 @@
       "to": "src"
     }
   ],
+  "engine": "1.24.0",
   "generatedFrom": {
-    "commit": "5611f68d25356248f54ae9123e3b2a7a282af219",
-    "tracked": 449
+    "commit": "aa93d580e049ce1c883bc7646d0d47ab015daa29",
+    "tracked": 450
   },
   "landings": [
     {
       "readers": [
         {
-          "by": ".github/workflows/release.yml"
+          "by": ".github/workflows/release.yml",
+          "confidence": "config"
         }
       ],
       "target": "CHANGELOG.md",
@@ -7816,6 +10399,26 @@
         },
         {
           "by": "scripts/generate-softmax-ce-bad-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/bad/*.jsonl",
+      "writers": [
+        {
+          "by": "scripts/build-pytorch-helper-fixtures.mjs",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/bad/*.meta.json",
+      "writers": [
+        {
+          "by": "scripts/build-pytorch-helper-fixtures.mjs",
           "confidence": "ast"
         }
       ]
@@ -7988,6 +10591,96 @@
     {
       "readers": [
         {
+          "by": "test/cli.multi-step-import-pipe.test.ts",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/cli.multi-step-import-pipe.test.ts",
+          "call": "literal",
+          "confidence": "ast",
+          "fromTests": true
+        }
+      ],
+      "target": "fixtures/bad/multi-step-external.bad-bundle-digest-tampered.jsonl",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "test/cli.multi-step-import-pipe.test.ts",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/cli.multi-step-import-pipe.test.ts",
+          "call": "literal",
+          "confidence": "ast",
+          "fromTests": true
+        }
+      ],
+      "target": "fixtures/bad/multi-step-external.bad-chain-break-cross-step-internally-consistent.jsonl",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "test/cli.multi-step-import-pipe.test.ts",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/cli.multi-step-import-pipe.test.ts",
+          "call": "literal",
+          "confidence": "ast",
+          "fromTests": true
+        }
+      ],
+      "target": "fixtures/bad/multi-step-external.bad-cross-trace-splice.jsonl",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "test/cli.multi-step-import-pipe.test.ts",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/cli.multi-step-import-pipe.test.ts",
+          "call": "literal",
+          "confidence": "ast",
+          "fromTests": true
+        }
+      ],
+      "target": "fixtures/bad/multi-step-external.bad-fabricated-mid-step.jsonl",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
+          "by": "test/cli.multi-step-import-pipe.test.ts",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/cli.multi-step-import-pipe.test.ts",
+          "call": "literal",
+          "confidence": "ast",
+          "fromTests": true
+        }
+      ],
+      "target": "fixtures/bad/multi-step-external.bad-step-index-gap.jsonl",
+      "writers": []
+    },
+    {
+      "readers": [
+        {
           "by": "test/bp.verify-multi.cli.test.ts",
           "call": "existsSync",
           "confidence": "ast",
@@ -7996,6 +10689,12 @@
         {
           "by": "test/bp.verify-multi.cli.test.ts",
           "call": "literal",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/bp.verify-multi.cli.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         }
@@ -8014,6 +10713,12 @@
         {
           "by": "test/bp.verify-multi.cli.test.ts",
           "call": "literal",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/bp.verify-multi.cli.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         }
@@ -8516,12 +11221,6 @@
         },
         {
           "by": "test/bp.verify-general.cli.test.ts",
-          "call": "literal",
-          "confidence": "ast",
-          "fromTests": true
-        },
-        {
-          "by": "test/bp.verify-general.cli.test.ts",
           "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
@@ -8564,7 +11263,13 @@
         },
         {
           "by": "test/schema-tolerance-ceiling.test.ts",
-          "call": "literal",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         }
@@ -8645,7 +11350,7 @@
         },
         {
           "by": "test/bp.verify-general.cli.test.ts",
-          "call": "literal",
+          "call": "existsSync",
           "confidence": "ast",
           "fromTests": true
         },
@@ -8663,7 +11368,19 @@
         },
         {
           "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
           "call": "literal",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         }
@@ -8753,7 +11470,13 @@
         },
         {
           "by": "test/schema-tolerance-ceiling.test.ts",
-          "call": "literal",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         }
@@ -8784,6 +11507,11 @@
           "confidence": "ast"
         },
         {
+          "by": "scripts/build-pytorch-helper-fixtures.mjs",
+          "call": "readFileSync",
+          "confidence": "ast"
+        },
+        {
           "by": "scripts/generate-pytorch-helper-goldens.py",
           "call": "literal",
           "confidence": "ast"
@@ -8808,7 +11536,12 @@
         }
       ],
       "target": "fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl",
-      "writers": []
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-helper-goldens.py",
+          "confidence": "ast"
+        }
+      ]
     },
     {
       "readers": [
@@ -8840,6 +11573,11 @@
           "confidence": "ast"
         },
         {
+          "by": "scripts/build-pytorch-helper-fixtures.mjs",
+          "call": "readFileSync",
+          "confidence": "ast"
+        },
+        {
           "by": "scripts/generate-pytorch-helper-goldens.py",
           "call": "literal",
           "confidence": "ast"
@@ -8852,7 +11590,12 @@
         }
       ],
       "target": "fixtures/external/pytorch.helper-emitted.sgd-momentum.sidecar.jsonl",
-      "writers": []
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-helper-goldens.py",
+          "confidence": "ast"
+        }
+      ]
     },
     {
       "readers": [
@@ -8862,13 +11605,23 @@
           "confidence": "ast"
         },
         {
+          "by": "scripts/build-pytorch-helper-fixtures.mjs",
+          "call": "readFileSync",
+          "confidence": "ast"
+        },
+        {
           "by": "scripts/generate-pytorch-helper-goldens.py",
           "call": "literal",
           "confidence": "ast"
         }
       ],
       "target": "fixtures/external/pytorch.helper-emitted.sgd.softmax-ce.sidecar.jsonl",
-      "writers": []
+      "writers": [
+        {
+          "by": "scripts/generate-pytorch-helper-goldens.py",
+          "confidence": "ast"
+        }
+      ]
     },
     {
       "readers": [
@@ -8891,7 +11644,13 @@
       "readers": [
         {
           "by": "test/schema-tolerance-ceiling.test.ts",
-          "call": "literal",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         }
@@ -8942,7 +11701,19 @@
         },
         {
           "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
           "call": "literal",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         }
@@ -9009,7 +11780,19 @@
         },
         {
           "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
           "call": "literal",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         }
@@ -9120,7 +11903,13 @@
         },
         {
           "by": "test/schema-tolerance-ceiling.test.ts",
-          "call": "literal",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         }
@@ -9243,7 +12032,19 @@
         },
         {
           "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
           "call": "literal",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         }
@@ -9570,7 +12371,13 @@
         },
         {
           "by": "test/schema-tolerance-ceiling.test.ts",
-          "call": "literal",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         }
@@ -9628,7 +12435,19 @@
       "readers": [
         {
           "by": "test/hero-classifier.engine.test.ts",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/hero-classifier.engine.test.ts",
           "call": "literal",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/hero-classifier.engine.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         }
@@ -9696,6 +12515,18 @@
           "fromTests": true
         },
         {
+          "by": "test/bp.verify-general.cli.test.ts",
+          "call": "readFileSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/hash.general-receipt.test.ts",
+          "call": "readFileSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
           "by": "test/iris.engine.test.ts",
           "call": "existsSync",
           "confidence": "ast",
@@ -9721,7 +12552,13 @@
         },
         {
           "by": "test/schema-tolerance-ceiling.test.ts",
-          "call": "literal",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         }
@@ -9930,7 +12767,13 @@
         },
         {
           "by": "test/schema-tolerance-ceiling.test.ts",
-          "call": "literal",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         },
@@ -10036,6 +12879,12 @@
           "fromTests": true
         },
         {
+          "by": "test/hash.general-receipt.test.ts",
+          "call": "readFileSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
           "by": "test/reconcile.bad-dual-form.test.ts",
           "call": "existsSync",
           "confidence": "ast",
@@ -10091,7 +12940,19 @@
         },
         {
           "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
           "call": "literal",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         },
@@ -10127,7 +12988,13 @@
         },
         {
           "by": "test/schema-tolerance-ceiling.test.ts",
-          "call": "literal",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         }
@@ -10180,6 +13047,12 @@
           "fromTests": true
         },
         {
+          "by": "test/bp.verify-general.cli.test.ts",
+          "call": "readFileSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
           "by": "test/emit-multi.test.ts",
           "call": "existsSync",
           "confidence": "ast",
@@ -10193,6 +13066,12 @@
         },
         {
           "by": "test/emit.optional-fields.test.ts",
+          "call": "readFileSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/hash.general-receipt.test.ts",
           "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
@@ -10223,7 +13102,19 @@
         },
         {
           "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "existsSync",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
           "call": "literal",
+          "confidence": "ast",
+          "fromTests": true
+        },
+        {
+          "by": "test/schema-tolerance-ceiling.test.ts",
+          "call": "readFileSync",
           "confidence": "ast",
           "fromTests": true
         },
@@ -10281,7 +13172,8 @@
     {
       "readers": [
         {
-          "by": ".github/workflows/release.yml"
+          "by": ".github/workflows/release.yml",
+          "confidence": "config"
         },
         {
           "by": "scripts/pack-install-smoke.mjs",
@@ -10313,13 +13205,7 @@
         }
       ],
       "target": "package.json",
-      "writers": [
-        {
-          "by": "scripts/pack-install-smoke.mjs",
-          "confidence": "weak",
-          "stamps": true
-        }
-      ]
+      "writers": []
     },
     {
       "readers": [
@@ -10480,7 +13366,8 @@
     {
       "readers": [
         {
-          "by": ".github/workflows/ci.yml"
+          "by": ".github/workflows/ci.yml",
+          "confidence": "config"
         }
       ],
       "target": "scripts/extract/requirements-cpu.txt",
@@ -10489,7 +13376,8 @@
     {
       "readers": [
         {
-          "by": ".github/workflows/ci.yml"
+          "by": ".github/workflows/ci.yml",
+          "confidence": "config"
         }
       ],
       "target": "scripts/extract/requirements-jax-cpu.txt",
@@ -10730,13 +13618,16 @@
     {
       "readers": [
         {
-          "by": ".github/workflows/ci.yml"
+          "by": ".github/workflows/ci.yml",
+          "confidence": "config"
         },
         {
-          "by": ".github/workflows/pack-smoke.yml"
+          "by": ".github/workflows/pack-smoke.yml",
+          "confidence": "config"
         },
         {
-          "by": ".github/workflows/release.yml"
+          "by": ".github/workflows/release.yml",
+          "confidence": "config"
         }
       ],
       "target": "tsconfig.build.json",
