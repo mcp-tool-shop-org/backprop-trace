@@ -1,19 +1,18 @@
 # backprop-trace: how it works
 
-Mapped at 2026-09-30 from commit aa93d58 by Atlas 1.24.0.
+Mapped at 2026-11-11 from commit e1d9d4a by Atlas 1.26.0.
 
 ## What this is
 
 10 parts, mostly JSON data (242 files); code in TypeScript (148), Python (5), JavaScript (4), CSS (2) and Astro (1). Work enters through 7 doors; ci and Release each reach 3 parts, and ci is followed because a pull request goes through it. It publishes to npm. It deploys a site to GitHub Pages. People run bp. People import @mcptoolshop/backprop-trace.
 
-## What changed since 2026-09-24 (5611f68)
+## What changed since 2026-09-30 (aa93d58)
 
-- examples now imports scripts.
-- fixtures/bad/*.jsonl is now written by scripts/build-pytorch-helper-fixtures.mjs.
-- fixtures/bad/*.meta.json is now written by scripts/build-pytorch-helper-fixtures.mjs.
-- fixtures/external/pytorch.helper-emitted.adamw.sidecar.jsonl is now written by scripts/generate-pytorch-helper-goldens.py.
-- And 10 more new writers and readers of places.
-- 1 file added and 2 changed content, across 2 parts.
+- fixtures/bad/batch.bad-*.jsonl is now written by scripts/generate-batch-bad-fixtures.ts.
+- fixtures/bad/external.bad-*.jsonl is now written by scripts/generate-external-bad-fixtures.ts.
+- fixtures/bad/multi-step-external.bad-*.jsonl is now written by scripts/generate-multi-step-external-bad-fixtures.ts.
+- And 1 more new writer or reader of a place.
+- 4 files changed content, across 2 parts.
 
 ## What comes in
 
@@ -79,12 +78,14 @@ Window: 180 days; a pair counts from 3 shared commits, since 8 source files reac
 
 - **fixtures/bad/*.jsonl** is written by scripts/build-pytorch-helper-fixtures.mjs and read by nothing else in this repository.
 - **fixtures/bad/*.meta.json** is written by scripts/build-pytorch-helper-fixtures.mjs and read by nothing else in this repository.
+- **fixtures/bad/batch.bad-*.jsonl** is written by scripts/generate-batch-bad-fixtures.ts and read by nothing else in this repository.
+- **fixtures/bad/external.bad-*.jsonl** is written by scripts/generate-external-bad-fixtures.ts and read by nothing else in this repository.
+- **fixtures/bad/multi-step-external.bad-*.jsonl** is written by scripts/generate-multi-step-external-bad-fixtures.ts and read by nothing else in this repository.
+- **fixtures/bad/softmax-ce.bad-*.jsonl** is written by scripts/generate-softmax-ce-bad-fixtures.ts and read by nothing else in this repository.
 - **fixtures/external/adam.reddi-2018-pathology.note.json** is written by scripts/generate-pytorch-adam-fixtures.ts and read by nothing else in this repository.
 - **fixtures/external/pytorch.adamw.sidecar.jsonl** is written by scripts/generate-pytorch-adam-fixtures.ts and read by nothing else in this repository.
-- **fixtures/external/pytorch.sgd-momentum.nesterov.multi-step.sidecar.jsonl** is written by scripts/generate-pytorch-momentum-fixtures.ts and read by nothing else in this repository.
-- **fixtures/external/pytorch.sgd-momentum.nesterov.sidecar.jsonl** is written by scripts/generate-pytorch-momentum-fixtures.ts and read by nothing else in this repository.
-- **fixtures/sgd-coupled-l2.golden.jsonl** is written by scripts/generate-sgd-coupled-l2-fixtures.ts and read by nothing else in this repository.
-- **fixtures/sgd-momentum-coupled-l2.multi-step.jsonl** is written by scripts/generate-sgd-coupled-l2-fixtures.ts and read by nothing else in this repository.
+
+And 4 more places.
 
 ## Helpers that look duplicated
 
@@ -92,10 +93,14 @@ No two parts export a helper that looks alike.
 
 ## Generated, never hand-edited
 
-- **fixtures/bad/** is written by scripts (7 files).
+- **fixtures/bad/** is written by scripts/generate-adam-bad-fixtures.ts, scripts/generate-momentum-bad-fixtures.ts and scripts/generate-sgd-coupled-l2-fixtures.ts.
 - **fixtures/bad/*.jsonl** is written by scripts/build-pytorch-helper-fixtures.mjs.
 - **fixtures/bad/*.meta.json** is written by scripts/build-pytorch-helper-fixtures.mjs.
+- **fixtures/bad/batch.bad-*.jsonl** is written by scripts/generate-batch-bad-fixtures.ts.
+- **fixtures/bad/external.bad-*.jsonl** is written by scripts/generate-external-bad-fixtures.ts.
 - **fixtures/bad/jax.bad-pytree-flatten-order.jsonl** is written by scripts/generate-jax-bad-fixtures.ts.
+- **fixtures/bad/multi-step-external.bad-*.jsonl** is written by scripts/generate-multi-step-external-bad-fixtures.ts.
+- **fixtures/bad/softmax-ce.bad-*.jsonl** is written by scripts/generate-softmax-ce-bad-fixtures.ts.
 - **fixtures/bad/tensorflow.bad-variable-list-order.jsonl** is written by scripts/generate-tensorflow-bad-fixtures.ts.
 - **fixtures/external/adam.reddi-2018-pathology.note.json** is written by scripts/generate-pytorch-adam-fixtures.ts.
 - **fixtures/external/jax.softmax-ce.golden.jsonl** is written by scripts/generate-jax-softmax-ce-fixtures.ts.
@@ -144,9 +149,11 @@ People write .github/, docs/, the repository root, schemas/ and site/; 15 writes
 
 ## Where to start
 
-.github/workflows/ci.yml → src/index.ts → src/reconcile.ts → src/general-engine.ts → src/emit.ts → src/hash.ts
+.github/workflows/ci.yml → src/index.ts → src/reconcile.ts → src/general-engine.ts → src/topology.ts
 
 Read those in order to follow one pull request end to end.
+
+Beside the path, src/reconcile.ts also calls src/emit.ts and src/hash.ts. Beside the path, src/general-engine.ts also calls src/activations.ts.
 
 ## What this map cannot see
 

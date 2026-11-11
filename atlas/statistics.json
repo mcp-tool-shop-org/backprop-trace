@@ -205,8 +205,8 @@
         "path": ".github/pull_request_template.md"
       },
       {
-        "commits": 26,
-        "lines": 845,
+        "commits": 29,
+        "lines": 859,
         "path": ".github/workflows/ci.yml"
       },
       {
@@ -215,8 +215,8 @@
         "path": ".github/workflows/codeql.yml"
       },
       {
-        "commits": 10,
-        "lines": 93,
+        "commits": 11,
+        "lines": 95,
         "path": ".github/workflows/pack-smoke.yml"
       },
       {
@@ -225,8 +225,8 @@
         "path": ".github/workflows/pages.yml"
       },
       {
-        "commits": 10,
-        "lines": 251,
+        "commits": 11,
+        "lines": 255,
         "path": ".github/workflows/release.yml"
       },
       {
@@ -310,8 +310,8 @@
         "path": "SHIP_GATE.md"
       },
       {
-        "commits": 3,
-        "lines": 378,
+        "commits": 5,
+        "lines": 524,
         "path": "atlas/README.md"
       },
       {
@@ -320,18 +320,18 @@
         "path": "atlas/boundaries.yaml"
       },
       {
-        "commits": 3,
-        "lines": 2452,
+        "commits": 5,
+        "lines": 3152,
         "path": "atlas/page.json"
       },
       {
-        "commits": 3,
-        "lines": 7188,
+        "commits": 5,
+        "lines": 7294,
         "path": "atlas/statistics.json"
       },
       {
-        "commits": 3,
-        "lines": 23048,
+        "commits": 5,
+        "lines": 29946,
         "path": "atlas/structure.json"
       },
       {
@@ -1745,8 +1745,8 @@
         "path": "site/astro.config.mjs"
       },
       {
-        "commits": 2,
-        "lines": 13872,
+        "commits": 4,
+        "lines": 13884,
         "path": "site/package-lock.json"
       },
       {
@@ -2470,17 +2470,17 @@
     "level": "low",
     "reason": "fewer than 25 source files reach 10 revisions in the window"
   },
-  "generatedAt": "2026-09-30T21:29:25.497Z",
+  "generatedAt": "2026-11-11T22:09:17.406Z",
   "generatedFrom": {
-    "commit": "aa93d580e049ce1c883bc7646d0d47ab015daa29"
+    "commit": "e1d9d4aac6e5962997a175c60b7602cac9984f7a"
   },
   "pairs": [
     {
       "a": ".github/workflows/codeql.yml",
       "b": ".github/workflows/pack-smoke.yml",
-      "either": 8,
+      "either": 9,
       "shared": 5,
-      "strength": 0.625
+      "strength": 0.555556
     },
     {
       "a": ".github/workflows/codeql.yml",
@@ -2490,25 +2490,11 @@
       "strength": 0.666667
     },
     {
-      "a": ".github/workflows/codeql.yml",
-      "b": ".github/workflows/release.yml",
-      "either": 8,
-      "shared": 4,
-      "strength": 0.5
-    },
-    {
       "a": ".github/workflows/pack-smoke.yml",
       "b": ".github/workflows/release.yml",
-      "either": 10,
-      "shared": 5,
-      "strength": 0.5
-    },
-    {
-      "a": ".github/workflows/pages.yml",
-      "b": ".github/workflows/release.yml",
-      "either": 8,
-      "shared": 4,
-      "strength": 0.5
+      "either": 11,
+      "shared": 6,
+      "strength": 0.545455
     },
     {
       "a": "CHANGELOG.md",
@@ -3557,16 +3543,16 @@
     "floor": "fallen",
     "floorHeld": false,
     "floorTrigger": "revision-depth",
-    "headDate": "2026-09-30T14:25:53-07:00",
+    "headDate": "2026-10-15T10:15:58-07:00",
     "inScopeFiles": 455,
     "pinnedStart": null,
     "priorFloor": "fallen",
-    "qualifyingCommits": 80,
+    "qualifyingCommits": 83,
     "qualifyingMinimum": 30,
     "revisions": 5,
     "shared": 10,
     "sharedFloorUsed": 3,
-    "since": "2026-04-03T21:25:53.000Z",
+    "since": "2026-04-18T17:15:58.000Z",
     "sourceExtensions": [
       ".js",
       ".mjs",
