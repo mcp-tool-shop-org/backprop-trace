@@ -148,12 +148,12 @@
           "scripts"
         ]
       },
-      "cohesion": 0.61116,
+      "cohesion": 0.64192,
       "cohesionDropped": false,
-      "confidence": "full",
+      "confidence": "low",
       "highWater": null,
       "name": "src",
-      "qualifyingSourceCommits": 35,
+      "qualifyingSourceCommits": 27,
       "rebaseline": null
     },
     {
@@ -172,7 +172,7 @@
       "confidence": "full",
       "highWater": null,
       "name": "test",
-      "qualifyingSourceCommits": 40,
+      "qualifyingSourceCommits": 32,
       "rebaseline": null
     }
   ],
@@ -180,8 +180,8 @@
     "definition": "commits is how many commits in the window touch the file, including merges and commits dropped from coupling. lines is added plus deleted in those commits.",
     "files": [
       {
-        "commits": 4,
-        "lines": 10,
+        "commits": 3,
+        "lines": 9,
         "path": ".gitattributes"
       },
       {
@@ -205,8 +205,8 @@
         "path": ".github/pull_request_template.md"
       },
       {
-        "commits": 29,
-        "lines": 859,
+        "commits": 30,
+        "lines": 861,
         "path": ".github/workflows/ci.yml"
       },
       {
@@ -230,8 +230,8 @@
         "path": ".github/workflows/release.yml"
       },
       {
-        "commits": 9,
-        "lines": 42,
+        "commits": 8,
+        "lines": 36,
         "path": ".gitignore"
       },
       {
@@ -310,8 +310,8 @@
         "path": "SHIP_GATE.md"
       },
       {
-        "commits": 5,
-        "lines": 524,
+        "commits": 6,
+        "lines": 559,
         "path": "atlas/README.md"
       },
       {
@@ -320,18 +320,18 @@
         "path": "atlas/boundaries.yaml"
       },
       {
-        "commits": 5,
-        "lines": 3152,
+        "commits": 6,
+        "lines": 3273,
         "path": "atlas/page.json"
       },
       {
-        "commits": 5,
-        "lines": 7294,
+        "commits": 6,
+        "lines": 7360,
         "path": "atlas/statistics.json"
       },
       {
-        "commits": 5,
-        "lines": 29946,
+        "commits": 6,
+        "lines": 30014,
         "path": "atlas/structure.json"
       },
       {
@@ -350,8 +350,8 @@
         "path": "docs/authoring.md"
       },
       {
-        "commits": 5,
-        "lines": 239,
+        "commits": 3,
+        "lines": 107,
         "path": "docs/canonical-emission.md"
       },
       {
@@ -365,8 +365,8 @@
         "path": "docs/compliance.md"
       },
       {
-        "commits": 5,
-        "lines": 404,
+        "commits": 4,
+        "lines": 227,
         "path": "docs/computation-order.md"
       },
       {
@@ -385,8 +385,8 @@
         "path": "docs/quickstart.md"
       },
       {
-        "commits": 15,
-        "lines": 1146,
+        "commits": 14,
+        "lines": 906,
         "path": "docs/reconciliation.md"
       },
       {
@@ -695,13 +695,8 @@
         "path": "fixtures/bad/mazur.bad-contribution.meta.json"
       },
       {
-        "commits": 2,
-        "lines": 0,
-        "path": "fixtures/bad/mazur.bad-gradient.jsonl"
-      },
-      {
-        "commits": 3,
-        "lines": 105,
+        "commits": 1,
+        "lines": 17,
         "path": "fixtures/bad/mazur.bad-gradient.meta.json"
       },
       {
@@ -1425,8 +1420,8 @@
         "path": "fixtures/external/tensorflow.softmax-ce.sidecar.jsonl"
       },
       {
-        "commits": 4,
-        "lines": 84,
+        "commits": 2,
+        "lines": 15,
         "path": "fixtures/formatter.policy.golden.json"
       },
       {
@@ -1451,12 +1446,7 @@
       },
       {
         "commits": 1,
-        "lines": 0,
-        "path": "fixtures/mazur.golden.jsonl"
-      },
-      {
-        "commits": 2,
-        "lines": 67,
+        "lines": 27,
         "path": "fixtures/mazur.published.json"
       },
       {
@@ -1478,11 +1468,6 @@
         "commits": 1,
         "lines": 0,
         "path": "fixtures/softmax-ce.golden.jsonl"
-      },
-      {
-        "commits": 1,
-        "lines": 18,
-        "path": "fixtures/templates/formatter.runtime-node.template.json"
       },
       {
         "commits": 1,
@@ -1510,13 +1495,13 @@
         "path": "fixtures/xor.published.json"
       },
       {
-        "commits": 31,
-        "lines": 302,
+        "commits": 27,
+        "lines": 277,
         "path": "package.json"
       },
       {
-        "commits": 5,
-        "lines": 401,
+        "commits": 4,
+        "lines": 59,
         "path": "pnpm-lock.yaml"
       },
       {
@@ -1560,8 +1545,8 @@
         "path": "schemas/framework-trace.v0.8.0.json"
       },
       {
-        "commits": 3,
-        "lines": 402,
+        "commits": 1,
+        "lines": 2,
         "path": "schemas/receipt.v0.1.0.json"
       },
       {
@@ -1820,18 +1805,18 @@
         "path": "src/activations.ts"
       },
       {
-        "commits": 27,
-        "lines": 7138,
+        "commits": 26,
+        "lines": 7088,
         "path": "src/bin/bp.ts"
       },
       {
-        "commits": 15,
-        "lines": 2041,
+        "commits": 14,
+        "lines": 1786,
         "path": "src/emit.ts"
       },
       {
-        "commits": 4,
-        "lines": 575,
+        "commits": 2,
+        "lines": 209,
         "path": "src/engine.ts"
       },
       {
@@ -1840,8 +1825,8 @@
         "path": "src/extract.ts"
       },
       {
-        "commits": 7,
-        "lines": 375,
+        "commits": 4,
+        "lines": 144,
         "path": "src/format.ts"
       },
       {
@@ -1880,8 +1865,8 @@
         "path": "src/index.ts"
       },
       {
-        "commits": 5,
-        "lines": 661,
+        "commits": 4,
+        "lines": 572,
         "path": "src/mazur.ts"
       },
       {
@@ -1895,13 +1880,13 @@
         "path": "src/parse.ts"
       },
       {
-        "commits": 24,
-        "lines": 9965,
+        "commits": 22,
+        "lines": 9873,
         "path": "src/reconcile.ts"
       },
       {
-        "commits": 5,
-        "lines": 235,
+        "commits": 4,
+        "lines": 146,
         "path": "src/runtime-format.ts"
       },
       {
@@ -2070,8 +2055,8 @@
         "path": "test/extract.test.ts"
       },
       {
-        "commits": 3,
-        "lines": 167,
+        "commits": 2,
+        "lines": 104,
         "path": "test/format.policy.test.ts"
       },
       {
@@ -2170,8 +2155,8 @@
         "path": "test/iris.engine.test.ts"
       },
       {
-        "commits": 3,
-        "lines": 341,
+        "commits": 1,
+        "lines": 148,
         "path": "test/mazur.engine.test.ts"
       },
       {
@@ -2275,13 +2260,13 @@
         "path": "test/reconcile.bad-forward-unit-dropped.test.ts"
       },
       {
-        "commits": 5,
-        "lines": 378,
+        "commits": 3,
+        "lines": 316,
         "path": "test/reconcile.bad-gradient.cli.test.ts"
       },
       {
-        "commits": 6,
-        "lines": 763,
+        "commits": 3,
+        "lines": 701,
         "path": "test/reconcile.bad-gradient.test.ts"
       },
       {
@@ -2390,8 +2375,8 @@
         "path": "test/reconcile.rule14-post-update.test.ts"
       },
       {
-        "commits": 3,
-        "lines": 220,
+        "commits": 2,
+        "lines": 72,
         "path": "test/runtime-format.test.ts"
       },
       {
@@ -2458,11 +2443,6 @@
         "commits": 1,
         "lines": 12,
         "path": "tsconfig.build.json"
-      },
-      {
-        "commits": 1,
-        "lines": 20,
-        "path": "tsconfig.json"
       }
     ]
   },
@@ -2470,9 +2450,9 @@
     "level": "low",
     "reason": "fewer than 25 source files reach 10 revisions in the window"
   },
-  "generatedAt": "2026-11-11T22:09:17.406Z",
+  "generatedAt": "2026-11-12T00:55:45.687Z",
   "generatedFrom": {
-    "commit": "e1d9d4aac6e5962997a175c60b7602cac9984f7a"
+    "commit": "ce06a6db19c5036966709fb0116f6705a136ee21"
   },
   "pairs": [
     {
@@ -2513,9 +2493,16 @@
     {
       "a": "CHANGELOG.md",
       "b": "package.json",
-      "either": 27,
+      "either": 23,
       "shared": 20,
-      "strength": 0.740741
+      "strength": 0.869565
+    },
+    {
+      "a": "CHANGELOG.md",
+      "b": "src/bin/bp.ts",
+      "either": 28,
+      "shared": 14,
+      "strength": 0.5
     },
     {
       "a": "README.es.md",
@@ -3407,6 +3394,13 @@
       "strength": 0.75
     },
     {
+      "a": "package.json",
+      "b": "src/bin/bp.ts",
+      "either": 30,
+      "shared": 15,
+      "strength": 0.5
+    },
+    {
       "a": "scripts/build-pytorch-helper-fixtures.mjs",
       "b": "scripts/extract/pytorch.py",
       "either": 9,
@@ -3430,37 +3424,44 @@
     {
       "a": "src/bin/bp.ts",
       "b": "src/reconcile.ts",
-      "either": 28,
+      "either": 25,
       "shared": 15,
-      "strength": 0.535714
+      "strength": 0.6
     },
     {
       "a": "src/emit.ts",
       "b": "src/general-engine.ts",
-      "either": 14,
+      "either": 13,
       "shared": 9,
-      "strength": 0.642857
+      "strength": 0.692308
+    },
+    {
+      "a": "src/emit.ts",
+      "b": "src/reconcile.ts",
+      "either": 18,
+      "shared": 10,
+      "strength": 0.555556
     },
     {
       "a": "src/emit.ts",
       "b": "src/schema-loader.ts",
-      "either": 14,
+      "either": 13,
       "shared": 7,
-      "strength": 0.5
+      "strength": 0.538462
     },
     {
       "a": "src/emit.ts",
       "b": "src/validate.ts",
-      "either": 14,
+      "either": 13,
       "shared": 7,
-      "strength": 0.5
+      "strength": 0.538462
     },
     {
       "a": "src/general-engine.ts",
       "b": "src/reconcile.ts",
-      "either": 20,
+      "either": 18,
       "shared": 12,
-      "strength": 0.6
+      "strength": 0.666667
     },
     {
       "a": "src/general-engine.ts",
@@ -3493,16 +3494,16 @@
     {
       "a": "src/import-observer.ts",
       "b": "src/reconcile.ts",
-      "either": 23,
+      "either": 21,
       "shared": 12,
-      "strength": 0.521739
+      "strength": 0.571429
     },
     {
       "a": "src/reconcile.ts",
       "b": "test/reconcile.doctrine.test.ts",
-      "either": 23,
+      "either": 21,
       "shared": 12,
-      "strength": 0.521739
+      "strength": 0.571429
     },
     {
       "a": "src/schema-loader.ts",
@@ -3543,16 +3544,16 @@
     "floor": "fallen",
     "floorHeld": false,
     "floorTrigger": "revision-depth",
-    "headDate": "2026-10-15T10:15:58-07:00",
+    "headDate": "2026-11-11T17:09:22-05:00",
     "inScopeFiles": 455,
     "pinnedStart": null,
     "priorFloor": "fallen",
-    "qualifyingCommits": 83,
+    "qualifyingCommits": 67,
     "qualifyingMinimum": 30,
     "revisions": 5,
     "shared": 10,
     "sharedFloorUsed": 3,
-    "since": "2026-04-18T17:15:58.000Z",
+    "since": "2026-05-15T22:09:22.000Z",
     "sourceExtensions": [
       ".js",
       ".mjs",
