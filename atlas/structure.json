@@ -25,7 +25,7 @@
           "path": ".github/pull_request_template.md"
         },
         {
-          "hash": "a0f5bbafd164913b3fe059c7ec7e30e20a5f73f4efa7c04bee9da8a85928f6c0",
+          "hash": "f76f8179e1337c6af06b79bd502c9e0514d6f03a92d1a1e4d2b21053cdd31780",
           "path": ".github/workflows/ci.yml"
         },
         {
@@ -33,7 +33,7 @@
           "path": ".github/workflows/codeql.yml"
         },
         {
-          "hash": "295b20133b71ce63b1354f5b866e2b15eeb47319daa0091ccbf70d915cad3eb2",
+          "hash": "9b8732c738bb02bb1bb2459993d2a22fe313e52df59733befb62fd06674bdebc",
           "path": ".github/workflows/pack-smoke.yml"
         },
         {
@@ -41,7 +41,7 @@
           "path": ".github/workflows/pages.yml"
         },
         {
-          "hash": "46b8f8f6e87ba765ac5910559272c2a0ba2793584ba1f2a94b1aa6c9a940a56d",
+          "hash": "24f42f49459f76bd9d5679cdfb3a258b5c44e370b7df92a30f94c5b8e65fafae",
           "path": ".github/workflows/release.yml"
         }
       ],
@@ -1140,7 +1140,7 @@
           "path": "package.json"
         },
         {
-          "hash": "aad57c9a9f63579355311570309c5937d7c7b4f6483aedc2585a8fbaac441f04",
+          "hash": "a263a13db14231593cf2a01295f479639079465e2b105aa2872c362f16aaa1f7",
           "path": "pnpm-lock.yaml"
         },
         {
@@ -1841,7 +1841,7 @@
           "path": "site/astro.config.mjs"
         },
         {
-          "hash": "af5d4f54dca60686724d306eb58759fb25b6f5ba4d66559ab84a968112a184e5",
+          "hash": "0607a19c4f60b635244a906c7ad2424359b50e20c4a83bc140f202abce4a941e",
           "path": "site/package-lock.json"
         },
         {
@@ -10329,9 +10329,9 @@
       "to": "src"
     }
   ],
-  "engine": "1.24.0",
+  "engine": "1.26.0",
   "generatedFrom": {
-    "commit": "aa93d580e049ce1c883bc7646d0d47ab015daa29",
+    "commit": "ce06a6db19c5036966709fb0116f6705a136ee21",
     "tracked": 450
   },
   "landings": [
@@ -10378,27 +10378,11 @@
           "confidence": "ast"
         },
         {
-          "by": "scripts/generate-batch-bad-fixtures.ts",
-          "confidence": "ast"
-        },
-        {
-          "by": "scripts/generate-external-bad-fixtures.ts",
-          "confidence": "ast"
-        },
-        {
           "by": "scripts/generate-momentum-bad-fixtures.ts",
           "confidence": "ast"
         },
         {
-          "by": "scripts/generate-multi-step-external-bad-fixtures.ts",
-          "confidence": "ast"
-        },
-        {
           "by": "scripts/generate-sgd-coupled-l2-fixtures.ts",
-          "confidence": "ast"
-        },
-        {
-          "by": "scripts/generate-softmax-ce-bad-fixtures.ts",
           "confidence": "ast"
         }
       ]
@@ -10419,6 +10403,26 @@
       "writers": [
         {
           "by": "scripts/build-pytorch-helper-fixtures.mjs",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/bad/batch.bad-*.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-batch-bad-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
+      "readers": [],
+      "target": "fixtures/bad/external.bad-*.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-external-bad-fixtures.ts",
           "confidence": "ast"
         }
       ]
@@ -10589,6 +10593,16 @@
       "writers": []
     },
     {
+      "readers": [],
+      "target": "fixtures/bad/multi-step-external.bad-*.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-multi-step-external-bad-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
+    },
+    {
       "readers": [
         {
           "by": "test/cli.multi-step-import-pipe.test.ts",
@@ -10725,6 +10739,16 @@
       ],
       "target": "fixtures/bad/multi-step.bad-trace-id.jsonl",
       "writers": []
+    },
+    {
+      "readers": [],
+      "target": "fixtures/bad/softmax-ce.bad-*.jsonl",
+      "writers": [
+        {
+          "by": "scripts/generate-softmax-ce-bad-fixtures.ts",
+          "confidence": "ast"
+        }
+      ]
     },
     {
       "readers": [
